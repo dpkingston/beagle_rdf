@@ -201,7 +201,7 @@ sudo apt install python3-pip python3-venv python3-soapysdr soapysdr-tools rtl-sd
 
 # Clone the repository and create the Python environment
 git clone https://github.com/dpkingston/beagle_rdf.git
-cd beagle
+cd beagle_rdf
 python3 -m venv --system-site-packages env
 source env/bin/activate
 pip install -e .
@@ -215,7 +215,7 @@ sudo apt install python3-pip python3-venv chrony
 
 # Clone the repository and create the Python environment
 git clone https://github.com/dpkingston/beagle_rdf.git
-cd beagle
+cd beagle_rdf
 python3 -m venv env
 source env/bin/activate
 pip install -e ".[server]"
