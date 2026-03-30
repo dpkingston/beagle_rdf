@@ -142,7 +142,7 @@ in the main README.  This step is important for RSPduo setups.
 
 ```bash
 mkdir -p ~/src && cd ~/src
-git clone ssh://git@github.com/dpkingston/Beagle.git
+git clone https://github.com/dpkingston/Beagle.git
 cd Beagle
 python3 -m venv env
 env/bin/pip install -e ".[server]"
