@@ -1,0 +1,39 @@
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Beagle Node Bootstrap Configuration
+# =====================================
+# Copy to bootstrap.yaml (e.g. /etc/beagle/bootstrap.yaml) and fill in
+# the values printed by: manage_nodes.py add <node_id> on the server.
+#
+# This is the ONLY file that needs to live on the node.  The full operating
+# config (frequencies, gain, thresholds, etc.) is fetched from the server.
+#
+# Run with:
+#   beagle-node --bootstrap /etc/beagle/bootstrap.yaml
+#   python -m beagle_node --bootstrap config/bootstrap.yaml
+
+# URL of the aggregation server (no trailing slash).
+server_url: "https://tdoa.example.com"
+
+# Node identifier -- must match the node_id in the server's nodes table.
+# Created by: manage_nodes.py add <node_id> --lat <lat> --lon <lon>
+node_id: "your-node-id"
+
+# Secret printed by manage_nodes.py add.  Treat like a password.
+# Never share this or commit it to version control.
+node_secret: "replace-with-secret-from-manage-nodes-add"
+
+# Path where the fetched config is cached for offline startup.
+# Leave as default unless the filesystem layout requires otherwise.
+# Default: /var/cache/tdoa/node_config.json
+# config_cache_path: "/var/cache/tdoa/node_config.json"
+
+# How often to poll for config updates, in seconds.
+# The long-poll mechanism means updates are applied within ~1 s regardless
+# of this value; this is the fallback poll interval if long-poll times out.
+# Default: 60
+# config_poll_interval_s: 60.0
+
+# Set to false to skip the POST /api/v1/nodes/register call on startup.
+# The node will still fetch its config but won't update last_seen_at.
+# Default: true
+# register_on_start: true

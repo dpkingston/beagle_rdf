@@ -1,0 +1,116 @@
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Beagle Mock Event Generator -- Seattle Metro Demo Scenario
+#
+# Simulates three receiver nodes observing LMR transmissions from two locations,
+# using KISW 99.9 FM as the sync reference.
+#
+# Each transmission follows the realistic PTT pattern:
+#   onset events -> [carrier hold] -> offset events -> [gap] -> next onset
+#
+# Run with:
+#   python scripts/mock_event_generator.py \
+#       --server http://localhost:8765 \
+#       --scenario scripts/mock_scenario_seattle.yaml
+#
+# Simulate a two-radio conversation (A replies to B alternately):
+#   python scripts/mock_event_generator.py \
+#       --server http://localhost:8765 \
+#       --scenario scripts/mock_scenario_seattle.yaml \
+#       --conversation
+#
+# Override noise parameters on the command line to explore accuracy trade-offs:
+#   --pilot-sigma-us 0.5    GPS two_sdr mode accuracy
+#   --pilot-sigma-us 20.0   Uncalibrated RTL-SDR crystal (100 ppm * 200 ms)
+#   --ntp-sigma-ms 1.0      Stratum-1 GPS-referenced NTP
+#   --no-offset             Send onset events only (skip offset phase)
+
+# ---------------------------------------------------------------------------
+# FM sync reference transmitter (FCC-documented location)
+# ---------------------------------------------------------------------------
+sync_transmitter:
+  station_id: "KISW_99.9"
+  frequency_hz: 99900000
+  latitude_deg: 47.6253     # KISW transmitter, Capitol Hill tower
+  longitude_deg: -122.3563
+
+# ---------------------------------------------------------------------------
+# Receiver nodes -- three RTL-SDR nodes around Seattle metro
+# ---------------------------------------------------------------------------
+nodes:
+  - node_id: "node-shoreline"
+    latitude_deg: 47.740
+    longitude_deg: -122.330   # Shoreline, north of Seattle
+
+  - node_id: "node-bellevue"
+    latitude_deg: 47.610
+    longitude_deg: -122.200   # Bellevue / Eastgate area
+
+  - node_id: "node-renton"
+    latitude_deg: 47.480
+    longitude_deg: -122.290   # Renton, south of Seattle
+
+# ---------------------------------------------------------------------------
+# Target transmitter locations to simulate
+# ---------------------------------------------------------------------------
+targets:
+  - label: "Target A -- Capitol Hill / First Hill"
+    latitude_deg: 47.660
+    longitude_deg: -122.320
+    channel_hz: 462562500       # FRS Channel 1
+
+  - label: "Target B -- Downtown Bellevue"
+    latitude_deg: 47.614
+    longitude_deg: -122.192
+    channel_hz: 462562500
+
+# ---------------------------------------------------------------------------
+# Error model -- realistic measurement noise per node
+#
+# ERROR SOURCE REFERENCE TABLE
+# ============================================================================
+# Source               Field affected    Typical 1-sigma     Impact
+# ----------------------------------------------------------------------------
+# FM pilot timing      sync_delta_ns     see below           TDOA & position
+# NTP clock drift      onset_time_ns     see below           Grouping only
+# Crystal error        sync_delta_ns     auto (see note)     Minor with FM cal
+# Corr peak quality    filtering         N/A                 Events <0.1 rejected
+# ============================================================================
+#
+# PILOT TIMING SIGMA -- recommended presets:
+#   20000 ns (20 us) -- RTL-SDR, uncalibrated crystal, 200 ms window
+#                      (100 ppm * 200 ms; poor -- use TCXO or FM calibration)
+#    2000 ns ( 2 us) -- RTL-SDR with TCXO + FM pilot phase calibration
+#                      (good for freq_hop mode; neighbourhood-level accuracy)
+#     500 ns (0.5 us) -- two_sdr mode with GPS 1PPS injection
+#                      (excellent; street-level accuracy)
+#     100 ns (0.1 us) -- two_sdr + TCXO + GPS 1PPS (theoretical limit)
+#
+# NTP SIGMA -- affects ONLY T_sync grouping, NOT TDOA accuracy:
+#   50000000 ns (50 ms) -- stock NTP, poor internet path
+#   20000000 ns (20 ms) -- chrony with good internet servers (default)
+#    1000000 ns  (1 ms) -- chrony + local Stratum-1 GPS reference
+#       1000 ns  (1 us) -- PPS-disciplined kernel clock (GPS + chrony)
+# ============================================================================
+# ---------------------------------------------------------------------------
+error_model:
+  pilot_timing_sigma_ns: 2000.0     # FM pilot measurement noise (TCXO + calibration)
+  ntp_sigma_ns: 20000000.0          # NTP clock error on onset_time_ns
+  corr_peak_mean: 0.85
+  corr_peak_sigma: 0.05
+  delivery_latency_mean_ms: 150.0   # One-way HTTP delivery latency
+  delivery_latency_sigma_ms: 50.0   # Jitter in delivery latency
+
+# ---------------------------------------------------------------------------
+# Scenario parameters
+# ---------------------------------------------------------------------------
+transmissions_per_target: 3         # How many PTT cycles per target
+
+# PTT timing: onset -> [hold] -> offset -> [gap] -> next onset
+transmission_duration_mean_s: 15.0  # Mean carrier hold time (s)
+transmission_duration_sigma_s: 3.0  # Hold time jitter (s)
+inter_transmission_gap_mean_s: 2.0  # Mean gap between offset and next onset (s)
+inter_transmission_gap_sigma_s: 0.5 # Gap jitter (s)
+
+rapid_keyup_interval_ms: 0.0        # Set > 0 (e.g. 400) to simulate rapid key-ups
+                                     # on the same channel and verify they are
+                                     # placed in separate fix groups

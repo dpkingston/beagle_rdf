@@ -1,0 +1,49 @@
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+[Unit]
+Description=Beagle Radio Direction Finding Node
+Documentation=https://github.com/example/Beagle
+After=network-online.target chrony.service gpsd.service
+Wants=network-online.target
+# Allow chrony to discipline the clock before starting
+After=time-sync.target
+
+[Service]
+Type=simple
+User=tdoa
+Group=tdoa
+
+# Adjust path if installed via pip in a venv
+ExecStart=/home/tdoa/Beagle/env/bin/python -m beagle_node --config /etc/beagle/node.yaml
+
+# Restart on any failure; wait 5 s between attempts.
+# Exit code 75 (EX_TEMPFAIL) = config changed, automatic restart requested.
+# The node exits 75 when a remote config update changes SDR hardware params
+# (gain, sample rate, mode) that require re-initialising the receiver.
+Restart=on-failure
+RestartSec=5s
+
+# Give the process 10 s to shut down gracefully on SIGTERM
+TimeoutStopSec=10s
+
+# Keep stdout/stderr in the journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=beagle-node
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+# Auth token for the aggregation server (alternative to embedding in node.yaml)
+# EnvironmentFile=/etc/beagle/secrets.env
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/beagle /tmp
+
+# Allow access to USB SDR devices
+DeviceAllow=/dev/bus/usb rw
+SupplementaryGroups=plugdev
+
+[Install]
+WantedBy=multi-user.target

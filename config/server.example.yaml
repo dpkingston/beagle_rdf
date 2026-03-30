@@ -1,0 +1,83 @@
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Beagle Aggregation Server Configuration
+# Copy to server.yaml and edit before running.
+# Run with: beagle-server --config config/server.yaml
+
+server:
+  host: "0.0.0.0"
+  port: 8765
+  auth_token: ""           # Empty = no auth required.
+                           # Set a secret string, or leave empty and use TDOA_SERVER_AUTH_TOKEN env var.
+  node_rate_limit_events: 10   # Max events per node within the sliding window. 0 = disable.
+  node_rate_limit_window_s: 20 # Sliding window duration (seconds) for per-node rate limit.
+
+database:
+  path: "data/tdoa_data.db"              # Operational DB: events, fixes, heatmap. Created automatically.
+                                         # Safe to delete for a clean data slate — nodes/users are preserved.
+  registry_path: "data/tdoa_registry.db" # Registry DB: nodes, users, sessions. Created automatically.
+                                         # Contains permanent configuration — do not delete casually.
+
+pairing:
+  # Bucketing window for T_sync -- the estimated absolute time of the FM sync
+  # event at the transmitter, derived per-event as:
+  #   T_sync = onset_time_ns - sync_delta_ns - dist(sync_tx, node) / c
+  # Events from different nodes land in the same bucket if their T_sync values
+  # agree within this window. Rapid key-ups produce distinct T_sync values and
+  # are correctly placed into separate groups.
+  # Set to >= 2* your worst inter-node NTP offset.  Fixture data shows a maximum
+  # observed inter-node T_sync spread of ~39 ms, so 0.2 s (±100 ms half-window)
+  # provides a comfortable 2.5x safety margin for typical internet NTP:
+  #   0.2  s = standard internet NTP (observed max spread ~39 ms)
+  #   0.005 s = GPS-disciplined nodes
+  correlation_window_s: 0.2
+
+  # Seconds to wait after the first event in a group before running the fix
+  # solver. Set to the observed worst-case one-way delivery latency from your
+  # slowest node (time from LMR event occurrence to server receiving the POST).
+  delivery_buffer_s: 10.0
+
+  group_expiry_s: 60.0         # Discard unresolved groups after this many seconds.
+  freq_tolerance_hz: 1000.0    # Channel-frequency bucketing tolerance (Hz).
+  min_corr_peak: 0.1           # Minimum sync_corr_peak to accept an event.
+                               # Events below this threshold are rejected with HTTP 422.
+  min_nodes: 2                 # Minimum distinct receiver nodes required to attempt a solution.
+                               # 3+ nodes yield a unique 2-D position fix;
+                               # 2 nodes yield a hyperbolic line of position (LOP).
+
+solver:
+  search_center_lat: 47.7         # Approximate centre of your deployment region (latitude).
+  search_center_lon: -122.3       # Approximate centre of your deployment region (longitude).
+  search_radius_km: 100.0         # Solver search radius around the centre.
+  max_residual_ns: 0.0            # Reject fixes with RMS residual above this (ns). 0 = accept all.
+                                  # A good fix from GPS-disciplined nodes: < 500 ns.
+                                  # NTP nodes: typically 5000-50000 ns; tune empirically.
+                                  # Check server logs for residuals to pick an appropriate value.
+  min_xcorr_snr: 1.5              # Minimum power-envelope xcorr peak-to-sidelobe ratio.
+                                  # Pairs below this fall back to sync_delta subtraction.
+                                  # Xcorr uses only the transition half of each snippet:
+                                  #   onset SNR typically 6–28; offset SNR typically 1.5–2.5.
+                                  # 0 = always accept xcorr (use only if debugging).
+  max_xcorr_baseline_km: 50.0     # Maximum physically plausible xcorr lag (km-equivalent).
+                                  # Any xcorr lag > this distance / c is treated as a noise
+                                  # peak and falls back to sync_delta.  Set to the maximum
+                                  # node-to-node separation in your deployment area.
+                                  # 50 km => max lag ~167 µs.  0 = disable the check.
+  # xcorr_resample_rate_hz: null  # Target rate for resampling snippets in mixed-hardware
+                                  # deployments (RTL-SDR = 64000 Hz, RSPduo = 62500 Hz).
+                                  # null (default) = automatically use the lower of the two
+                                  # node rates for each pair (prefer downsampling).
+                                  # Set to 62500.0 or 64000.0 to force a specific rate.
+
+map:
+  output_dir: "data/maps"      # Directory for static Folium HTML snapshots.
+  max_age_s: 3600.0            # Default fix age-out window for map display (seconds).
+                               # 0 = show all fixes ever recorded.
+                               # Overridable per request: GET /map?max_age_s=7200
+  hyperbola_points: 500        # Points per hyperbola arc (higher = smoother, slower).
+  heatmap_cell_m: 200.0        # Heat map grid cell size in metres.
+                               # Each fix contributes Gaussian-weighted counts to nearby cells.
+                               # Smaller values = finer resolution, higher DB cost.
+                               # Changing this invalidates accumulated data; reset the heat map.
+  heatmap_sigma_cells: 1.5     # Standard deviation of the Gaussian kernel in cell units.
+                               # 1.5 = a fix at a cell centre gives neighbours 1 cell away
+                               # weight exp(-0.5) = 0.61, 2 cells away exp(-2) = 0.14.

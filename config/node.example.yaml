@@ -1,0 +1,171 @@
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Beagle Node Configuration -- Example
+# Copy to node.yaml and edit for your deployment.
+
+node_id: "seattle-north-01"
+log_level: "INFO"
+health_port: 8080
+
+location:
+  latitude_deg: 47.7112
+  longitude_deg: -122.3312
+  altitude_m: 85.0
+  uncertainty_m: 5.0
+
+# SDR mode: freq_hop | two_sdr | single_sdr | rspduo
+# - freq_hop:   Single RTL-SDR alternates between sync and target frequencies
+#               via librtlsdr-2freq. One continuous ADC clock, no inter-SDR
+#               jitter. Preferred for single-dongle development.
+# - two_sdr:    Separate SDRs for sync (FM) and target (LMR). Requires GPS
+#               1PPS injection into both inputs for sample-domain alignment.
+#               Supports UHF targets. Preferred for production.
+# - single_sdr: One wideband SDR covering both bands simultaneously. Only
+#               valid when both signals fit within its bandwidth (e.g., FM +
+#               VHF LMR). Not suitable for FM + UHF LMR.
+# - rspduo:     SDRplay RSPduo dual-tuner. Two independent tuners share one
+#               24 MHz TCXO and ADC -- no GPS 1PPS required. ~250 ns
+#               inter-channel timing offset calibrated via pipeline_offset_ns.
+sdr_mode: "freq_hop"
+
+# --- freq_hop mode ---
+freq_hop:
+  # device_serial: "00000001"    # USB serial of RTL-SDR to open.  Run `rtl_test`
+  #                              # or `lsusb -v` to find it.  Omit to use the
+  #                              # first RTL-SDR found (fine for single-dongle).
+  # Frequencies are taken from sync_signal.primary_station and target_channels below.
+
+  # Block sizes: set samples_per_block for symmetric mode (same size on both
+  # channels), or also set target_samples_per_block for asymmetric mode.
+  # The USB callback buffer = gcd(sync_block, target_block) × 2 bytes, so both
+  # block sizes must be multiples of 256 samples (= 512 bytes, one USB packet).
+  #
+  # Asymmetric example: sync=116736 (~57 ms) + target=233472 (~114 ms) gives
+  # ~50% useful target duty cycle (33% wall time), at the cost of fewer
+  # sync events per second (still sufficient for pilot correlation).
+  samples_per_block: 116736                 # sync block: ~57 ms at 2.048 MSPS
+  # target_samples_per_block: 116736        # target block (omit = same as sync)
+
+  settling_samples: 58368                   # Discard first ~28.5 ms per block
+                                            # Measured on R820T/2: target→sync hop
+                                            # needs 19 ms raw + 1.5× safety = 28.5 ms
+                                            # (sync→target is faster: 16 ms raw).
+                                            # Run measure_settling.py to recalibrate.
+  sample_rate_hz: 2048000
+  gain_db: 40
+  # pipeline_offset_ns: 0                  # Sequential inter-block structural delay.
+  #                                        # Calibrate via colocated_pair_test.py --db
+  #                                        # against an RSPduo or single_sdr reference.
+  #                                        # Typically +20_000_000 to +40_000_000 ns.
+
+# --- rspduo mode (uncomment to use) ---
+# sdr_mode: "rspduo"
+# rspduo:
+#   # Frequencies are taken from sync_signal.primary_station and target_channels below.
+#   sample_rate_hz: 2000000           # Max 2 MHz in dual-tuner mode
+#   sync_gain_db: "auto"              # AGC for sync channel
+#   target_gain_db: "auto"            # AGC for target channel
+#   master_device_args: "driver=sdrplay"     # Add ",serial=XXXX" for specific unit
+#   slave_device_args: null           # null = same as master_device_args
+#   buffer_size: 65536                # IQ samples per read (~33 ms at 2 MSPS)
+#   pipeline_offset_ns: 0             # Calibrate empirically; start at 0
+#                                     # (RSPduo ADC TDM offset ~= 250 ns at 2 MSPS)
+
+# --- two_sdr mode (uncomment to use) ---
+# sdr_mode: "two_sdr"
+# pps_injection: true   # GPS 1PPS wired to both SDR inputs via 10 MOhm resistors
+# sync_sdr:
+#   device_args: "driver=rtlsdr,serial=00000001"
+#   sample_rate_hz: 2048000
+#   center_frequency_hz: 99900000
+#   gain_db: 30
+# target_sdr:
+#   device_args: "driver=rtlsdr,serial=00000002"
+#   sample_rate_hz: 2048000
+#   center_frequency_hz: 440000000    # UHF LMR target
+#   gain_db: 40
+
+sync_signal:
+  type: "fm_pilot"
+  primary_station:
+    station_id: "KISW_99.9"
+    frequency_hz: 99900000
+    latitude_deg: 47.6253      # FCC-documented transmitter location
+    longitude_deg: -122.3563
+  secondary_station:           # Used for passive calibration cross-check
+    station_id: "KUOW_94.9"
+    frequency_hz: 94900000
+    latitude_deg: 47.6553      # FCC-documented
+    longitude_deg: -122.3110
+  sync_period_ms: 7.0          # Emit one SyncEvent every N ms.
+                               # For freq_hop: must be < (samples_per_block - settling_samples)
+                               # / sample_rate_hz * 1000.  With block=65536, settling=49152,
+                               # rate=2048000 the usable window is 8 ms, so keep this <= 7 ms.
+  min_corr_peak: 0.3           # Reject SyncEvents below this quality threshold.
+                               # Lower to 0.2 if you see 'Dropping onset/offset: no sync
+                               # within N samples' -- RSPduo typically gives 0.30-0.45.
+  max_sync_age_ms: 200.0       # Maximum age of a SyncEvent that can be paired with a
+                               # carrier event.  Default 200 ms is ~28x sync_period at 7 ms.
+                               # Increase if you still see 'Dropping' warnings after
+                               # lowering min_corr_peak.
+
+target_channels:
+  - frequency_hz: 462562500
+    label: "FRS_CH1"
+  - frequency_hz: 462587500
+    label: "FRS_CH2"
+
+carrier:
+  # Carrier detector tuning.  Defaults are shown; omit the block to use them.
+  #
+  # onset_db / offset_db: power levels (dBFS) for detection hysteresis.
+  # Real LMR signals at the ADC are typically -40 to -60 dBFS.  Lower onset_db
+  # (e.g. -50) if the node never detects a carrier; verify with the SDR software
+  # first to see the actual signal level on your target frequency.
+  #
+  # min_release_windows: require this many consecutive below-threshold windows
+  # before the carrier is declared gone.  At 62.5 kHz target rate, 1 window ~1 ms.
+  # Increase to 4-8 if you see bursts of measurements (multiple onset/offset events
+  # per transmission) spaced by ~1 ms -- that pattern means the power is hovering
+  # near the offset threshold and chattering.  8 windows ~8 ms hold time.
+  onset_db: -30.0
+  offset_db: -40.0
+  window_samples: 64
+  min_hold_windows: 1      # Onset: require N consecutive above-threshold windows
+  min_release_windows: 1   # Offset: require N consecutive below-threshold windows
+                           # Set to 4-8 to suppress mid-transmission chattering
+  snippet_samples: 640     # IQ samples captured per event (pre-event ring buffer).
+                           # 640 = 10 ms at 64 kHz (~1.7 KB/event base64-encoded).
+                           # Increase to 2560 (40 ms) for calibration runs, then
+                           # scale back after running --analyze-snippets to find
+                           # the minimum that covers your transmitters' rise/fall.
+  snippet_post_windows: 0  # Post-event windows appended to each IQ snippet.
+                           # When > 0, the event is held until N additional windows
+                           # have been captured after the threshold crossing. The
+                           # snippet then covers the full carrier rise/fall shape,
+                           # improving xcorr accuracy for gradual-onset transmitters
+                           # where co-located nodes may cross the threshold at
+                           # slightly different times. Each window ≈ 1 ms at 62.5 kHz.
+                           # Recommended: 5–10. 0 = disabled (emit immediately).
+  ring_lookback_windows: 60  # Depth of the IQ ring buffer in detector windows.
+                             # Must be large enough to contain the PA shutoff at the
+                             # moment offset detection fires.  Detection fires after
+                             # min_release_windows consecutive below-threshold windows,
+                             # which is min_release * window_samples after the fade
+                             # crosses offset_db — but a gradual fade can push the
+                             # actual shutoff much further back.  60 windows × 64
+                             # samples = 3840 samples = ~61 ms at 62.5 kHz.  This
+                             # safely covers any LMR transmitter fade.  Memory cost
+                             # is ~60 × 64 × 8 bytes = ~30 KB/channel (negligible).
+                             # Use analyze_fade_timing.py to tune after data collection.
+
+reporter:
+  server_url: "https://tdoa.example.com"
+  auth_token: ""               # Or set TDOA_AUTH_TOKEN environment variable
+  batch_size: 10
+  flush_interval_ms: 500
+  max_queue_size: 1000
+  timeout_s: 10.0
+
+clock:
+  source: "gps_1pps"           # gps_1pps | ntp | system
+  calibration_offset_ns: 0     # Measured buffer latency correction (see CALIBRATION.md)

@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+tmp/
+.env
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.npy
+data/
+*.iq
+*.dat
+*.bin
+calibration_report.yaml
+*.txt
+description
+# Site-specific node configs (use config/*.example.yaml as templates)
+remote_configs/
+config/node.rspduo.local.yaml
+config/node.yaml
+config/server.yaml
