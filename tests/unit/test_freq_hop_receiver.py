@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for sdr/freq_hop.py (synchronous read-based continuous freq-hopping)."""
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def _raw_block(n_samples: int, value: int = 127) -> bytes:
 
 
 # ===========================================================================
-# Layer A — _run_loop unit tests (mock read_bytes, no real threading)
+# Layer A - _run_loop unit tests (mock read_bytes, no real threading)
 # ===========================================================================
 
 def _make_looping_sdr(rx: FreqHopReceiver, n_cycles: int) -> tuple[MagicMock, list[int]]:
@@ -223,7 +223,7 @@ class TestRunLoop:
 
 
 # ===========================================================================
-# Layer B — consumer unit tests (queue injection, no threading)
+# Layer B - consumer unit tests (queue injection, no threading)
 # ===========================================================================
 
 class TestLabeledStreamConsumer:
@@ -232,7 +232,7 @@ class TestLabeledStreamConsumer:
     def _make_rx_with_queue(self, **kwargs) -> FreqHopReceiver:
         # Use a large block so _drain_thresh_ns (~16 ms) is comfortably above
         # Python test-execution overhead (IQ conversion, queue get/put, etc.).
-        # BLOCK=512 gives only ~125 µs, which the second queue item routinely exceeds.
+        # BLOCK=512 gives only ~125 usec, which the second queue item routinely exceeds.
         kwargs.setdefault("samples_per_block", 65_536)
         kwargs.setdefault("settling_samples", SETTLE)
         rx = make_receiver(**kwargs)
@@ -281,7 +281,7 @@ class TestLabeledStreamConsumer:
         assert np.allclose(buf.real, expected, atol=0.01)
 
     def test_uint8_conversion(self):
-        """uint8 127 → ~0+0j, 255 → ~+1+1j, 0 → ~-1-1j."""
+        """uint8 127 -> ~0+0j, 255 -> ~+1+1j, 0 -> ~-1-1j."""
         rx = self._make_rx_with_queue()
         rx._queue.put(_queue_item("sync", BLOCK))
         _, buf, _ = next(rx.labeled_stream())
@@ -429,7 +429,7 @@ def test_from_config_device_serial():
 
 
 # ===========================================================================
-# Layer C — integration tests (mocked RtlSdr, real threading)
+# Layer C - integration tests (mocked RtlSdr, real threading)
 # ===========================================================================
 
 def _make_mock_sdr_loop(rx: FreqHopReceiver, cycles: int) -> MagicMock:
@@ -463,10 +463,10 @@ def _make_mock_sdr_loop(rx: FreqHopReceiver, cycles: int) -> MagicMock:
 def test_integration_symmetric(mock_open):
     """Integration: _run_loop thread delivers correct blocks via queue."""
     # Use a large block (65 536 samples = ~32 ms) so the drain threshold is
-    # ~16 ms — far more than any threading overhead in a test environment.
+    # ~16 ms - far more than any threading overhead in a test environment.
     rx = make_receiver(samples_per_block=65_536, settling_samples=1024)
 
-    # 3 cycles → 6 queue items; we only consume 4 before calling close()
+    # 3 cycles -> 6 queue items; we only consume 4 before calling close()
     mock_sdr = _make_mock_sdr_loop(rx, cycles=3)
 
     def real_open():
@@ -506,7 +506,7 @@ def test_integration_asymmetric(mock_open):
         settling_samples=1024,
     )
 
-    # 2 cycles → 4 queue items
+    # 2 cycles -> 4 queue items
     mock_sdr = _make_mock_sdr_loop(rx, cycles=2)
 
     def real_open():
@@ -553,7 +553,7 @@ def test_close_calls_sdr_close():
 
 def test_close_is_idempotent():
     rx = make_receiver()
-    rx.close()   # sdr is None — should not raise
+    rx.close()   # sdr is None - should not raise
     rx.close()
 
 
@@ -622,9 +622,9 @@ class TestBacklogDrain:
         stale_wall = _NOW_NS
         now = _NOW_NS + thresh + 1
         monkeypatch.setattr("beagle_node.sdr.freq_hop.time.time_ns", lambda: now)
-        rx._queue.put(("sync", _raw_block(BLOCK), stale_wall))  # stale → drain
-        rx._queue.put(("sync", _raw_block(BLOCK), now))          # fresh → yield
-        rx._queue.put(("sync", _raw_block(BLOCK), now))          # fresh → yield
+        rx._queue.put(("sync", _raw_block(BLOCK), stale_wall))  # stale -> drain
+        rx._queue.put(("sync", _raw_block(BLOCK), now))          # fresh -> yield
+        rx._queue.put(("sync", _raw_block(BLOCK), now))          # fresh -> yield
         results = list(itertools.islice(rx.labeled_stream(), 2))
         assert len(results) == 2
         assert rx.backlog_drain_count == 1

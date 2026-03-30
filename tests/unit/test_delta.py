@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for pipeline/delta.py."""
 
 from __future__ import annotations
@@ -154,16 +154,16 @@ def test_pps_anchored_propagates():
 
 
 # ---------------------------------------------------------------------------
-# Onset arrives before any sync -- buffered
+# Onset arrives before any sync - buffered
 # ---------------------------------------------------------------------------
 
 def test_onset_before_sync_buffered_then_resolved():
     dc = make_dc()
-    # Onset arrives first -- no measurement yet
+    # Onset arrives first - no measurement yet
     r1 = dc.feed_onset(make_onset(500))
     assert r1 == []
 
-    # Sync arrives after onset -- onset is resolved
+    # Sync arrives after onset - onset is resolved
     dc.feed_sync(make_sync(200))
     # Trigger flush by feeding another onset
     r2 = dc.feed_onset(make_onset(2000))
@@ -186,7 +186,7 @@ def test_onset_aged_out_dropped(caplog):
     r1 = dc.feed_onset(make_onset(0))
     assert r1 == []
 
-    # Feed a sync far in the future -- onset should be dropped
+    # Feed a sync far in the future - onset should be dropped
     dc.feed_sync(make_sync(200))
     with caplog.at_level(logging.WARNING):
         r2 = dc.feed_onset(make_onset(300))
@@ -331,7 +331,7 @@ def test_pilot_brief_dip_no_warning(caplog):
     dc = make_dc(min_corr_peak=0.5)
     with caplog.at_level(logging.WARNING):
         for i in range(20):
-            # alternating bad / good -- count resets on each good event
+            # alternating bad / good - count resets on each good event
             dc.feed_sync(make_sync(i * 200,       corr_peak=0.1))   # bad
             dc.feed_sync(make_sync(i * 200 + 100, corr_peak=0.9))   # good
     assert not any("below threshold" in r.message for r in caplog.records)
@@ -346,13 +346,13 @@ def test_pilot_recovery_requires_n_consecutive_good(caplog):
         dc.feed_sync(make_sync(i * 100, corr_peak=0.1))
     caplog.clear()
 
-    # Feed fewer than _RECOVER_AFTER good events -- no recovery log yet
+    # Feed fewer than _RECOVER_AFTER good events - no recovery log yet
     with caplog.at_level(logging.INFO):
         for i in range(dc._RECOVER_AFTER - 1):
             dc.feed_sync(make_sync(1000 + i * 100, corr_peak=0.9))
     assert not any("recovered" in r.message for r in caplog.records)
 
-    # One more good event tips us over -- recovery is logged
+    # One more good event tips us over - recovery is logged
     with caplog.at_level(logging.INFO):
         dc.feed_sync(make_sync(2000, corr_peak=0.9))
     assert any("recovered" in r.message for r in caplog.records)
@@ -393,7 +393,7 @@ def test_reset_clears_pilot_warning_state():
 
 
 # ---------------------------------------------------------------------------
-# Sync event pruning in feed_sync() -- memory-leak regression tests
+# Sync event pruning in feed_sync() - memory-leak regression tests
 # ---------------------------------------------------------------------------
 
 class TestSyncEventPruning:
@@ -428,7 +428,7 @@ class TestSyncEventPruning:
         # The list must be bounded by max_age/sync_period + 1 (approx), not by n_syncs.
         assert len(dc._sync_events) <= max_age // sync_period + 2, (
             f"_sync_events has {len(dc._sync_events)} entries after {n_syncs} syncs "
-            f"with max_age={max_age} -- expected O({max_age // sync_period}), not O(n_syncs)"
+            f"with max_age={max_age} - expected O({max_age // sync_period}), not O(n_syncs)"
         )
 
     def test_pruned_syncs_do_not_prevent_matching(self):
@@ -468,7 +468,7 @@ class TestSyncEventPruning:
         for i in range(20):
             dc.feed_sync(make_sync((i + 1) * 100))  # up to sample 2000
 
-        # Carrier event far in the future -- the sync at 0 is pruned AND too old
+        # Carrier event far in the future - the sync at 0 is pruned AND too old
         results = dc.feed_onset(make_onset(3000))
         # No sync within max_age=500 of sample 3000 (last sync is at 2000, gap=1000)
         assert results == []

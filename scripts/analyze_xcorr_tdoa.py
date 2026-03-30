@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Analyze xcorr TDOA measurements from the beagle_node server database.
 
@@ -83,7 +83,7 @@ def _group_events(events: list[dict], window_ns: int) -> list[list[dict]]:
 
 
 def _deduplicate(gevs: list[dict]) -> list[dict]:
-    """One event per node — keep highest corr_peak."""
+    """One event per node - keep highest corr_peak."""
     best: dict = {}
     for ev in gevs:
         nid = ev["node_id"]
@@ -129,7 +129,7 @@ def _xcorr_pair(
 
     max_lag_ns = max_baseline_km * 1e3 / _C_M_S * 1e9
     if max_baseline_km > 0.0 and abs(xcorr_ns) > max_lag_ns:
-        return None, snr, f"BASELINE_REJ({xcorr_ns/1000:.1f} µs, {snr:.1f} SNR)"
+        return None, snr, f"BASELINE_REJ({xcorr_ns/1000:.1f} usec, {snr:.1f} SNR)"
 
     return xcorr_ns / 1_000.0, snr, "OK"
 
@@ -175,7 +175,7 @@ def main() -> None:
 
     # Header
     w = 12
-    print(f"{'Type':6}  {'Nodes':<35}  {'XCorr (µs)':>12}  {'SNR':>6}  Status")
+    print(f"{'Type':6}  {'Nodes':<35}  {'XCorr (usec)':>12}  {'SNR':>6}  Status")
     print("-" * 80)
 
     ok_us: dict[str, list[float]] = {"onset": [], "offset": []}
@@ -189,12 +189,12 @@ def main() -> None:
             for j in range(i + 1, len(node_events)):
                 a, b = node_events[i], node_events[j]
                 etype = a["event_type"]
-                pair_label = f"{a['node_id']}↔{b['node_id']}"
+                pair_label = f"{a['node_id']}<->{b['node_id']}"
 
                 xcorr_us, snr, status = _xcorr_pair(a, b, args.min_snr, args.max_baseline_km)
 
                 snr_str = f"{snr:.2f}" if snr is not None else "N/A"
-                us_str  = f"{xcorr_us:+.3f}" if xcorr_us is not None else "—"
+                us_str  = f"{xcorr_us:+.3f}" if xcorr_us is not None else "--"
 
                 print(f"{etype:6}  {pair_label:<35}  {us_str:>12}  {snr_str:>6}  {status}")
 
@@ -226,7 +226,7 @@ def main() -> None:
             break
     if sample_rate:
         print(f"  IQ sample rate: {sample_rate:.0f} Hz  "
-              f"(1 sample = {1e6/sample_rate:.2f} µs; sub-sample via parabolic interp)")
+              f"(1 sample = {1e6/sample_rate:.2f} usec; sub-sample via parabolic interp)")
 
     print()
     all_us = []
@@ -240,8 +240,8 @@ def main() -> None:
         mn  = statistics.mean(vals)
         sd  = statistics.stdev(vals) if len(vals) > 1 else 0.0
         print(f"  {etype} (n={len(vals)}):  "
-              f"mean={mn:+.3f} µs  median={med:+.3f} µs  stdev={sd:.3f} µs  "
-              f"range=[{min(vals):+.3f}, {max(vals):+.3f}] µs")
+              f"mean={mn:+.3f} usec  median={med:+.3f} usec  stdev={sd:.3f} usec  "
+              f"range=[{min(vals):+.3f}, {max(vals):+.3f}] usec")
         print(f"    SNR:  mean={statistics.mean(snrs):.2f}  "
               f"min={min(snrs):.2f}  max={max(snrs):.2f}")
         all_us.extend(vals)
@@ -249,9 +249,9 @@ def main() -> None:
     if len(all_us) > 1:
         print()
         print(f"  All combined (n={len(all_us)}):  "
-              f"mean={statistics.mean(all_us):+.3f} µs  "
-              f"median={statistics.median(all_us):+.3f} µs  "
-              f"stdev={statistics.stdev(all_us):.3f} µs")
+              f"mean={statistics.mean(all_us):+.3f} usec  "
+              f"median={statistics.median(all_us):+.3f} usec  "
+              f"stdev={statistics.stdev(all_us):.3f} usec")
 
 
 if __name__ == "__main__":

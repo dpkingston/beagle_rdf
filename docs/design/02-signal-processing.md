@@ -10,26 +10,26 @@ sample-index arithmetic.
 
 ```
 SDR IQ (2 MSPS complex64)
-     │
-     ├──────────────────────────────► sync_decimator  (8×, LPF 128 kHz)
-     │                                      │   → 256 kHz complex IQ
-     │                                FMDemodulator
-     │                                      │   → 256 kHz float32 audio (Hz)
-     │                               FMPilotSyncDetector
-     │                                      │
-     │                                SyncEvent (sample_index, corr_peak,
-     │                                           sample_rate_correction)
-     │
-     └──────────────────────────────► target_decimator (32×, LPF 25 kHz)
-                                            │   → 64 kHz complex IQ
-                                      [DC removal: iq − mean(iq)]
+     |
+     +------------------------------> sync_decimator  (8x, LPF 128 kHz)
+     |                                      |   -> 256 kHz complex IQ
+     |                                FMDemodulator
+     |                                      |   -> 256 kHz float32 audio (Hz)
+     |                               FMPilotSyncDetector
+     |                                      |
+     |                                SyncEvent (sample_index, corr_peak,
+     |                                           sample_rate_correction)
+     |
+     +------------------------------> target_decimator (32x, LPF 25 kHz)
+                                            |   -> 64 kHz complex IQ
+                                      [DC removal: iq - mean(iq)]
                                        CarrierDetector
-                                            │
+                                            |
                                CarrierOnset / CarrierOffset
                                (sample_index in sync-dec space)
-                                            │
+                                            |
                                       DeltaComputer
-                                            │
+                                            |
                                    TDOAMeasurement (sync_delta_ns)
 ```
 
@@ -52,7 +52,7 @@ energy and reducing CPU load for downstream stages.
 `Decimator` applies a single-stage **FIR low-pass filter** followed by integer
 downsampling.  The filter is designed with `scipy.signal.firwin` using a Hamming
 window (127 taps by default, giving ~80 dB stopband attenuation), then applied
-via `scipy.signal.lfilter` with persistent state — consecutive buffers produce a
+via `scipy.signal.lfilter` with persistent state - consecutive buffers produce a
 continuous output stream with no boundary artifacts.
 
 The I and Q channels are filtered separately (both are real-valued within
@@ -62,18 +62,18 @@ The I and Q channels are filtered separately (both are real-valued within
 
 | Chain | Input rate | Factor | Cutoff | Output rate |
 |-------|-----------|--------|--------|-------------|
-| Sync (RTL-SDR) | 2.048 MSPS | ÷8 | 128 kHz | **256 kHz** |
-| Sync (RSPduo)  | 2.000 MSPS | ÷8 | 128 kHz | **250 kHz** |
-| Target (both)  | 2.048/2.000 MSPS | ÷32 | 25 kHz | **64/62.5 kHz** |
+| Sync (RTL-SDR) | 2.048 MSPS | /8 | 128 kHz | **256 kHz** |
+| Sync (RSPduo)  | 2.000 MSPS | /8 | 128 kHz | **250 kHz** |
+| Target (both)  | 2.048/2.000 MSPS | /32 | 25 kHz | **64/62.5 kHz** |
 
-The 128 kHz sync cutoff passes the full ±75 kHz FM deviation including the
-stereo pilot at 19 kHz and pilot sidebands at 23–53 kHz.  The 25 kHz target
+The 128 kHz sync cutoff passes the full +/-75 kHz FM deviation including the
+stereo pilot at 19 kHz and pilot sidebands at 23-53 kHz.  The 25 kHz target
 cutoff matches the 25 kHz channel bandwidth of narrowband LMR.
 
 ### Sample-index arithmetic
 
 `Decimator.process()` always outputs exactly `len(input) // decimation` samples.
-The output sample at index `k` corresponds to input sample at index `k × decimation`
+The output sample at index `k` corresponds to input sample at index `k x decimation`
 (after filtering).  The caller tracks the raw ADC sample count and computes:
 
 ```
@@ -98,15 +98,15 @@ signal (in Hz) that contains the baseband audio, including the 19 kHz stereo pil
 The standard FM discriminator:
 
 ```
-audio[n] = angle(conj(iq[n-1]) × iq[n]) / (2π) × sample_rate_hz
+audio[n] = angle(conj(iq[n-1]) x iq[n]) / (2pi) x sample_rate_hz
 ```
 
 This is the discrete-time derivative of the instantaneous phase, expressed in Hz.
-For a pure FM signal with modulation deviation `Δf`, the output is a clean
-`Δf`-amplitude real sinusoid at the audio frequency.
+For a pure FM signal with modulation deviation `deltaf`, the output is a clean
+`deltaf`-amplitude real sinusoid at the audio frequency.
 
-`FMDemodulator` maintains `self._prev` — the last IQ sample from the previous
-buffer — so the first output sample of each call is computed correctly across
+`FMDemodulator` maintains `self._prev` - the last IQ sample from the previous
+buffer - so the first output sample of each call is computed correctly across
 buffer boundaries.
 
 **Output units:** instantaneous frequency in Hz, centred at 0 Hz (corresponding
@@ -121,38 +121,38 @@ a 19 kHz sinusoid in the output.
 
 Extract precise timing pulses from the 19 kHz FM stereo pilot tone.  One
 `SyncEvent` is emitted every `sync_period_ms` (default 10 ms), carrying a
-sample index accurate to <1 µs via sub-sample phase interpolation.
+sample index accurate to <1 usec via sub-sample phase interpolation.
 
 ### Processing steps (per 10 ms window)
 
 1. **Accumulate audio** into a rolling buffer until `sync_period_samples`
-   (= `round(sample_rate × 0.010)`) samples are available.
+   (= `round(sample_rate x 0.010)`) samples are available.
 
-2. **19 kHz narrow BPF** — a 255-tap FIR bandpass filter with ±100 Hz
+2. **19 kHz narrow BPF** - a 255-tap FIR bandpass filter with +/-100 Hz
    half-bandwidth (designed with `firwin`, Hamming window) isolates the pilot
    sinusoid from voice/data content.  Filter state is preserved across calls.
 
 3. **Complex cross-correlation** with the template
-   `exp(j 2π × 19000 × t)` over the window:
+   `exp(j 2pi x 19000 x t)` over the window:
 
    ```
-   corr = Σ  filtered[n] × conj(template[n])
+   corr = sum  filtered[n] x conj(template[n])
    ```
 
    The result is a single complex number.  Its magnitude (normalised by window
-   energy) gives `corr_peak` ∈ [0, 1]; its angle is the pilot phase.
+   energy) gives `corr_peak` in [0, 1]; its angle is the pilot phase.
 
 4. **Normalisation:**
 
    ```
-   corr_peak = |corr| / (N × RMS(filtered) × RMS(template))
+   corr_peak = |corr| / (N x RMS(filtered) x RMS(template))
    ```
 
    A `corr_peak` of 1.0 means a perfect pilot sinusoid.  Typical values for a
-   good FM signal are 0.7–0.95.  `DeltaComputer` discards sync events below
+   good FM signal are 0.7-0.95.  `DeltaComputer` discards sync events below
    `min_corr_peak` (default 0.1).
 
-5. **Sample index** — assigned to the centre of the window:
+5. **Sample index** - assigned to the centre of the window:
    `sample_index = window_start_sample + period_samples // 2`.
 
 6. **CrystalCalibrator** (described in [03-timing-model.md](03-timing-model.md))
@@ -169,7 +169,7 @@ a corrupted cross-correlation window is never emitted.
 
 ---
 
-## Stage 4: Target Channel — DC Removal and Carrier Detection
+## Stage 4: Target Channel - DC Removal and Carrier Detection
 
 ### DC offset removal (`pipeline/pipeline.py`)
 
@@ -189,14 +189,14 @@ over any window >10 ms.
 ### Power measurement (`pipeline/carrier_detect.py`)
 
 After decimation the IQ stream is divided into non-overlapping windows of
-`window_samples` (default 64 samples ≈ 1 ms at 64 kHz).  For each window:
+`window_samples` (default 64 samples ~ 1 ms at 64 kHz).  For each window:
 
 ```
-power_lin = mean(|iq|²)
-power_db  = 10 × log10(power_lin + ε)
+power_lin = mean(|iq|^2)
+power_db  = 10 x log10(power_lin + epsilon)
 ```
 
-The `ε = 1e-30` floor prevents log(0).  The result is in **dBFS** (0 dBFS = full
+The `epsilon = 1e-30` floor prevents log(0).  The result is in **dBFS** (0 dBFS = full
 scale, all real-world signals are negative).
 
 ### Dual-threshold state machine
@@ -205,8 +205,8 @@ scale, all real-world signals are negative).
 the threshold:
 
 ```
-State IDLE  →  ACTIVE  when power_db ≥ onset_threshold_db  (default −30 dBFS)
-State ACTIVE → IDLE    when power_db ≤ offset_threshold_db  (default −40 dBFS)
+State IDLE  ->  ACTIVE  when power_db >= onset_threshold_db  (default -30 dBFS)
+State ACTIVE -> IDLE    when power_db <= offset_threshold_db  (default -40 dBFS)
 ```
 
 `offset_threshold_db < onset_threshold_db` is enforced at construction time.
@@ -216,7 +216,7 @@ A 10 dB gap between the two thresholds is the current default.
 
 The `min_hold_windows` parameter (default 1) requires a carrier to be detected
 in `N` consecutive power windows before an onset is declared.  This suppresses
-single-window noise spikes.  Set to 4 (≈ 4 ms) to further reduce false positives
+single-window noise spikes.  Set to 4 (~ 4 ms) to further reduce false positives
 in noisy RF environments.
 
 ### Event sample indices
@@ -227,8 +227,8 @@ converts this to the **sync-decimated** domain before passing to `DeltaComputer`
 
 ```python
 event_in_sync_space = event.sample_index * target_decimation // sync_decimation
-                    = event.sample_index × 32 // 8
-                    = event.sample_index × 4
+                    = event.sample_index x 32 // 8
+                    = event.sample_index x 4
 ```
 
 This linear scaling preserves relative timing across the two decimated streams.
@@ -247,11 +247,11 @@ Match each `CarrierOnset` or `CarrierOffset` to the most recent preceding
 For a carrier event at sync-space sample index `T`, the best sync event is:
 
 ```
-best_sync = max({ s ∈ sync_events :  s.sample_index ≤ T
-                                 and T − s.sample_index ≤ max_sync_age_samples })
+best_sync = max({ s in sync_events :  s.sample_index <= T
+                                 and T - s.sample_index <= max_sync_age_samples })
 ```
 
-`max_sync_age_samples` (default 20,480 ≈ 80 ms at 256 kHz) is the maximum
+`max_sync_age_samples` (default 20,480 ~ 80 ms at 256 kHz) is the maximum
 tolerated age of a sync event.  This window spans approximately 8 sync periods,
 providing robust matching even if several consecutive FM pilot windows are
 corrupted by RF noise.
@@ -259,9 +259,9 @@ corrupted by RF noise.
 ### Measurement
 
 ```
-delta_samples = T − best_sync.sample_index
-corrected_rate = nominal_rate × best_sync.sample_rate_correction
-sync_delta_ns = round(delta_samples × 1_000_000_000 / corrected_rate)
+delta_samples = T - best_sync.sample_index
+corrected_rate = nominal_rate x best_sync.sample_rate_correction
+sync_delta_ns = round(delta_samples x 1_000_000_000 / corrected_rate)
 ```
 
 ### Offset measurements
@@ -269,7 +269,7 @@ sync_delta_ns = round(delta_samples × 1_000_000_000 / corrected_rate)
 Both `feed_onset()` and `feed_offset()` produce `TDOAMeasurement` objects.
 The `event_type` field (`"onset"` or `"offset"`) is carried through to
 `CarrierEvent` and on to the aggregation server.  **The server must pair
-onset-with-onset and offset-with-offset across nodes** — mixing edge types
+onset-with-onset and offset-with-offset across nodes** - mixing edge types
 produces meaningless TDOA values.
 
 Using both edges doubles the measurement rate per transmission and ensures
@@ -284,7 +284,7 @@ in a `_pending_events` list.  Each subsequent call to `feed_sync()` / `feed_onse
 / `feed_offset()` triggers `_flush()`, which reattempts resolution.
 
 A pending event is **dropped** when the newest available sync event has moved
-more than `max_sync_age_samples` ahead of it — this means no preceding sync will
+more than `max_sync_age_samples` ahead of it - this means no preceding sync will
 ever become available.  A `WARNING` log is emitted on each drop.
 
 ---
@@ -295,24 +295,24 @@ For `freq_hop` mode (RTL-SDR @ 2.048 MSPS):
 
 | Stage | Rate | Period |
 |-------|------|--------|
-| ADC input | 2,048,000 sps | 0.488 µs/sample |
-| Sync after ÷8 | 256,000 sps | 3.9 µs/sample |
-| Target after ÷32 | 64,000 sps | 15.6 µs/sample |
-| Sync event period | — | 10 ms (2,560 sync samples) |
-| Target power window | — | 1 ms (64 target samples) |
-| max_sync_age | — | 80 ms (20,480 sync samples) |
+| ADC input | 2,048,000 sps | 0.488 usec/sample |
+| Sync after /8 | 256,000 sps | 3.9 usec/sample |
+| Target after /32 | 64,000 sps | 15.6 usec/sample |
+| Sync event period | - | 10 ms (2,560 sync samples) |
+| Target power window | - | 1 ms (64 target samples) |
+| max_sync_age | - | 80 ms (20,480 sync samples) |
 
 For `rspduo` mode (RSPduo @ 2.000 MSPS):
 
 | Stage | Rate | Period |
 |-------|------|--------|
-| ADC input | 2,000,000 sps | 0.500 µs/sample |
-| Sync after ÷8 | 250,000 sps | 4.0 µs/sample |
-| Target after ÷32 | 62,500 sps | 16.0 µs/sample |
-| Sync event period | — | 10 ms (2,500 sync samples) |
-| RSPduo buffer | — | 32.8 ms (65,536 raw samples) |
-| max_sync_age | — | 82 ms (20,480 sync samples) |
+| ADC input | 2,000,000 sps | 0.500 usec/sample |
+| Sync after /8 | 250,000 sps | 4.0 usec/sample |
+| Target after /32 | 62,500 sps | 16.0 usec/sample |
+| Sync event period | - | 10 ms (2,500 sync samples) |
+| RSPduo buffer | - | 32.8 ms (65,536 raw samples) |
+| max_sync_age | - | 82 ms (20,480 sync samples) |
 
 ---
 
-Copyright (c) 2026 Douglas P. Kingston III. MIT License — see [LICENSE](../../LICENSE).
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](../../LICENSE).

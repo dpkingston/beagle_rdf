@@ -1,4 +1,4 @@
-# Beagle Server — Administration Guide
+# Beagle Server - Administration Guide
 
 ## Contents
 
@@ -47,7 +47,7 @@ in `sessionStorage` (cleared when the browser tab is closed).
 - **Session expiry:** If a session expires mid-use, any API call triggers a 401 response
   and the login overlay reappears automatically.
 
-In `token` or `none` auth modes, no login overlay is shown — the map works as before.
+In `token` or `none` auth modes, no login overlay is shown - the map works as before.
 
 ---
 
@@ -55,7 +55,7 @@ In `token` or `none` auth modes, no login overlay is shown — the map works as 
 
 ### First-time setup (bootstrap)
 
-When no users exist the `POST /auth/register` endpoint is open — no authentication required.
+When no users exist the `POST /auth/register` endpoint is open - no authentication required.
 Use this to create the initial admin account:
 
 ```bash
@@ -248,7 +248,7 @@ Beagle supports "Sign in with Google" as an alternative to username/password log
 ### Prerequisites
 
 1. Create a project in the [Google Cloud Console](https://console.cloud.google.com/).
-2. Navigate to **APIs & Services → Credentials → Create Credentials → OAuth client ID**.
+2. Navigate to **APIs & Services -> Credentials -> Create Credentials -> OAuth client ID**.
 3. Set the application type to **Web application**.
 4. Add your server's callback URL as an authorized redirect URI:
    ```
@@ -279,16 +279,16 @@ Google"** button appears on the login overlay.
 
 ### How it works
 
-1. User clicks "Sign in with Google" → redirected to Google's consent screen.
+1. User clicks "Sign in with Google" -> redirected to Google's consent screen.
 2. After consent, Google redirects back to `/auth/oauth/google/callback` with an
    authorization code.
 3. The server exchanges the code for user info (email, name).
 4. Account matching:
-   - If a linked OAuth account exists → log in as that user.
-   - If the Google email matches an existing user's username → auto-link and log in.
-   - If no match → create a new `viewer` account (or `admin` if no users exist yet).
-5. If the matched user has 2FA enabled → redirect with a partial token for TOTP verification.
-6. Otherwise → redirect to `/map` with the session token.
+   - If a linked OAuth account exists -> log in as that user.
+   - If the Google email matches an existing user's username -> auto-link and log in.
+   - If no match -> create a new `viewer` account (or `admin` if no users exist yet).
+5. If the matched user has 2FA enabled -> redirect with a partial token for TOTP verification.
+6. Otherwise -> redirect to `/map` with the session token.
 
 ### OAuth-only accounts
 
@@ -392,7 +392,7 @@ editing config JSON, enabling/disabling, and deleting nodes.  It requires the
 server to be running and an admin login.
 
 The CLI tool operates directly on the registry SQLite database and does not
-require the server to be running — useful for scripted provisioning or initial
+require the server to be running - useful for scripted provisioning or initial
 setup.
 
 You must specify the database location with one of two mutually exclusive flags:
@@ -431,7 +431,7 @@ sudo chown tdoa:tdoa /var/cache/tdoa   # or whichever user runs the node
 ```
 
 If you run the node as a regular user without creating this directory, the node
-will log a warning (`Permission denied`) but continue to operate normally — it
+will log a warning (`Permission denied`) but continue to operate normally - it
 just won't have an offline config cache.
 
 To use a different path, set `config_cache_path` in `bootstrap.yaml`:
@@ -520,8 +520,8 @@ The server uses two SQLite databases:
 
 | File | Contents | Growth rate | Maintenance |
 |------|----------|-------------|-------------|
-| `data/tdoa_data.db` | events, fixes, heatmap_cells | High — thousands of rows/hr | Regular pruning required |
-| `data/tdoa_registry.db` | nodes, node_config_history, users, user_sessions, partial_sessions, oauth_accounts | Low — grows only on config/user changes | Periodic cleanup of expired sessions and old config history |
+| `data/tdoa_data.db` | events, fixes, heatmap_cells | High - thousands of rows/hr | Regular pruning required |
+| `data/tdoa_registry.db` | nodes, node_config_history, users, user_sessions, partial_sessions, oauth_accounts | Low - grows only on config/user changes | Periodic cleanup of expired sessions and old config history |
 
 ### Fresh start (wipe operational data)
 
@@ -533,7 +533,7 @@ rm data/tdoa_data.db
 systemctl start beagle-server  # database is recreated automatically
 ```
 
-The registry (`tdoa_registry.db`) is untouched — nodes remain registered, users remain active.
+The registry (`tdoa_registry.db`) is untouched - nodes remain registered, users remain active.
 
 ### Automated maintenance (recommended)
 
@@ -552,10 +552,10 @@ What it does each run:
 |----------|--------|-------------------|
 | Operational | Delete old events | 14 days |
 | Operational | Delete old fixes | 14 days |
-| Operational | WAL checkpoint | — |
+| Operational | WAL checkpoint | - |
 | Registry | Purge expired user sessions | expired |
 | Registry | Prune config history per node | keep last 50 |
-| Registry | WAL checkpoint | — |
+| Registry | WAL checkpoint | - |
 
 Override defaults with flags:
 
@@ -577,10 +577,10 @@ The script is safe to run while the server is running.  It uses normal
 
 ### Operational database growth (events and fixes)
 
-The `events` and `fixes` tables accumulate continuously.  At 3 nodes × 30 events/hr:
+The `events` and `fixes` tables accumulate continuously.  At 3 nodes x 30 events/hr:
 
-- `events`: ~90 rows/hr → ~200 MB after 6 months
-- `fixes`: ~30 rows/hr → manageable, but grows without bound
+- `events`: ~90 rows/hr -> ~200 MB after 6 months
+- `fixes`: ~30 rows/hr -> manageable, but grows without bound
 
 With `db_maintenance.py` running daily at the default 14-day retention, the
 operational DB stays bounded at roughly 2 weeks of data.
@@ -616,7 +616,7 @@ sqlite3 data/tdoa_registry.db "VACUUM;"
 systemctl start beagle-server
 ```
 
-WAL checkpoint (safe while server is running — just truncates the WAL file):
+WAL checkpoint (safe while server is running - just truncates the WAL file):
 
 ```bash
 sqlite3 data/tdoa_data.db "PRAGMA wal_checkpoint(TRUNCATE);"
@@ -628,7 +628,7 @@ sqlite3 data/tdoa_data.db "PRAGMA wal_checkpoint(TRUNCATE);"
 
 Both the server and node write structured logs to stderr, which systemd's journal
 captures automatically.  For centralized logging you can forward journal entries
-to a remote syslog or log collector — no code changes required.
+to a remote syslog or log collector - no code changes required.
 
 ### Option 1: systemd journal remote forwarding
 
@@ -776,7 +776,7 @@ Use `certbot` to obtain Let's Encrypt certificates, or provide your own.
   proxy sets these headers (shown in both examples above), and that the
   callback URL registered in Google Cloud Console matches the public hostname
   (`https://tdoa.example.com/auth/oauth/google/callback`).
-- **WebSocket**: Not used — the map uses SSE, so no WebSocket upgrade
+- **WebSocket**: Not used - the map uses SSE, so no WebSocket upgrade
   configuration is needed.
 
 ---
@@ -846,4 +846,4 @@ database:
 
 ---
 
-Copyright (c) 2026 Douglas P. Kingston III. MIT License — see [LICENSE](LICENSE).
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](LICENSE).

@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for pipeline/demodulator.py."""
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def test_demod_constant_tone():
     close to the modulating frequency.
     """
     rate = RATE
-    dev_hz = 19_000.0   # 19 kHz -- the FM pilot frequency
+    dev_hz = 19_000.0   # 19 kHz - the FM pilot frequency
     n = 65_536
 
     # Build IQ: constant phase increment per sample

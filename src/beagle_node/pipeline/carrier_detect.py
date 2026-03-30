@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Dual-threshold power state machine for LMR carrier detection.
 
@@ -37,7 +37,7 @@ to the block boundary rather than a genuine carrier edge:
       this many windows of above-threshold signal must accumulate before a
       CarrierOffset is allowed.  This suppresses carrier-tail events where
       the transmitter was still keyed during the sync block and drops within
-      the first few windows of the target block — events whose timing is
+      the first few windows of the target block - events whose timing is
       anchored to the block boundary, not the true PA shutoff.
 
 Both events carry the *sample index* in the continuous sample stream
@@ -99,7 +99,7 @@ class CarrierDetector:
     min_release_windows : int
         Number of consecutive below-threshold windows required before
         a CarrierOffset is declared.  Default 1 (fire on first window).
-        Set to 4–8 to suppress brief power fades in real-world signals
+        Set to 4-8 to suppress brief power fades in real-world signals
         and prevent spurious re-onset/offset chattering.
     """
 
@@ -148,7 +148,7 @@ class CarrierDetector:
         self._cumulative_sample: int = 0   # total samples seen so far
         # Exponential moving average of power during idle (no-carrier) windows.
         # Initialised to offset_threshold_db (a reasonable upper bound on noise).
-        # Alpha = 0.01 → time constant ≈ 100 windows (≈ 100 ms at 64 kHz / 64-sample window).
+        # Alpha = 0.01 -> time constant ~ 100 windows (~ 100 ms at 64 kHz / 64-sample window).
         self._noise_floor_db: float = float(offset_threshold_db)
         self._noise_floor_alpha: float = 0.01
         # freq_hop block-start onset suppression.
@@ -158,9 +158,9 @@ class CarrierDetector:
         # a meaningful period of noise before declaring a carrier appeared.
         # This prevents false onsets from:
         #   (a) carrier already present at block start (mid-transmission
-        #       arrival) — no idle windows at all (count = 0).
+        #       arrival) - no idle windows at all (count = 0).
         #   (b) a single PLL-settling transient window that dips below
-        #       threshold and immediately recovers — only count = 1.
+        #       threshold and immediately recovers - only count = 1.
         # Starts high so the very first block (no prime_state) works
         # normally.
         self._idle_window_count: int = 1000
@@ -171,7 +171,7 @@ class CarrierDetector:
         # Each window where state is ``active`` and power is above offset_db increments
         # _active_window_count.  If min_active_windows_for_offset > 0 and
         # _active_window_count < _min_active_for_offset when an offset fires,
-        # the event is suppressed — the carrier was only a block-start tail, not a
+        # the event is suppressed - the carrier was only a block-start tail, not a
         # transmission we can meaningfully timestamp.
         # _primed_active is cleared (False) when a genuine onset fires, so that
         # offsets following a genuine onset in the same block are never suppressed.
@@ -193,7 +193,7 @@ class CarrierDetector:
         # detection time: size = max(fade_windows + min_release, snippet_windows).
         # ring_lookback_windows lets operators decouple ring depth from snippet
         # size so gradual fades (10-50 ms) are always captured regardless of the
-        # shipped snippet length.  Defaults to 3× the snippet window count so
+        # shipped snippet length.  Defaults to 3x the snippet window count so
         # that even a fade spanning the full snippet still has the shutoff inside.
         _snippet_windows = max(1, -(-self._snippet_samples // self._window))
         _ring_capacity = int(ring_lookback_windows) if ring_lookback_windows is not None else _snippet_windows * 3
@@ -218,10 +218,10 @@ class CarrierDetector:
         # Snippet transition validation (freq_hop defence-in-depth).
         # When prime_state() is called, this flag arms validation for the next
         # process() call.  Events whose IQ snippets lack a genuine power
-        # transition (all-carrier or all-noise) are dropped — they indicate a
+        # transition (all-carrier or all-noise) are dropped - they indicate a
         # mid-transmission arrival where the timing is anchored to the block
         # boundary rather than the true carrier edge, and the xcorr IQ has no
-        # noise↔carrier step for the correlator to lock onto.
+        # noise<->carrier step for the correlator to lock onto.
         self._validate_snippets: bool = False
         self._min_transition_db: float = 6.0
 
@@ -515,7 +515,7 @@ class CarrierDetector:
                             #   - carrier already present at block start (count=0)
                             #   - PLL settling artefact produced a single noisy
                             #     window that dipped below threshold (count=1)
-                            # Either way the IQ snippet has no genuine noise→carrier
+                            # Either way the IQ snippet has no genuine noise->carrier
                             # transition and the timing is anchored to the block
                             # boundary, not the true carrier onset.  Suppress.
                             logger.debug(
@@ -623,7 +623,7 @@ class CarrierDetector:
                                 iq_snippet=_off_bytes,
                             ))
                 else:
-                    # Signal above offset threshold -- reset the release counter.
+                    # Signal above offset threshold - reset the release counter.
                     # Transient dips that recover do not accumulate toward offset.
                     self._pre_offset_count = 0
                     # Count windows where the carrier is genuinely above threshold.
@@ -700,11 +700,11 @@ class CarrierDetector:
         the event.
 
         Encoding: real[0], imag[0], real[1], imag[1], ...  (int8, range -127..127).
-        The scale factor is chosen so the largest |sample| maps to ±127; the
+        The scale factor is chosen so the largest |sample| maps to +/-127; the
         server does not need to know the scale because cross-correlation lag is
         scale-independent.
         """
-        assert self._iq_ring, "IQ ring is empty at snippet encode time — cannot happen"
+        assert self._iq_ring, "IQ ring is empty at snippet encode time - cannot happen"
         iq_cat = np.concatenate(list(self._iq_ring))
         iq_trim = iq_cat[-self._snippet_samples:]
         scale = float(np.max(np.abs(iq_trim))) + 1e-30
@@ -726,10 +726,10 @@ class CarrierDetector:
         (which places the PA shutoff at 3/4) and ensures the transition sits
         at a fixed position independent of min_hold_windows.
         """
-        assert pre_snap or post_buf, "Both pre_snap and post_buf are empty — cannot happen"
+        assert pre_snap or post_buf, "Both pre_snap and post_buf are empty - cannot happen"
         parts = list(pre_snap) + list(post_buf or [])
         iq_cat = np.concatenate(parts)
-        assert len(iq_cat) >= 32, "Onset IQ data too short for derivative — cannot happen"
+        assert len(iq_cat) >= 32, "Onset IQ data too short for derivative - cannot happen"
 
         # Smoothed power envelope and its derivative
         smooth = 16
@@ -752,7 +752,7 @@ class CarrierDetector:
             start = max(0, end - self._snippet_samples)
         iq_trim = iq_cat[start:end]
 
-        assert len(iq_trim) > 0, "Trimmed onset snippet is empty — cannot happen"
+        assert len(iq_trim) > 0, "Trimmed onset snippet is empty - cannot happen"
         scale = float(np.max(np.abs(iq_trim))) + 1e-30
         normed = iq_trim / scale
         int8_ri = np.empty(len(normed) * 2, dtype=np.int8)
@@ -778,13 +778,13 @@ class CarrierDetector:
         it supplies post-cutoff noise samples that keep the target position inside
         the snippet even when detection fires only a few windows after the shutoff.
         Without post_buf the target position may be clamped, causing the cutoff to
-        appear at different positions for nodes with different detection delays —
+        appear at different positions for nodes with different detection delays --
         which reintroduces the alignment problem this method is designed to solve.
         """
         parts = list(pre_snap) + list(post_buf or [])
-        assert parts, "No IQ data for offset snippet — cannot happen"
+        assert parts, "No IQ data for offset snippet - cannot happen"
         iq_cat = np.concatenate(parts)
-        assert len(iq_cat) >= 32, "Offset IQ data too short for derivative — cannot happen"
+        assert len(iq_cat) >= 32, "Offset IQ data too short for derivative - cannot happen"
 
         # Smoothed power envelope and its derivative
         smooth = 16
@@ -792,7 +792,7 @@ class CarrierDetector:
         kernel = np.ones(smooth) / smooth
         envelope = np.convolve(power, kernel, mode='same')
         deriv = np.diff(envelope)
-        assert len(deriv) > 0, "Empty derivative — cannot happen"
+        assert len(deriv) > 0, "Empty derivative - cannot happen"
 
         # Peak negative derivative = fastest power drop = PA shutoff moment
         cut_idx = int(np.argmin(deriv))
@@ -810,7 +810,7 @@ class CarrierDetector:
             start = max(0, end - self._snippet_samples)
         iq_trim = iq_cat[start:end]
 
-        assert len(iq_trim) > 0, "Trimmed offset snippet is empty — cannot happen"
+        assert len(iq_trim) > 0, "Trimmed offset snippet is empty - cannot happen"
         scale = float(np.max(np.abs(iq_trim))) + 1e-30
         normed = iq_trim / scale
         int8_ri = np.empty(len(normed) * 2, dtype=np.int8)
@@ -822,7 +822,7 @@ class CarrierDetector:
         """Check that an encoded IQ snippet contains a genuine power transition.
 
         Mid-transmission arrivals produce snippets where the entire content is
-        at carrier power (no noise→carrier or carrier→noise step).  The
+        at carrier power (no noise->carrier or carrier->noise step).  The
         cross-correlator cannot lock onto these, and the timing measurement is
         anchored to the block boundary rather than the true carrier edge.
 
@@ -864,8 +864,8 @@ class CarrierDetector:
 
         State assignment rules (intentionally *without* hysteresis):
 
-        * power >= onset_threshold_db → ``active``
-        * power <  onset_threshold_db → ``idle``
+        * power >= onset_threshold_db -> ``active``
+        * power <  onset_threshold_db -> ``idle``
 
         Using the onset threshold ensures that PLL settling transients
         (which often push power a few dB above the noise floor but well
@@ -900,7 +900,7 @@ class CarrierDetector:
         if self._pending_event_type is not None:
             logger.warning(
                 "prime_state abandoned pending %s (had %d post windows collected)"
-                " — partial flush should have caught this",
+                " - partial flush should have caught this",
                 self._pending_event_type,
                 len(self._pending_post_buf),
             )

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Test RSPduo Master/Slave mode for truly independent per-tuner frequency control.
 
-Master = Tuner 1 at 99.9 MHz FM (high attenuation -- sync/drain channel)
-Slave  = Tuner 2 at 462.5625 MHz   (max sensitivity -- target channel)
+Master = Tuner 1 at 99.9 MHz FM (high attenuation - sync/drain channel)
+Slave  = Tuner 2 at 462.5625 MHz   (max sensitivity - target channel)
 
 Run from the Beagle virtualenv:
   python3 scripts/test_master_slave.py
@@ -57,7 +57,7 @@ def main() -> int:
     # ------------------------------------------------------------------ #
     ms = master.setupStream(RX, CF32, [0])
     master.activateStream(ms)
-    print("  Master stream active -- waiting for MasterInitialised event ...")
+    print("  Master stream active - waiting for MasterInitialised event ...")
     _drain = np.zeros(65536, dtype=np.complex64)
     t0 = time.monotonic()
     while time.monotonic() - t0 < 5.0:
@@ -66,7 +66,7 @@ def main() -> int:
             print(f"  MasterInitialised event received after {time.monotonic()-t0:.2f}s")
             break
     else:
-        print("  WARNING: MasterInitialised event not received within 5s -- proceeding anyway")
+        print("  WARNING: MasterInitialised event not received within 5s - proceeding anyway")
 
     # ------------------------------------------------------------------ #
     # Find Slave device (appears after Master is opened)                 #
@@ -84,7 +84,7 @@ def main() -> int:
     print(f"Slave device: {dict(slave_kwargs)}")
 
     # ------------------------------------------------------------------ #
-    # Open Slave (Tuner 2 = LMR target) -- retry until success or timeout#
+    # Open Slave (Tuner 2 = LMR target) - retry until success or timeout#
     # ------------------------------------------------------------------ #
     print(f"Opening Slave (Tuner 2) at {TARGET_FREQ/1e6:.3f} MHz ...")
     slave = None
@@ -94,7 +94,7 @@ def main() -> int:
             print(f"  Slave opened on attempt {attempt+1}")
             break
         except RuntimeError as e:
-            print(f"  Attempt {attempt+1}: {e} -- retrying in 0.5s")
+            print(f"  Attempt {attempt+1}: {e} - retrying in 0.5s")
             master.readStream(ms, [_drain], len(_drain), timeoutUs=500_000)
             time.sleep(0.5)
     if slave is None:
@@ -126,7 +126,7 @@ def main() -> int:
     # Narrowband power measurement loop (50 kHz FFT window at DC)        #
     # ------------------------------------------------------------------ #
     print()
-    print(f"Measuring Tuner 2 at {TARGET_FREQ/1e6:.3f} MHz -- key HT now -- 20 seconds")
+    print(f"Measuring Tuner 2 at {TARGET_FREQ/1e6:.3f} MHz - key HT now - 20 seconds")
     print(f"  {'Time':>6}  {'dBFS':>7}")
     print(f"  {'-'*20}")
 

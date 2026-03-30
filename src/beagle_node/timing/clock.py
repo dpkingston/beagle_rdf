@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Clock abstraction for wall-time timestamps.
 
@@ -27,7 +27,7 @@ class SystemClock(ClockSource):
 
     On a node with GPS 1PPS feeding chrony, this reflects the
     GPS-disciplined system clock, accurate to ~1 us absolute.
-    No additional configuration is needed here -- chrony handles discipline.
+    No additional configuration is needed here - chrony handles discipline.
     """
 
     def time_ns(self) -> int:

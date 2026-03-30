@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Aggregation server configuration schema and YAML loader.
 """
@@ -21,10 +21,10 @@ class ServerConfig(BaseModel):
     auth_mode: Literal["none", "token", "nodedb", "userdb"] = "token"
     """
     Authentication mode:
-      none   -- no authentication required (open server)
-      token  -- single shared Bearer token (current default; uses auth_token)
-      nodedb -- per-node secrets stored in the nodes table (see manage_nodes.py)
-      userdb -- per-user accounts with roles stored in the users table.
+      none   - no authentication required (open server)
+      token  - single shared Bearer token (current default; uses auth_token)
+      nodedb - per-node secrets stored in the nodes table (see manage_nodes.py)
+      userdb - per-user accounts with roles stored in the users table.
                 Admin users are required for management endpoints; viewer users
                 can access read-only endpoints.  Use POST /auth/register to
                 create the first admin account (open only while no users exist).
@@ -76,7 +76,7 @@ class DatabaseConfig(BaseModel):
     """
     Path to the operational SQLite database (events, fixes, heatmap).
     This file accumulates transient detection data and can be deleted freely
-    to start with a clean slate — node registrations and user accounts are
+    to start with a clean slate - node registrations and user accounts are
     preserved in registry_path.  Created on first run.
     """
     registry_path: str = "data/tdoa_registry.db"
@@ -90,7 +90,7 @@ class DatabaseConfig(BaseModel):
 class PairingConfig(BaseModel):
     correlation_window_s: float = 0.2
     """
-    Bucketing window (seconds) for T_sync -- the estimated absolute time of the FM
+    Bucketing window (seconds) for T_sync - the estimated absolute time of the FM
     sync event at the transmitter, computed per-event as:
 
         T_sync = onset_time_ns - sync_delta_ns - dist(sync_tx, node) / c
@@ -100,10 +100,10 @@ class PairingConfig(BaseModel):
     T_sync values and are correctly separated into different groups.
 
     Set to >= 2* your worst inter-node NTP offset.  Fixture data shows a maximum
-    observed inter-node T_sync spread of ~39 ms, so 0.2 s (±100 ms half-window)
-    provides a comfortable 2.5× safety margin for typical internet NTP:
-      0.2 s   -- standard internet NTP (observed max spread ~39 ms, ±100 ms margin)
-      0.005 s -- GPS-disciplined nodes
+    observed inter-node T_sync spread of ~39 ms, so 0.2 s (+/-100 ms half-window)
+    provides a comfortable 2.5x safety margin for typical internet NTP:
+      0.2 s   - standard internet NTP (observed max spread ~39 ms, +/-100 ms margin)
+      0.005 s - GPS-disciplined nodes
     """
     delivery_buffer_s: float = 10.0
     """
@@ -143,7 +143,7 @@ class SolverConfig(BaseModel):
     Reject fixes whose RMS TDOA residual exceeds this threshold (nanoseconds).
     0 = accept all fixes regardless of residual (useful during initial setup).
     A good fix with 3 GPS-disciplined nodes will have residual < 500 ns.
-    NTP-clocked nodes may see 5000–50000 ns residuals; tune empirically.
+    NTP-clocked nodes may see 5000-50000 ns residuals; tune empirically.
     """
     min_xcorr_snr: float = 1.5
     """
@@ -151,15 +151,15 @@ class SolverConfig(BaseModel):
     TDOA measurement.  Below this threshold the pair falls back to coarse
     sync_delta subtraction.
 
-    The server cross-correlates power envelopes (|IQ|²) rather than raw complex
+    The server cross-correlates power envelopes (|IQ|^2) rather than raw complex
     IQ to avoid LO phase incoherence between independent receivers (independent
-    RTL-SDRs can have ±13 kHz LO offset at 443 MHz, which destroys complex xcorr
+    RTL-SDRs can have +/-13 kHz LO offset at 443 MHz, which destroys complex xcorr
     peaks but does not affect power envelope correlation).
 
     Typical values with transition windowing (onset/offset trimmed to half-snippet):
-      onset:  6–28  -- clean PA rise; most signals well above threshold
-      offset: 1.5–2.5  -- PA fall is slower; threshold of 1.5 admits most pairs
-      0.0      -- always accept xcorr (use only for debugging)
+      onset:  6-28  - clean PA rise; most signals well above threshold
+      offset: 1.5-2.5  - PA fall is slower; threshold of 1.5 admits most pairs
+      0.0      - always accept xcorr (use only for debugging)
     """
     max_xcorr_baseline_km: float = 50.0
     """
@@ -170,7 +170,7 @@ class SolverConfig(BaseModel):
     The check is: |lag_ns| <= max_xcorr_baseline_km * 1000 / c * 1e9
 
     Set to the maximum node-to-node baseline distance in your deployment area.
-    For a 50 km deployment: |lag| <= ~167 µs.  Out-of-range results are almost
+    For a 50 km deployment: |lag| <= ~167 usec.  Out-of-range results are almost
     always side-lobe noise artefacts from the power-envelope correlation.
     0.0 = disable the check (accept all xcorr lags regardless of magnitude).
     """
@@ -190,8 +190,8 @@ class SolverConfig(BaseModel):
     bandwidth is ~few kHz, well below either node's Nyquist).
 
     Set explicitly to force all pairs to a specific rate regardless of hardware:
-      62500.0  -- RSPduo native rate (all nodes downsampled if needed)
-      64000.0  -- RTL-SDR native rate (RSPduo nodes upsampled if needed)
+      62500.0  - RSPduo native rate (all nodes downsampled if needed)
+      64000.0  - RTL-SDR native rate (RSPduo nodes upsampled if needed)
     """
 
 

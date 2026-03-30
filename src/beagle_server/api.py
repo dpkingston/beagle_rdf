@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 FastAPI application for the TDOA aggregation server.
 
@@ -11,7 +11,7 @@ GET  /api/v1/fixes/{fix_id}       Get a specific fix by ID
 GET  /health                      Server health: uptime, event_count, fix_count, last_fix_age_s
 GET  /map                         Folium HTML map (query: max_age_s)
 GET  /map/heatmap                 JSON heatmap cells for live client-side update
-GET  /api/v1/fixes/stream         SSE stream -- emits a "new_fix" event on each computed fix
+GET  /api/v1/fixes/stream         SSE stream - emits a "new_fix" event on each computed fix
 DELETE /api/v1/fixes              Delete all stored fixes (auth-gated if token configured)
 POST /api/v1/heartbeat            Node heartbeat (position, health); no auth required
 GET  /map/nodes                   Merged node list (registered + event + heartbeat); no auth
@@ -88,7 +88,7 @@ def _verify_secret_hash(plaintext: str, stored_hash: str) -> bool:
     Node secrets intentionally use a plain SHA-256 (no salt, no iterations) because
     they are server-generated random 256-bit values, not user-chosen passwords.
     The security property comes from the secret's entropy (not the hash strength).
-    User passwords — which are client-chosen and potentially weak — use PBKDF2-HMAC-SHA256
+    User passwords - which are client-chosen and potentially weak - use PBKDF2-HMAC-SHA256
     with 260,000 iterations and a random salt; see ``auth.py:hash_password()``.
     """
     if stored_hash.startswith("sha256:"):
@@ -121,7 +121,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     app.state.node_event_times: dict[str, collections.deque] = {}
 
     # -------------------------------------------------------------------
-    # Lifespan -- open DB, wire pairer callback
+    # Lifespan - open DB, wire pairer callback
     # -------------------------------------------------------------------
     from contextlib import asynccontextmanager
 
@@ -187,7 +187,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             )
 
             # Only accumulate heatmap for 3+ node fixes (unique position).
-            # 2-node LOPs are lines, not points — their position is arbitrary.
+            # 2-node LOPs are lines, not points - their position is arbitrary.
             if fix.node_count >= 3:
                 await db_module.add_fix_to_heatmap(
                     database,
@@ -220,7 +220,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         )
         app.state.pairer = pairer
 
-        # Start event loop watchdog — logs diagnostics if the loop blocks.
+        # Start event loop watchdog - logs diagnostics if the loop blocks.
         from beagle_server.watchdog import start_watchdog, stop_watchdog
         watchdog = start_watchdog(asyncio.get_event_loop(), threshold_s=2.0)
 
@@ -337,7 +337,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
 
         user_count = await db_module.count_users(registry_db)
         if user_count > 0:
-            # Not the first user — must be authenticated as admin
+            # Not the first user - must be authenticated as admin
             await auth_module.require_admin(request, registry_db)
 
         # Check for duplicate username
@@ -445,7 +445,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         }
 
     # -------------------------------------------------------------------
-    # GET /auth/users  -- list all users (admin only)
+    # GET /auth/users  - list all users (admin only)
     # -------------------------------------------------------------------
     @app.get("/auth/users")
     async def auth_list_users(
@@ -459,7 +459,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return [{k: v for k, v in u.items() if k not in _strip} for u in users]
 
     # -------------------------------------------------------------------
-    # PATCH /auth/users/{user_id}  -- change role or password
+    # PATCH /auth/users/{user_id}  - change role or password
     # -------------------------------------------------------------------
     @app.patch("/auth/users/{user_id}")
     async def auth_patch_user(
@@ -508,7 +508,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return result
 
     # -------------------------------------------------------------------
-    # DELETE /auth/users/{user_id}  -- delete a user (admin only)
+    # DELETE /auth/users/{user_id}  - delete a user (admin only)
     # -------------------------------------------------------------------
     @app.delete("/auth/users/{user_id}")
     async def auth_delete_user(
@@ -525,7 +525,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return {"user_id": user_id, "deleted": "true"}
 
     # -------------------------------------------------------------------
-    # POST /auth/2fa/setup  -- generate TOTP secret for current user
+    # POST /auth/2fa/setup  - generate TOTP secret for current user
     # -------------------------------------------------------------------
     @app.post("/auth/2fa/setup")
     async def auth_2fa_setup(
@@ -541,7 +541,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return {"secret": secret, "otpauth_uri": uri}
 
     # -------------------------------------------------------------------
-    # POST /auth/2fa/enable  -- verify TOTP code and activate 2FA
+    # POST /auth/2fa/enable  - verify TOTP code and activate 2FA
     # -------------------------------------------------------------------
     @app.post("/auth/2fa/enable")
     async def auth_2fa_enable(
@@ -570,7 +570,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return {"status": "2fa_enabled"}
 
     # -------------------------------------------------------------------
-    # POST /auth/2fa/verify  -- complete login with TOTP code
+    # POST /auth/2fa/verify  - complete login with TOTP code
     # -------------------------------------------------------------------
     @app.post("/auth/2fa/verify")
     async def auth_2fa_verify(
@@ -621,7 +621,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         }
 
     # -------------------------------------------------------------------
-    # POST /auth/2fa/disable  -- disable 2FA (admin for any, self with code)
+    # POST /auth/2fa/disable  - disable 2FA (admin for any, self with code)
     # -------------------------------------------------------------------
     @app.post("/auth/2fa/disable")
     async def auth_2fa_disable(
@@ -815,7 +815,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         await db_module.update_user_last_login(registry_db, user["user_id"])
 
         _logger.info("OAuth login: username=%s provider=google", user["username"])
-        # Redirect to /map with token — JS will pick it up from the URL fragment
+        # Redirect to /map with token - JS will pick it up from the URL fragment
         return RedirectResponse(url=f"/map?oauth_token={session_token}", status_code=302)
 
     @app.get("/auth/oauth/accounts")
@@ -938,7 +938,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         registry_db: aiosqlite.Connection = Depends(get_registry_db),
     ) -> dict[str, str]:
         """
-        Accept a heartbeat from a node.  No auth required — nodes announce
+        Accept a heartbeat from a node.  No auth required - nodes announce
         themselves on startup and periodically so the map can display their
         position and health status even before any carrier events arrive.
 
@@ -992,7 +992,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return await db_module.fetch_fixes(database, limit=limit, max_age_s=max_age_s)
 
     # -------------------------------------------------------------------
-    # GET /api/v1/fixes/stream  -- Server-Sent Events
+    # GET /api/v1/fixes/stream  - Server-Sent Events
     # IMPORTANT: must be registered BEFORE /api/v1/fixes/{fix_id} so that
     # FastAPI does not swallow the literal path segment "stream" as fix_id.
     # -------------------------------------------------------------------
@@ -1099,7 +1099,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return {"deleted": deleted}
 
     # -------------------------------------------------------------------
-    # GET /map/heatmap -- JSON heatmap data for live client-side update
+    # GET /map/heatmap - JSON heatmap data for live client-side update
     #
     # Called by loadHeatmap() in the map page JS on every SSE new_fix event.
     # Returns {"cells": [[lat, lon, weight], ...]} which is passed directly
@@ -1117,7 +1117,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return JSONResponse(content={"cells": cells})
 
     # -------------------------------------------------------------------
-    # GET /map/data -- GeoJSON FeatureCollection for dynamic fix layer
+    # GET /map/data - GeoJSON FeatureCollection for dynamic fix layer
     #
     # Served to the map page JS via fetch('/map/data?max_age_s=N').
     # Returns fix point features (color-faded by age) and hyperbola arc
@@ -1217,7 +1217,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         }
 
     # -------------------------------------------------------------------
-    # GET /api/v1/nodes  -- list all nodes (admin)
+    # GET /api/v1/nodes  - list all nodes (admin)
     # -------------------------------------------------------------------
     @app.get("/api/v1/nodes")
     async def list_nodes(
@@ -1232,7 +1232,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return nodes
 
     # -------------------------------------------------------------------
-    # POST /api/v1/nodes  -- admin creates a node and receives its secret
+    # POST /api/v1/nodes  - admin creates a node and receives its secret
     #
     # IMPORTANT: must be registered BEFORE /api/v1/nodes/{node_id} so that
     # FastAPI does not swallow the literal path segment as node_id.
@@ -1262,7 +1262,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return {"node_id": node_id, "label": label, "secret": plaintext}
 
     # -------------------------------------------------------------------
-    # GET /api/v1/nodes/snr  -- per-node signal quality stats (unauthenticated)
+    # GET /api/v1/nodes/snr  - per-node signal quality stats (unauthenticated)
     #
     # IMPORTANT: must be registered BEFORE /api/v1/nodes/{node_id} so that
     # FastAPI does not swallow the literal path segment "snr" as node_id.
@@ -1279,13 +1279,13 @@ def create_app(config: ServerFullConfig) -> FastAPI:
 
         Each node entry includes:
           - status: "ok" | "marginal" | "stale"
-          - corr_peak stats (mean, min, p10) — FM pilot lock quality (0–1)
-          - snr_db stats (mean, min, p10) — peak_power_db minus noise_floor_db
+          - corr_peak stats (mean, min, p10) - FM pilot lock quality (0-1)
+          - snr_db stats (mean, min, p10) - peak_power_db minus noise_floor_db
           - last_event_age_s, event_count, clock info
 
-        "stale"    — no event received in the last 5 minutes.
-        "marginal" — mean sync_corr_peak below pairing.marginal_corr_peak (default 0.5).
-        "ok"       — recent events with good FM sync quality.
+        "stale"    - no event received in the last 5 minutes.
+        "marginal" - mean sync_corr_peak below pairing.marginal_corr_peak (default 0.5).
+        "ok"       - recent events with good FM sync quality.
 
         snr_db fields are null for events captured before noise floor tracking
         was added (schema < 1.4 or noise_floor_db defaulted to 0).
@@ -1327,7 +1327,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return result
 
     # -------------------------------------------------------------------
-    # GET|POST /api/v1/nodes/{node_id}/config  -- node config + heartbeat
+    # GET|POST /api/v1/nodes/{node_id}/config  - node config + heartbeat
     # -------------------------------------------------------------------
     @app.api_route("/api/v1/nodes/{node_id}/config", methods=["GET", "POST"])
     async def get_node_config(
@@ -1359,7 +1359,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         client_ip = request.client.host if request.client else None
         await db_module.update_node_seen(registry_db, node_id, client_ip)
 
-        # POST body carries heartbeat telemetry — update the in-memory
+        # POST body carries heartbeat telemetry - update the in-memory
         # heartbeat store so /map/nodes reflects live carrier state.
         if request.method == "POST":
             try:
@@ -1438,7 +1438,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             return Response(status_code=503)
 
     # -------------------------------------------------------------------
-    # POST /api/v1/nodes/{node_id}/regen-secret  -- regenerate node secret
+    # POST /api/v1/nodes/{node_id}/regen-secret  - regenerate node secret
     # -------------------------------------------------------------------
     @app.post("/api/v1/nodes/{node_id}/regen-secret")
     async def regen_node_secret(
@@ -1472,7 +1472,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return node
 
     # -------------------------------------------------------------------
-    # PATCH /api/v1/nodes/{node_id}  -- update node (admin)
+    # PATCH /api/v1/nodes/{node_id}  - update node (admin)
     # Accepts: {"enabled": bool} and/or {"config_json": str|null}
     # -------------------------------------------------------------------
     @app.patch("/api/v1/nodes/{node_id}")
@@ -1532,7 +1532,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return result
 
     # -------------------------------------------------------------------
-    # DELETE /api/v1/nodes/{node_id}  -- remove node (admin)
+    # DELETE /api/v1/nodes/{node_id}  - remove node (admin)
     # -------------------------------------------------------------------
     @app.delete("/api/v1/nodes/{node_id}")
     async def delete_node_endpoint(
@@ -1691,8 +1691,8 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return {"group_id": group_id, "deleted": True}
 
     # -------------------------------------------------------------------
-    # GET /api/v1/settings  -- read runtime-mutable server settings
-    # PATCH /api/v1/settings -- update runtime-mutable server settings (admin)
+    # GET /api/v1/settings  - read runtime-mutable server settings
+    # PATCH /api/v1/settings - update runtime-mutable server settings (admin)
     # -------------------------------------------------------------------
     @app.get("/api/v1/settings")
     async def get_settings(request: Request) -> dict[str, Any]:
@@ -1716,7 +1716,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         }
 
     # -------------------------------------------------------------------
-    # GET /map/nodes -- merged node status (no auth, read-only)
+    # GET /map/nodes - merged node status (no auth, read-only)
     #
     # Returns all nodes that have ever reported events or are registered.
     # Registered nodes have full controls (enable/disable/delete).
@@ -1730,7 +1730,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     ) -> JSONResponse:
         """
         Merged node status from the nodes table (registered) and the events
-        table (event-only).  No auth required -- read-only.
+        table (event-only).  No auth required - read-only.
 
         Response: {"nodes": [...], "server_time": float}
         Each node dict includes: node_id, label, location_lat, location_lon,
@@ -1818,7 +1818,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return JSONResponse(content={"nodes": result, "server_time": now})
 
     # -------------------------------------------------------------------
-    # GET /map/groups -- frequency groups (no auth, read-only for UI)
+    # GET /map/groups - frequency groups (no auth, read-only for UI)
     # -------------------------------------------------------------------
     @app.get("/map/groups")
     async def map_groups_data(

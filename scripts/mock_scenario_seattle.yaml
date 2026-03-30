@@ -1,5 +1,5 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
-# Beagle Mock Event Generator -- Seattle Metro Demo Scenario
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
+# Beagle Mock Event Generator - Seattle Metro Demo Scenario
 #
 # Simulates three receiver nodes observing LMR transmissions from two locations,
 # using KISW 99.9 FM as the sync reference.
@@ -34,7 +34,7 @@ sync_transmitter:
   longitude_deg: -122.3563
 
 # ---------------------------------------------------------------------------
-# Receiver nodes -- three RTL-SDR nodes around Seattle metro
+# Receiver nodes - three RTL-SDR nodes around Seattle metro
 # ---------------------------------------------------------------------------
 nodes:
   - node_id: "node-shoreline"
@@ -53,18 +53,18 @@ nodes:
 # Target transmitter locations to simulate
 # ---------------------------------------------------------------------------
 targets:
-  - label: "Target A -- Capitol Hill / First Hill"
+  - label: "Target A - Capitol Hill / First Hill"
     latitude_deg: 47.660
     longitude_deg: -122.320
     channel_hz: 462562500       # FRS Channel 1
 
-  - label: "Target B -- Downtown Bellevue"
+  - label: "Target B - Downtown Bellevue"
     latitude_deg: 47.614
     longitude_deg: -122.192
     channel_hz: 462562500
 
 # ---------------------------------------------------------------------------
-# Error model -- realistic measurement noise per node
+# Error model - realistic measurement noise per node
 #
 # ERROR SOURCE REFERENCE TABLE
 # ============================================================================
@@ -76,20 +76,20 @@ targets:
 # Corr peak quality    filtering         N/A                 Events <0.1 rejected
 # ============================================================================
 #
-# PILOT TIMING SIGMA -- recommended presets:
-#   20000 ns (20 us) -- RTL-SDR, uncalibrated crystal, 200 ms window
-#                      (100 ppm * 200 ms; poor -- use TCXO or FM calibration)
-#    2000 ns ( 2 us) -- RTL-SDR with TCXO + FM pilot phase calibration
+# PILOT TIMING SIGMA - recommended presets:
+#   20000 ns (20 us) - RTL-SDR, uncalibrated crystal, 200 ms window
+#                      (100 ppm * 200 ms; poor - use TCXO or FM calibration)
+#    2000 ns ( 2 us) - RTL-SDR with TCXO + FM pilot phase calibration
 #                      (good for freq_hop mode; neighbourhood-level accuracy)
-#     500 ns (0.5 us) -- two_sdr mode with GPS 1PPS injection
+#     500 ns (0.5 us) - two_sdr mode with GPS 1PPS injection
 #                      (excellent; street-level accuracy)
-#     100 ns (0.1 us) -- two_sdr + TCXO + GPS 1PPS (theoretical limit)
+#     100 ns (0.1 us) - two_sdr + TCXO + GPS 1PPS (theoretical limit)
 #
-# NTP SIGMA -- affects ONLY T_sync grouping, NOT TDOA accuracy:
-#   50000000 ns (50 ms) -- stock NTP, poor internet path
-#   20000000 ns (20 ms) -- chrony with good internet servers (default)
-#    1000000 ns  (1 ms) -- chrony + local Stratum-1 GPS reference
-#       1000 ns  (1 us) -- PPS-disciplined kernel clock (GPS + chrony)
+# NTP SIGMA - affects ONLY T_sync grouping, NOT TDOA accuracy:
+#   50000000 ns (50 ms) - stock NTP, poor internet path
+#   20000000 ns (20 ms) - chrony with good internet servers (default)
+#    1000000 ns  (1 ms) - chrony + local Stratum-1 GPS reference
+#       1000 ns  (1 us) - PPS-disciplined kernel clock (GPS + chrony)
 # ============================================================================
 # ---------------------------------------------------------------------------
 error_model:

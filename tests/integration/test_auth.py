@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Integration tests for the /auth/* endpoints in userdb auth mode.
 
@@ -81,7 +81,7 @@ def admin_client():
 
 
 # ---------------------------------------------------------------------------
-# POST /auth/register — bootstrap
+# POST /auth/register - bootstrap
 # ---------------------------------------------------------------------------
 
 class TestRegisterBootstrap:
@@ -112,7 +112,7 @@ class TestRegisterBootstrap:
             "password": "adminpass",
             "role": "admin",
         })
-        # Second registration without auth → 401
+        # Second registration without auth -> 401
         resp = client.post("/auth/register", json={
             "username": "bob",
             "password": "bobspassword",
@@ -136,7 +136,7 @@ class TestRegisterBootstrap:
     def test_duplicate_username_rejected(self, client: TestClient) -> None:
         client.post("/auth/register", json={"username": "alice", "password": "alicepass", "role": "admin"})
         resp = client.post("/auth/register", json={"username": "alice", "password": "alicepass", "role": "admin"})
-        # Second bootstrap attempt — users table not empty → 401 (no auth), not 409
+        # Second bootstrap attempt - users table not empty -> 401 (no auth), not 409
         assert resp.status_code in (401, 409)
 
     def test_duplicate_as_admin_returns_409(self, client: TestClient) -> None:

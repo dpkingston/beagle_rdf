@@ -1,21 +1,21 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Band-pass (or low-pass) FIR filter + integer decimation.
 
 Maintains filter state across process() calls so consecutive buffers
-produce a continuous output stream -- essential for correct sample-index
+produce a continuous output stream - essential for correct sample-index
 arithmetic in DeltaComputer.
 
 Performance
 -----------
 Uses scipy.signal.upfirdn which natively decimates (only computes the
-output samples that survive downsampling), avoiding the ~D× wasted work
+output samples that survive downsampling), avoiding the ~Dx wasted work
 of ``lfilter`` which computes every sample then strides.  Cross-buffer
 continuity is maintained by prepending the last (num_taps-1) input
 samples as a history prefix.
 
 On macOS, an optional vDSP_desamp backend via Apple Accelerate provides
-an additional ~10-40× speedup by exploiting hardware-vectorised
+an additional ~10-40x speedup by exploiting hardware-vectorised
 strided FIR convolution.
 """
 
@@ -61,7 +61,7 @@ def _try_load_vdsp():
 try:
     _vDSP_desamp = _try_load_vdsp()
     if _vDSP_desamp is not None:
-        logger.debug("vDSP_desamp available — using Accelerate for decimation")
+        logger.debug("vDSP_desamp available - using Accelerate for decimation")
 except Exception:
     pass
 
@@ -81,7 +81,7 @@ class Decimator:
         Must be < input_rate_hz / 2.
     num_taps : int
         FIR filter length (odd number preferred).  Longer -> sharper rolloff
-        but more latency.  Default 127 gives ~80 dB stopband at 2× cutoff.
+        but more latency.  Default 127 gives ~80 dB stopband at 2x cutoff.
     """
 
     def __init__(
@@ -251,7 +251,7 @@ class Decimator:
     def prime(self, iq: np.ndarray) -> None:
         """Feed IQ samples through the filter to warm up the history buffer.
 
-        The output is discarded — this only updates the internal FIR state
+        The output is discarded - this only updates the internal FIR state
         so that the next ``process()`` call starts with current filter history
         rather than stale data from a previous block.
 
@@ -270,7 +270,7 @@ class Decimator:
         them to create enough synthetic history for the FIR to reach steady
         state.  This ensures the filter output from sample zero matches what
         it would produce if the same signal had been present for a long time
-        — eliminating the power ramp caused by mismatched history (e.g.
+        - eliminating the power ramp caused by mismatched history (e.g.
         settling-period data with different carrier state than the block).
 
         Parameters
@@ -284,7 +284,7 @@ class Decimator:
         segment = np.asarray(iq[:self._pad_len], dtype=np.complex64)
         if len(segment) == 0:
             return
-        # Tile the segment to fill at least 2× pad_len so the filter
+        # Tile the segment to fill at least 2x pad_len so the filter
         # history is fully flushed with representative data.
         reps = max(2, (2 * self._pad_len + len(segment) - 1) // len(segment))
         tiled = np.tile(segment, reps)

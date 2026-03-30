@@ -1,83 +1,83 @@
-# Beagle -- Feature TODO List
+# Beagle - Feature TODO List
 
 ## Contents
 
 **Outstanding**
 - [Project Name Change](#project-name-change)
-- [SoapySDR: long-term migration to direct SDRplay API](#soapysdر-long-term-migration-to-direct-sdrplay-api)
+- [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
 - [Onset xcorr: investigate alternative detection methods](#onset-xcorr-investigate-alternative-detection-methods)
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
 
 **Completed**
-- [✓ Node: Python GC pauses causing RSPduo FIFO overflows](#-node-python-gc-pauses-causing-rspduo-fifo-overflows)
-- [✓ Server: map rendering efficiency (O(n²) node pairs per poll)](#-server-map-rendering-efficiency-on²-node-pairs-per-poll)
-- [✓ Server: suppress HeatMap `max_val` UserWarning](#-server-suppress-heatmap-max_val-userwarning)
-- [✓ Node: onset_time_ns unit mismatch fix (3× drift)](#-node-onset_time_ns-unit-mismatch-fix-3-drift)
-- [✓ Node: RSPduo TCXO hardware timestamps (Part A)](#-node-rspduo-tcxo-hardware-timestamps-part-a)
-- [✓ Node: pipeline_offset_ns calibration (node-mapleleaf / node-greenlake)](#-node-pipeline_offset_ns-calibration-node-mapleleaf--node-greenlake)
-- [✓ Node: GC pause monitoring (gc.callbacks)](#-node-gc-pause-monitoring-gccallbacks)
-- [✓ Server: --log-level CLI flag](#-server---log-level-cli-flag)
-- [✓ Server: heartbeat access log lines demoted to DEBUG](#-server-heartbeat-access-log-lines-demoted-to-debug)
-- [✓ Server: min_nodes=2 to enable 2-node LOP fixes](#-server-min_nodes2-to-enable-2-node-lop-fixes)
-- [✓ Server: LOP baseline-too-short log demoted to DEBUG](#-server-lop-baseline-too-short-log-demoted-to-debug)
-- [✓ Web UI: User Management, Login, 2FA, Google OAuth](#-web-ui-user-management-login-2fa-google-oauth)
-- [✓ Code Cleanup: items from code review](#-code-cleanup-items-from-code-review)
-- [✓ Node CPU usage: decimator + sync BPF optimisation](#-node-cpu-usage-decimator--sync-bpf-optimisation)
-- [✓ Database Maintenance: automated pruning script](#-database-maintenance-automated-pruning-script)
-- [✓ Web UI: Group Management from GUI](#-web-ui-group-management-from-gui)
-- [✓ Web UI: Node Management from GUI](#-web-ui-node-management-from-gui)
-- [✓ Web UI: Node Frequency Groups](#-web-ui-node-frequency-groups)
-- [✓ Web UI: Per-Node Enable/Disable Control](#-web-ui-per-node-enabledisable-control)
-- [✓ Web UI: 2-Node Line-of-Position Display](#-web-ui-2-node-line-of-position-display)
-- [✓ Freq-hop: mid-transmission arrival suppression](#-freq-hop-mid-transmission-arrival-suppression)
-- [✓ User Registration and Authentication](#-user-registration-and-authentication)
-- [✓ Node SNR reporting: noise floor tracking + GET /api/v1/nodes/snr](#-node-snr-reporting-noise-floor-tracking--get-apiv1nodessnr)
-- [✓ SoapySDRPlay3: RSPduo DT-IR support via pothosware fork](#-soapysdrplay3-rspduo-dt-ir-support-via-pothosware-fork)
-- [✓ Hide Fixes (non-destructive reset)](#-hide-fixes-non-destructive-reset)
-- [✓ Fixed Time Window Display (start-time to end-time)](#-fixed-time-window-display-start-time-to-end-time)
-- [✓ Fix Popup: Human-Readable Timestamp on Hover](#-fix-popup-human-readable-timestamp-on-hover)
-- [✓ Remote Node Registration and Config Management](#-remote-node-registration-and-config-management)
-- [✓ Mock Generator -- PTT Onset/Offset Pattern](#-mock-generator----ptt-onsetoffset-pattern)
-- [✓ Heat Map Mode](#heat-map-mode-)
-- [✓ Web Page Control -- Reset Fix History](#web-page-control----reset-fix-history-)
-- [✓ Live Map Updates via SSE](#live-map-updates-via-sse-)
-- [✓ Web Page Control -- Dynamic Aging Window](#web-page-control----dynamic-aging-window-)
-- [✓ Map Control Panel](#map-control-panel-)
-- [✓ Fix Layer Ordering + Hyperbola Generator](#fix-layer-ordering--hyperbola-generator-)
+- [[x] Node: Python GC pauses causing RSPduo FIFO overflows](#-node-python-gc-pauses-causing-rspduo-fifo-overflows)
+- [[x] Server: map rendering efficiency (O(n^2) node pairs per poll)](#-server-map-rendering-efficiency-on^2-node-pairs-per-poll)
+- [[x] Server: suppress HeatMap `max_val` UserWarning](#-server-suppress-heatmap-max_val-userwarning)
+- [[x] Node: onset_time_ns unit mismatch fix (3x drift)](#-node-onset_time_ns-unit-mismatch-fix-3-drift)
+- [[x] Node: RSPduo TCXO hardware timestamps (Part A)](#-node-rspduo-tcxo-hardware-timestamps-part-a)
+- [[x] Node: pipeline_offset_ns calibration (node-mapleleaf / node-greenlake)](#-node-pipeline_offset_ns-calibration-node-mapleleaf--node-greenlake)
+- [[x] Node: GC pause monitoring (gc.callbacks)](#-node-gc-pause-monitoring-gccallbacks)
+- [[x] Server: --log-level CLI flag](#-server---log-level-cli-flag)
+- [[x] Server: heartbeat access log lines demoted to DEBUG](#-server-heartbeat-access-log-lines-demoted-to-debug)
+- [[x] Server: min_nodes=2 to enable 2-node LOP fixes](#-server-min_nodes2-to-enable-2-node-lop-fixes)
+- [[x] Server: LOP baseline-too-short log demoted to DEBUG](#-server-lop-baseline-too-short-log-demoted-to-debug)
+- [[x] Web UI: User Management, Login, 2FA, Google OAuth](#-web-ui-user-management-login-2fa-google-oauth)
+- [[x] Code Cleanup: items from code review](#-code-cleanup-items-from-code-review)
+- [[x] Node CPU usage: decimator + sync BPF optimisation](#-node-cpu-usage-decimator--sync-bpf-optimisation)
+- [[x] Database Maintenance: automated pruning script](#-database-maintenance-automated-pruning-script)
+- [[x] Web UI: Group Management from GUI](#-web-ui-group-management-from-gui)
+- [[x] Web UI: Node Management from GUI](#-web-ui-node-management-from-gui)
+- [[x] Web UI: Node Frequency Groups](#-web-ui-node-frequency-groups)
+- [[x] Web UI: Per-Node Enable/Disable Control](#-web-ui-per-node-enabledisable-control)
+- [[x] Web UI: 2-Node Line-of-Position Display](#-web-ui-2-node-line-of-position-display)
+- [[x] Freq-hop: mid-transmission arrival suppression](#-freq-hop-mid-transmission-arrival-suppression)
+- [[x] User Registration and Authentication](#-user-registration-and-authentication)
+- [[x] Node SNR reporting: noise floor tracking + GET /api/v1/nodes/snr](#-node-snr-reporting-noise-floor-tracking--get-apiv1nodessnr)
+- [[x] SoapySDRPlay3: RSPduo DT-IR support via pothosware fork](#-soapysdrplay3-rspduo-dt-ir-support-via-pothosware-fork)
+- [[x] Hide Fixes (non-destructive reset)](#-hide-fixes-non-destructive-reset)
+- [[x] Fixed Time Window Display (start-time to end-time)](#-fixed-time-window-display-start-time-to-end-time)
+- [[x] Fix Popup: Human-Readable Timestamp on Hover](#-fix-popup-human-readable-timestamp-on-hover)
+- [[x] Remote Node Registration and Config Management](#-remote-node-registration-and-config-management)
+- [[x] Mock Generator - PTT Onset/Offset Pattern](#-mock-generator----ptt-onsetoffset-pattern)
+- [[x] Heat Map Mode](#heat-map-mode-)
+- [[x] Web Page Control - Reset Fix History](#web-page-control----reset-fix-history-)
+- [[x] Live Map Updates via SSE](#live-map-updates-via-sse-)
+- [[x] Web Page Control - Dynamic Aging Window](#web-page-control----dynamic-aging-window-)
+- [[x] Map Control Panel](#map-control-panel-)
+- [[x] Fix Layer Ordering + Hyperbola Generator](#fix-layer-ordering--hyperbola-generator-)
 
 ---
 
 
-### ✓ Web UI: User Management, Login, 2FA, Google OAuth
+### [x] Web UI: User Management, Login, 2FA, Google OAuth
 
 Full browser-based authentication and user management for the web UI.
 
-**Phase 1 — Browser Login UI**
+**Phase 1 - Browser Login UI**
 - Login overlay in `userdb` mode with username/password form
 - Session tokens stored in `sessionStorage` (cleared on tab close)
-- `_fetch()` wrapper handles 401 → auto-shows login overlay
+- `_fetch()` wrapper handles 401 -> auto-shows login overlay
 - User info (username + role) and Logout button in panel header
 - `authMode` injected into TDOA JS data object
 
-**Phase 2 — Users Tab (admin-only)**
+**Phase 2 - Users Tab (admin-only)**
 - 4th tab visible only to admins in `userdb` mode
 - Full user CRUD: create, list, change role, reset password, delete
 - Armed confirmation for destructive actions (delete)
 - "Change own password" section for all authenticated users
 
-**Phase 3 — TOTP 2FA**
+**Phase 3 - TOTP 2FA**
 - Google Authenticator-compatible TOTP via `pyotp`
-- `POST /auth/2fa/setup` → returns base32 secret + otpauth URI
-- `POST /auth/2fa/enable` → verify code and activate
+- `POST /auth/2fa/setup` -> returns base32 secret + otpauth URI
+- `POST /auth/2fa/enable` -> verify code and activate
 - Modified login: returns `{requires_2fa, partial_token}` when 2FA active
-- `POST /auth/2fa/verify` → exchange partial token + code for full session
-- `POST /auth/2fa/disable` → admin recovery or self-disable with code
+- `POST /auth/2fa/verify` -> exchange partial token + code for full session
+- `POST /auth/2fa/disable` -> admin recovery or self-disable with code
 - DB: `totp_secret`/`totp_enabled` columns on users, `partial_sessions` table
 
-**Phase 4 — Google OAuth**
+**Phase 4 - Google OAuth**
 - `google_client_id` / `google_client_secret` config fields (env var fallback)
-- `GET /auth/oauth/google` → redirect to Google consent screen
-- `GET /auth/oauth/google/callback` → exchange code, find/create user, redirect
+- `GET /auth/oauth/google` -> redirect to Google consent screen
+- `GET /auth/oauth/google/callback` -> exchange code, find/create user, redirect
 - Auto-creates viewer account on first Google login (admin if no users exist)
 - OAuth-only users get `oauth:nologin` sentinel password hash
 - If user has 2FA, OAuth callback redirects with `?pending_2fa=` partial token
@@ -88,33 +88,33 @@ Files: `map_output.py`, `api.py`, `db.py`, `auth.py`, `config.py`, `pyproject.to
 Tests: 15 new tests in `test_auth.py` (543 total, all passing)
 
 
-### ✓ Code Cleanup: items from code review
+### [x] Code Cleanup: items from code review
 
 All five items from the 2026-03-12 code review have been addressed:
 
-1. **`map_output.py` — removed unused `hyperbola_points` parameter** from `build_map()`
+1. **`map_output.py` - removed unused `hyperbola_points` parameter** from `build_map()`
    and its sole caller in `api.py`.  Hyperbola rendering is now client-side via
    `/map/data`; the parameter was dead code.
 
-2. **`reporter.py` — circuit-breaker pattern implemented.**  Replaces the 3-retry
+2. **`reporter.py` - circuit-breaker pattern implemented.**  Replaces the 3-retry
    WARNING spam with: one ERROR on disconnect, silent single-attempt retries while
    disconnected, ERROR on reconnect, hourly reminder if still disconnected.
 
-3. **`api.py` — `GET /auth/users`** now uses an explicit comprehension to strip
+3. **`api.py` - `GET /auth/users`** now uses an explicit comprehension to strip
    `password_hash` instead of mutable `dict.pop()`.
 
-4. **`health.py` — `_make_handler()`** return type annotation added.
+4. **`health.py` - `_make_handler()`** return type annotation added.
 
-5. **`carrier_detect.py` — diagnostic log** moved from INFO to DEBUG.
+5. **`carrier_detect.py` - diagnostic log** moved from INFO to DEBUG.
 
-6. **`logging.py` — httpx/httpcore silenced** at WARNING level (was TODO item 1
+6. **`logging.py` - httpx/httpcore silenced** at WARNING level (was TODO item 1
    in the reporter.py docstring).
 
 ---
 
-### ✓ Database Maintenance: automated pruning script
+### [x] Database Maintenance: automated pruning script
 
-Implemented as `scripts/db_maintenance.py` — a cron-friendly script that:
+Implemented as `scripts/db_maintenance.py` - a cron-friendly script that:
 - Prunes events and fixes older than a configurable retention window (default 14 days)
 - Purges expired user sessions from the registry
 - Prunes node_config_history keeping the last N versions per node (default 50)
@@ -134,7 +134,7 @@ See ADMIN.md "Automated maintenance" section for cron setup.
 
 ---
 
-### ✓ Node CPU usage: decimator + sync BPF optimisation
+### [x] Node CPU usage: decimator + sync BPF optimisation
 
 **Observed (RSPduo hardware):** `python` consuming ~2/3 of one CPU core,
 `sdrplay_api` consuming ~1/3.  Total: ~1 full core just to run the node pipeline.
@@ -153,15 +153,15 @@ wasting (D-1)/D of compute.
    cross-correlation with the 19 kHz complex exponential template provides
    sufficient frequency selectivity; 127 taps still gives adequate rejection.
 
-3. **Carrier detector idle fast-path:** investigated but rejected — numpy
+3. **Carrier detector idle fast-path:** investigated but rejected - numpy
    dispatch overhead on 32-element arrays exceeds the Python loop savings.
    The deque.append ring buffer is the unavoidable cost.
 
 | Platform | Before | After | Improvement |
 |----------|--------|-------|-------------|
-| Linux i5-4570T | 1.9× realtime, 53% CPU | 6.8× realtime, 15% CPU | **3.6× faster** |
-| Linux i7-4765T | 2.0× realtime, 50% CPU | 5.6× realtime, 18% CPU | **2.8× faster** |
-| macOS (dev, vDSP) | 3.4× realtime, 29% CPU | 16.7× realtime, 6% CPU | **4.9× faster** |
+| Linux i5-4570T | 1.9x realtime, 53% CPU | 6.8x realtime, 15% CPU | **3.6x faster** |
+| Linux i7-4765T | 2.0x realtime, 50% CPU | 5.6x realtime, 18% CPU | **2.8x faster** |
+| macOS (dev, vDSP) | 3.4x realtime, 29% CPU | 16.7x realtime, 6% CPU | **4.9x faster** |
 
 **Remaining profile (post-optimisation):**
 - Sync decimator: ~46% of pipeline CPU
@@ -170,20 +170,20 @@ wasting (D-1)/D of compute.
 - Carrier detector: ~6%
 - FM demod + DC removal: ~7%
 
-**sdrplay_api CPU (~1/3 of one core) is intrinsic** — USB DMA, sample
+**sdrplay_api CPU (~1/3 of one core) is intrinsic** - USB DMA, sample
 unpacking, hardware CIC/FIR.  Not addressable without lowering sample rate.
 
-Pipeline now runs at 5-7× realtime on target hardware (Intel i5/i7),
+Pipeline now runs at 5-7x realtime on target hardware (Intel i5/i7),
 leaving substantial headroom for Raspberry Pi 5 deployment.
 
 ---
 
-### ✓ Web UI: 2-Node Line-of-Position Display
+### [x] Web UI: 2-Node Line-of-Position Display
 
 When only 2 nodes have valid xcorr readings for a transmission, the solver
-currently skips the fix entirely (a unique 2-D position requires ≥ 3 nodes).
+currently skips the fix entirely (a unique 2-D position requires >= 3 nodes).
 However, the single TDOA measurement still defines a **hyperbolic line of
-position (LOP)** that may be operationally useful — especially when combined
+position (LOP)** that may be operationally useful - especially when combined
 with other information such as:
 
 - Prior full fixes on the same transmitter
@@ -206,19 +206,19 @@ Or via a web UI checkbox: **"Show 2-node lines of position"** (default off).
 
 **Server-side changes:**
 - `solve_fix()` with 2 nodes currently returns a result (somewhere on the
-  hyperbola near the search centre) — the solver already runs, producing a
+  hyperbola near the search centre) - the solver already runs, producing a
   bound-constrained point on the hyperbola arc with a large residual.
 - A cleaner approach: when `node_count == 2`, skip the L-BFGS-B optimizer
   entirely and instead compute and return a `HyperbolaArc` object describing
-  the TDOA hyperbola analytically (foci = the two nodes, Δd = TDOA × c).
+  the TDOA hyperbola analytically (foci = the two nodes, deltad = TDOA x c).
   Include this in the fix GeoJSON as a `type: "lop"` feature rather than a
   `type: "fix"` marker.
 - The existing hyperbola drawing code in `map_output.py` already generates
-  hyperbola arcs for confirmed fixes — this would reuse that code path.
+  hyperbola arcs for confirmed fixes - this would reuse that code path.
 
 **Web UI changes:**
 - LOP arcs displayed as dashed lines (vs. solid for fix-associated hyperbolas)
-  in a distinct colour (e.g. amber) with a tooltip: "2-node LOP: nodeA ↔ nodeB".
+  in a distinct colour (e.g. amber) with a tooltip: "2-node LOP: nodeA <-> nodeB".
 - Toggle in the map control panel to show/hide LOP-only results independently
   of full fixes.
 - If multiple LOPs from different node pairs exist for the same transmission
@@ -239,7 +239,7 @@ outlier.
 
 ---
 
-### ✓ Web UI: Per-Node Enable/Disable Control
+### [x] Web UI: Per-Node Enable/Disable Control
 
 Add a panel in the server web UI that lets an operator see all known nodes and
 toggle whether each one contributes events to fix computation, without needing
@@ -273,9 +273,9 @@ PATCH /api/v1/nodes/{node_id}             # { "enabled": true/false }
 These are auth-gated (admin role only once user auth is implemented; shared
 token for now).
 
-**Web UI panel — "Nodes" tab in the map control panel:**
+**Web UI panel - "Nodes" tab in the map control panel:**
 
-- Table: one row per node — node_id, label, enabled toggle, last-seen age,
+- Table: one row per node - node_id, label, enabled toggle, last-seen age,
   event rate (events in last 60 s), clock source, config version.
 - Enabled column is a live toggle (checkbox or ON/OFF button) that fires
   `PATCH /api/v1/nodes/{node_id}` immediately on click.
@@ -296,24 +296,24 @@ interim CLI alternative.
 
 ---
 
-### ✓ Web UI: Group Management from GUI
+### [x] Web UI: Group Management from GUI
 
-Full group lifecycle management from the Groups tab — no CLI needed.
+Full group lifecycle management from the Groups tab - no CLI needed.
 
 - **Create group**: "+ Create Group" button opens inline form with all required
   fields (group ID, label, sync station, frequency, lat/lon) and dynamic
   target channel list (add/remove rows).
 - **Edit group**: "Edit" button on group detail panel opens the same form
   pre-populated with current values.
-- **Unassign node**: "×" button on each member tag in the detail panel removes
+- **Unassign node**: "x" button on each member tag in the detail panel removes
   a node from the group.
 - API: all endpoints already existed (`POST/PATCH/DELETE /api/v1/groups`).
 
 ---
 
-### ✓ Web UI: Node Management from GUI
+### [x] Web UI: Node Management from GUI
 
-Full node lifecycle management from the Nodes tab — no CLI needed.
+Full node lifecycle management from the Nodes tab - no CLI needed.
 
 - **Register node**: "+ Register" button shows inline form (node ID + optional
   label).  Server generates secret; displayed once in a copyable modal overlay.
@@ -329,11 +329,11 @@ Full node lifecycle management from the Nodes tab — no CLI needed.
 
 ---
 
-### ✓ Web UI: Node Frequency Groups
+### [x] Web UI: Node Frequency Groups
 
 Allow nodes to be assigned to named **frequency groups**, where all nodes in a
 group share the same sync signal and target channel list.  Groups are mutually
-exclusive — a node belongs to at most one group.  Changing a group's frequency
+exclusive - a node belongs to at most one group.  Changing a group's frequency
 plan immediately propagates to every member node via the existing config-push
 mechanism (long-poll or next heartbeat cycle).
 
@@ -358,15 +358,15 @@ with UI that makes membership and editing natural.
 
 ```sql
 node_freq_groups (
-    group_id    TEXT    PRIMARY KEY,   -- e.g. "south-cluster"
-    label       TEXT    NOT NULL,      -- display name
+    group_id    TEXT    PRIMARY KEY,   - e.g. "south-cluster"
+    label       TEXT    NOT NULL,      - display name
     description TEXT,
-    -- Frequency plan (same field names as node config):
+    - Frequency plan (same field names as node config):
     sync_freq_hz        REAL NOT NULL,
     sync_station_id     TEXT NOT NULL,
     sync_station_lat    REAL NOT NULL,
     sync_station_lon    REAL NOT NULL,
-    target_channels_json TEXT NOT NULL, -- JSON array: [{frequency_hz, label}, ...]
+    target_channels_json TEXT NOT NULL, - JSON array: [{frequency_hz, label}, ...]
     created_at  REAL    NOT NULL,
     updated_at  REAL    NOT NULL
 )
@@ -379,13 +379,13 @@ ALTER TABLE nodes ADD COLUMN freq_group_id TEXT REFERENCES node_freq_groups(grou
 ```
 
 A node with `freq_group_id = NULL` uses its own `config_json` frequency plan (or
-server defaults) — no behaviour change for existing nodes.
+server defaults) - no behaviour change for existing nodes.
 
 When the server builds the effective config for a node (at registration or config
 fetch), it merges in order:
 1. Server defaults
 2. Node's assigned `config_json` (per-node overrides)
-3. **Group's frequency plan** (highest priority — overrides per-node freq settings)
+3. **Group's frequency plan** (highest priority - overrides per-node freq settings)
 
 This means an operator can still override non-frequency params per-node while the
 group controls frequencies consistently.
@@ -411,7 +411,7 @@ be delivered within seconds.
 
 ---
 
-#### Web UI — "Groups" sub-tab within the Node Control tab
+#### Web UI - "Groups" sub-tab within the Node Control tab
 
 **Group list panel (left):**
 - List of groups with member count and a "+ New Group" button.
@@ -421,13 +421,13 @@ be delivered within seconds.
 **Group detail panel (right):**
 - Editable fields: label, description.
 - Sync signal: frequency (Hz or MHz input), station ID, lat/lon.
-- Target channels: editable list — add/remove rows of (frequency, label).
+- Target channels: editable list - add/remove rows of (frequency, label).
   Channel rows can be reordered; order is preserved in the config.
-- "Save" button — updates the group and immediately pushes to all members.
+- "Save" button - updates the group and immediately pushes to all members.
 
 **Node assignment:**
 - In the Nodes table (from the Per-Node Enable/Disable item), add a "Group"
-  column showing the assigned group name (or "—" if ungrouped).
+  column showing the assigned group name (or "--" if ungrouped).
 - Clicking the group cell opens a dropdown of available groups + "None".
   Selecting one fires `PATCH /api/v1/nodes/{node_id}` immediately.
 - Alternatively: the group detail panel has a "Members" list with an
@@ -476,7 +476,7 @@ xcorr succeeds ~85%. The root cause is that PA turn-on transitions are
 broader and noisier than the sharp PA shutoff, producing wide/ambiguous
 xcorr peaks that fail the lag or SNR gate.
 
-Offset xcorr provides ±7 µs TDOA accuracy when it works, so offset-only
+Offset xcorr provides +/-7 usec TDOA accuracy when it works, so offset-only
 fixes are viable. But onset detection would double the fix rate.
 
 **Ideas to explore (post-deployment):**
@@ -495,8 +495,8 @@ fixes are viable. But onset detection would double the fix rate.
 **Current state (2026-03-26):** Offset xcorr is the reliable path.
 node-discovery (RTL-SDR freq_hop) participates in ~50% of groups (limited by
 70% target duty cycle). When offset xcorr succeeds for all 3 nodes, the
-3-node fix residual is 5-8 µs. The server falls back to sync_delta
-(±3.5 ms) when xcorr fails, which makes that node an outlier.
+3-node fix residual is 5-8 usec. The server falls back to sync_delta
+(+/-3.5 ms) when xcorr fails, which makes that node an outlier.
 
 ---
 
@@ -530,8 +530,8 @@ configuration, deployment artefacts, and the repository directory itself.
 #### 1. Python packages (highest impact)
 
 Two top-level packages must be renamed:
-- `src/beagle_node/` → `src/<newname>/` (~20 modules)
-- `src/beagle_server/` → `src/<newname>_server/` (~15 modules)
+- `src/beagle_node/` -> `src/<newname>/` (~20 modules)
+- `src/beagle_server/` -> `src/<newname>_server/` (~15 modules)
 
 Every `import beagle_node` and `from beagle_node` statement must be updated:
 - ~60+ imports of `beagle_node.*` across source and test files
@@ -543,54 +543,54 @@ for `beagle_server` (longer string first to avoid partial matches), then
 
 #### 2. Build and packaging (`pyproject.toml`)
 
-- `[project] name = "beagle_node"` → `"<newname>"`
-- `[project.scripts]` entry point: `beagle-node = "beagle_node.main:main"` →
+- `[project] name = "beagle_node"` -> `"<newname>"`
+- `[project.scripts]` entry point: `beagle-node = "beagle_node.main:main"` ->
   `<newname>-node = "<newname>.main:main"`
-- `[tool.setuptools.packages.find] where = ["src"]` — no change needed
+- `[tool.setuptools.packages.find] where = ["src"]` - no change needed
   (discovers packages by directory name)
 - Delete generated metadata: `src/beagle_node.egg-info/`, any `dist/` artefacts
 
 #### 3. Configuration files
 
-- `config/server.example.yaml` — references to `beagle_node` in comments
-- `config/node.example.yaml` — references in comments and example values
-- Node bootstrap files (`/etc/beagle/bootstrap.yaml`) — no code reference but
+- `config/server.example.yaml` - references to `beagle_node` in comments
+- `config/node.example.yaml` - references in comments and example values
+- Node bootstrap files (`/etc/beagle/bootstrap.yaml`) - no code reference but
   operators will need to know the new package/service names
 - Any deployed `node.yaml` / `server.yaml` on live systems
 
 #### 4. Systemd and deployment
 
-- `etc/beagle-node.service` → `etc/<newname>-node.service`
+- `etc/beagle-node.service` -> `etc/<newname>-node.service`
   - `Description=`, `ExecStart=`, unit filename all reference `beagle_node`
 - Deployed systemd units on nodes must be updated (`systemctl disable` old,
   install new, `systemctl enable`)
 
 #### 5. Scripts
 
-- `scripts/manage_nodes.py` — docstring and argparse description mention `Beagle`
-- `scripts/mock_generator.py` — docstring references `Beagle`
-- `scripts/colocated_pair_test.py` — docstring
-- `scripts/calibrate_sync.py` — docstring
-- Other scripts in `scripts/` — grep for mentions
+- `scripts/manage_nodes.py` - docstring and argparse description mention `Beagle`
+- `scripts/mock_generator.py` - docstring references `Beagle`
+- `scripts/colocated_pair_test.py` - docstring
+- `scripts/calibrate_sync.py` - docstring
+- Other scripts in `scripts/` - grep for mentions
 
 #### 6. Documentation
 
-- `README.md` — title, all body references (~15+ occurrences)
-- `ADMIN.md` — title and body references
-- `TODO.md` — title and body references (this file)
+- `README.md` - title, all body references (~15+ occurrences)
+- `ADMIN.md` - title and body references
+- `TODO.md` - title and body references (this file)
 - `CONTRIBUTING.md` (if it exists)
-- `CLAUDE.md` files — project references
+- `CLAUDE.md` files - project references
 - Inline docstrings and module-level `"""` comments across the codebase
 
 #### 7. Tests
 
-- `tests/` — import paths (`from beagle_node...`, `from beagle_server...`)
-- `conftest.py` files — same
+- `tests/` - import paths (`from beagle_node...`, `from beagle_server...`)
+- `conftest.py` files - same
 - Test fixtures or mocks that reference package names
 
 #### 8. Repository and directory
 
-- Top-level directory: `Beagle/` → `<NewName>/`
+- Top-level directory: `Beagle/` -> `<NewName>/`
 - Git remote / GitHub repo name (if applicable)
 - Any CI/CD configuration (`.github/workflows/`, etc.)
 
@@ -604,16 +604,16 @@ for `beagle_server` (longer string first to avoid partial matches), then
 
 1. Choose the new name
 2. Create a branch: `git checkout -b rename-to-<newname>`
-3. Rename directories: `src/beagle_node/` → `src/<newname>/`, `src/beagle_server/` → `src/<newname>_server/`
-4. Global replace `beagle_server` → `<newname>_server` (longer string first)
-5. Global replace `beagle_node` → `<newname>` (in code, configs, docs)
-6. Global replace `Beagle` → `<NewName>` (in prose, titles, comments)
-7. Rename `etc/beagle-node.service` → `etc/<newname>-node.service`
+3. Rename directories: `src/beagle_node/` -> `src/<newname>/`, `src/beagle_server/` -> `src/<newname>_server/`
+4. Global replace `beagle_server` -> `<newname>_server` (longer string first)
+5. Global replace `beagle_node` -> `<newname>` (in code, configs, docs)
+6. Global replace `Beagle` -> `<NewName>` (in prose, titles, comments)
+7. Rename `etc/beagle-node.service` -> `etc/<newname>-node.service`
 8. Update `pyproject.toml` (name, scripts, metadata)
 9. Delete `src/beagle_node.egg-info/` and any stale build artefacts
 10. Run full test suite to verify all imports resolve
 11. `grep -ri beagle_node` across the entire repo to catch stragglers
-12. Update deployed nodes (systemd units, bootstrap configs) — separate rollout
+12. Update deployed nodes (systemd units, bootstrap configs) - separate rollout
 
 **Risk:** This is a single large commit that touches nearly every file. It will
 conflict with any in-flight branches. Coordinate timing so no other feature
@@ -635,7 +635,7 @@ upstream `rspduo-dual-independent-tuners` (or main, once it merges) as needed.
 
 **Long term:** Replace `rspduo.py`'s SoapySDR calls with direct SDRplay API
 calls via `ctypes` or a small C extension. The SoapySDR abstraction layer
-provides no benefit for the RSPduo dual-tuner path — `rspduo.py` is already
+provides no benefit for the RSPduo dual-tuner path - `rspduo.py` is already
 device-specific. Direct API access gives full control over `firstSampleNum`
 timestamps without maintaining a C++ fork.
 
@@ -645,20 +645,20 @@ timestamps without maintaining a C++ fork.
 
 ## Completed
 
-### ✓ Node: Python GC pauses causing RSPduo FIFO overflows
+### [x] Node: Python GC pauses causing RSPduo FIFO overflows
 
-Periodic buffer backlog events occurred on both nodes every ~20–30 minutes.
+Periodic buffer backlog events occurred on both nodes every ~20-30 minutes.
 Root cause was a memory leak causing the gen-2 heap to grow to ~890 MB, triggering
 full collections that paused Python long enough to overflow the RSPduo FIFO.
 
 **Resolved:** The underlying memory leak was fixed. After deploying the fix, no GC
 pauses >50 ms have been observed (monitored via the `gc.callbacks` hook added
-in `main.py`). The `gc.freeze()` mitigation is not needed — the heap no longer
+in `main.py`). The `gc.freeze()` mitigation is not needed - the heap no longer
 grows unboundedly. Monitoring hook remains in place as an early-warning system.
 
 ---
 
-### ✓ Server: map rendering efficiency (O(n²) node pairs per poll)
+### [x] Server: map rendering efficiency (O(n^2) node pairs per poll)
 
 `_collect_hyperbola_features()` in `map_output.py` iterates C(n,2) node pairs
 for every fix on every `/map/data` poll. With many fixes this will not scale.
@@ -671,7 +671,7 @@ clicks (different `max_age_s`) get their own cache slot, also invalidated on nex
 
 ---
 
-### ✓ Server: suppress HeatMap `max_val` UserWarning
+### [x] Server: suppress HeatMap `max_val` UserWarning
 
 Folium deprecated the `max_val` parameter to `HeatMap`; passing it produced a
 `UserWarning` on every map render.
@@ -681,15 +681,15 @@ Folium deprecated the `max_val` parameter to `HeatMap`; passing it produced a
 
 ---
 
-### ✓ Node: onset_time_ns unit mismatch fix (3× drift)
+### [x] Node: onset_time_ns unit mismatch fix (3x drift)
 
-`onset_time_ns` was growing ~3× faster than wall clock because `m.target_sample`
+`onset_time_ns` was growing ~3x faster than wall clock because `m.target_sample`
 (in sync-decimated space, 256 kHz) was incorrectly treated as target-decimated
-space (62.5 kHz), giving a 4× unit error in the sample→ns conversion.
+space (62.5 kHz), giving a 4x unit error in the sample->ns conversion.
 
 **Fix** in `main.py`: convert sync-decimated sample to raw before computing offset:
 ```python
-raw_event_sample = m.target_sample * _sync_dec_factor   # ×8 → raw domain
+raw_event_sample = m.target_sample * _sync_dec_factor   # x8 -> raw domain
 onset_offset_raw = raw_event_sample - sample_count
 onset_offset_ns  = int(onset_offset_raw * 1e9 / receiver.config.sample_rate_hz)
 onset_ns = buf_wall_ns + onset_offset_ns
@@ -699,9 +699,9 @@ and LOP fixes appeared immediately after deployment.
 
 ---
 
-### ✓ Node: RSPduo TCXO hardware timestamps (Part A)
+### [x] Node: RSPduo TCXO hardware timestamps (Part A)
 
-Replaced per-buffer `time.time_ns()` calls (~400 µs NTP jitter) with TCXO-derived
+Replaced per-buffer `time.time_ns()` calls (~400 usec NTP jitter) with TCXO-derived
 timestamps anchored once at the first SDRplay callback.
 
 **Implementation:** `dpkingston/SoapySDRPlay3`, branch `tdoa-hw-timestamps`
@@ -720,25 +720,25 @@ Long-term plan: direct SDRplay API (see outstanding item).
 
 ---
 
-### ✓ Node: pipeline_offset_ns calibration (node-mapleleaf / node-greenlake)
+### [x] Node: pipeline_offset_ns calibration (node-mapleleaf / node-greenlake)
 
 Calibrated using colocated_pair_test.py xcorr analysis (N=12 onset pairs,
-SNR 1.8–2.2). Measured +86 µs mean TDOA_AB; split 50/50:
+SNR 1.8-2.2). Measured +86 usec mean TDOA_AB; split 50/50:
 - `node-mapleleaf`: `pipeline_offset_ns: 43000`
 - `node-greenlake`:  `pipeline_offset_ns: -43000`
 
 ---
 
-### ✓ Node: GC pause monitoring (gc.callbacks)
+### [x] Node: GC pause monitoring (gc.callbacks)
 
 Added `gc.callbacks` hook in `main.py` that logs any GC cycle lasting >50 ms
 at WARNING level, to diagnose whether Python gen-2 collections are causing the
-periodic RSPduo FIFO overflows (~20–30 min interval). If confirmed, `gc.freeze()`
+periodic RSPduo FIFO overflows (~20-30 min interval). If confirmed, `gc.freeze()`
 will be applied after startup to eliminate gen-2 pauses on the stable heap.
 
 ---
 
-### ✓ Server: --log-level CLI flag
+### [x] Server: --log-level CLI flag
 
 Added `--log-level DEBUG|INFO|WARNING|ERROR` to `beagle-server` CLI.  Previously
 uvicorn ran at INFO internally while the app logger had no CLI control, causing
@@ -746,7 +746,7 @@ DEBUG messages to appear on the console. The flag now controls both layers.
 
 ---
 
-### ✓ Server: heartbeat access log lines demoted to DEBUG
+### [x] Server: heartbeat access log lines demoted to DEBUG
 
 `_HeartbeatAccessFilter` on `uvicorn.access` logger suppresses
 `POST /api/v1/heartbeat` access log lines at INFO (returns `False` from filter
@@ -754,7 +754,7 @@ to drop the record outright). At `--log-level DEBUG` they pass through unchanged
 
 ---
 
-### ✓ Server: min_nodes=2 to enable 2-node LOP fixes
+### [x] Server: min_nodes=2 to enable 2-node LOP fixes
 
 Server config `min_nodes` changed from 3 to 2. With only two RSPduo nodes
 deployed, 2-node groups now proceed directly to the LOP solver rather than
@@ -762,7 +762,7 @@ requiring outlier rejection from a larger group.
 
 ---
 
-### ✓ Server: LOP baseline-too-short log demoted to DEBUG
+### [x] Server: LOP baseline-too-short log demoted to DEBUG
 
 `_collect_hyperbola_features()` fires once per node pair per fix per map poll.
 For co-located nodes (all pairs fail the baseline check) this produced repeated
@@ -770,16 +770,16 @@ INFO log noise. Demoted to DEBUG.
 
 ---
 
-### ✓ Freq-hop: mid-transmission arrival suppression
+### [x] Freq-hop: mid-transmission arrival suppression
 
 Suppresses false onset events that fire when the RTL-SDR freq_hop node returns
 to the target channel and finds a carrier already transmitting.  These events
 had timing anchored to the block boundary (not the true carrier onset) and IQ
-snippets with no noise→carrier transition (all carrier), producing unreliable
-cross-correlation lags (observed as -325 µs and -410 µs outliers in
+snippets with no noise->carrier transition (all carrier), producing unreliable
+cross-correlation lags (observed as -325 usec and -410 usec outliers in
 `colocated_pair_test.py`).
 
-**Implemented — two-layer defence in `CarrierDetector`:**
+**Implemented - two-layer defence in `CarrierDetector`:**
 
 1. **Idle window counting** (`_idle_window_count` / `_min_idle_for_onset = 2`):
    After `prime_state()`, at least 2 below-threshold windows must be observed
@@ -790,7 +790,7 @@ cross-correlation lags (observed as -325 µs and -410 µs outliers in
 
 2. **Snippet transition validation** (`_snippet_has_transition()`):  After
    `prime_state()`, each emitted event's IQ snippet is checked for sufficient
-   dynamic range (≥ 6 dB across per-window power).  Catches edge cases with high
+   dynamic range (>= 6 dB across per-window power).  Catches edge cases with high
    `min_hold_windows` where the ring fills with carrier before onset fires,
    pushing noise windows out of the snippet.
 
@@ -803,7 +803,7 @@ Tests: `TestMidTransmissionSuppression` in `tests/unit/test_carrier_detect.py`
 
 ---
 
-### ✓ Node SNR reporting: noise floor tracking + GET /api/v1/nodes/snr
+### [x] Node SNR reporting: noise floor tracking + GET /api/v1/nodes/snr
 
 Each node tracks a rolling noise floor estimate (dB) and computes onset/offset
 detection thresholds relative to it.  Values are included in the heartbeat
@@ -811,7 +811,7 @@ payload and exposed via `GET /api/v1/nodes` and the map UI node tooltips.
 
 ---
 
-### ✓ SoapySDRPlay3: RSPduo DT-IR support via pothosware fork
+### [x] SoapySDRPlay3: RSPduo DT-IR support via pothosware fork
 
 RSPduo dual-tuner independent-receiver (DT-IR) support was first developed as
 a local fork with custom patches, then superseded when pothosware merged
@@ -824,18 +824,18 @@ long-term migration item and the hardware timestamps completed item above.
 
 ---
 
-### ✓ User Registration and Authentication
+### [x] User Registration and Authentication
 
 Per-user accounts with role-based access control for the server API.
 
 **Implemented (`auth_mode = userdb`):**
-- `POST /auth/register` — open for first user (bootstrap); admin-only thereafter
-- `POST /auth/login` → opaque session token (`secrets.token_urlsafe(32)`) stored in `user_sessions`
-- `POST /auth/logout` — immediately invalidates token
-- `GET /auth/me` — returns current user info
-- `GET /auth/users` — admin: list all users
-- `PATCH /auth/users/{id}` — admin: change role or reset password; viewer: change own password
-- `DELETE /auth/users/{id}` — admin only; cascade-deletes sessions
+- `POST /auth/register` - open for first user (bootstrap); admin-only thereafter
+- `POST /auth/login` -> opaque session token (`secrets.token_urlsafe(32)`) stored in `user_sessions`
+- `POST /auth/logout` - immediately invalidates token
+- `GET /auth/me` - returns current user info
+- `GET /auth/users` - admin: list all users
+- `PATCH /auth/users/{id}` - admin: change role or reset password; viewer: change own password
+- `DELETE /auth/users/{id}` - admin only; cascade-deletes sessions
 - Roles: `admin` (full access) and `viewer` (read-only endpoints)
 - Password storage: PBKDF2-HMAC-SHA256, 260 000 iterations, 16-byte random salt (OWASP 2023)
 - Session lifetime: 24 h default, configurable via `server.session_lifetime_hours`
@@ -848,13 +848,13 @@ Per-user accounts with role-based access control for the server API.
 
 ---
 
-### ✓ Hide Fixes (non-destructive reset)
+### [x] Hide Fixes (non-destructive reset)
 
 Replace the destructive "Reset Fix History" (DELETE) with a non-destructive
 "Hide Fixes" mechanism. Hide state is **per browser session** (localStorage)
 so multiple operators sharing the same server see independent views.
 
-**Core mechanism — client-side only, no server or DB changes:**
+**Core mechanism - client-side only, no server or DB changes:**
 - `localStorage.tdoa_hidden_before_t` stores a Unix timestamp (float seconds).
   Default: 0 (nothing hidden).
 - "Hide Fixes" button: sets `localStorage.tdoa_hidden_before_t = Date.now() / 1000`.
@@ -867,12 +867,12 @@ so multiple operators sharing the same server see independent views.
   fetch(`/map/data?max_age_s=${effectiveMaxAgeS}`)
   ```
   This unifies the display-window control and the hide control into the single
-  `max_age_s` parameter the server already accepts — no new endpoints needed.
+  `max_age_s` parameter the server already accepts - no new endpoints needed.
   When display window is "ALL" (`userMaxAgeS = 0`), `cutoff = hiddenBefore`
   and `effectiveMaxAgeS = now - hiddenBefore`.
 
 **Map control panel:**
-- Rename "Reset Fix History" → "Hide Fixes" (no confirmation needed; reversible).
+- Rename "Reset Fix History" -> "Hide Fixes" (no confirmation needed; reversible).
 - Add "Unhide All" button beside it.
 - Show current hide state: "Hidden before HH:MM:SS" or "All visible".
 
@@ -880,12 +880,12 @@ so multiple operators sharing the same server see independent views.
 purges (disk space reclaim, fresh deployment). Document that Hide is preferred
 for operational use.
 
-**Note:** Hide state is lost on tab/browser close. This is intentional — it is
+**Note:** Hide state is lost on tab/browser close. This is intentional - it is
 a personal view preference, not persistent server state.
 
 ---
 
-### ✓ Fixed Time Window Display (start-time to end-time)
+### [x] Fixed Time Window Display (start-time to end-time)
 
 Allow the map to display fixes within an **absolute** time window rather than
 only a rolling age from now. Complements the existing age-preset buttons.
@@ -893,7 +893,7 @@ only a rolling age from now. Complements the existing age-preset buttons.
 **Use case:** reviewing a specific incident window (e.g. "show all fixes from
 14:30 to 15:00") without new fixes entering the view as time passes.
 
-**Implementation — client-side only:**
+**Implementation - client-side only:**
 - Add two datetime-picker inputs to the control panel: "From" and "To"
   (or "From" + duration spinner: +5 min / +15 min / +1 h / custom).
 - When a fixed window is active, `loadFixes()` passes absolute bounds:
@@ -913,11 +913,11 @@ only a rolling age from now. Complements the existing age-preset buttons.
   one clears the other.
 
 **Interaction with Hide Fixes:** `hiddenBefore` still applies inside the
-fixed window — the effective lower bound is `max(hiddenBefore, fromS)`.
+fixed window - the effective lower bound is `max(hiddenBefore, fromS)`.
 
 ---
 
-### ✓ Fix Popup: Human-Readable Timestamp on Hover
+### [x] Fix Popup: Human-Readable Timestamp on Hover
 
 When the user mouses over (or clicks) a fix marker on the map, show the
 time of the fix in a human-readable form alongside the existing fields.
@@ -934,7 +934,7 @@ but is displayed as a raw integer nanosecond value.
   the GeoJSON feature properties (already present as raw int).
 - In the map JS popup template, convert to a readable string:
   ```js
-  const t = new Date(props.onset_time_ns / 1e6);  // ns → ms
+  const t = new Date(props.onset_time_ns / 1e6);  // ns -> ms
   const label = t.toLocaleString() + ' local';
   ```
 - Add a UTC line: `t.toUTCString()`.
@@ -942,20 +942,20 @@ but is displayed as a raw integer nanosecond value.
   the operator sees, since the most common question is "when did this happen?"
 
 **Note:** `onset_time_ns` is the node's best wall-clock at carrier onset
-(NTP-disciplined, ±1–10 ms for most nodes). It is not the server
+(NTP-disciplined, +/-1-10 ms for most nodes). It is not the server
 `computed_at` time. Both could be shown; `onset_time_ns` is more useful
 operationally.
 
 ---
 
-### ✓ Remote Node Registration and Config Management
+### [x] Remote Node Registration and Config Management
 
 Allow nodes to register with the server and receive their operating configuration
 over the network, rather than requiring a local `node.yaml` on every box.
 The server becomes the authoritative source for node config; a node's local file
 is only a bootstrap/fallback.
 
-**Background — current model:**
+**Background - current model:**
 Nodes read a local `node.yaml` at startup. Authentication is a single shared Bearer
 token (`reporter.auth_token`) sent on every `POST /api/v1/events`. There is no
 per-node identity, no server awareness of which nodes exist, and no way to push
@@ -974,7 +974,7 @@ Each node is pre-provisioned with a **node secret** (a random 256-bit token, sto
 in a minimal local bootstrap file, e.g. `/etc/beagle/bootstrap.yaml`):
 
 ```yaml
-# bootstrap.yaml  -- the only file a node needs locally
+# bootstrap.yaml  - the only file a node needs locally
 server_url: "https://tdoa.example.com"
 node_id: "seattle-north-01"
 node_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -991,16 +991,16 @@ The server stores a `nodes` table:
 ```sql
 nodes (
   node_id       TEXT PRIMARY KEY,
-  secret_hash   TEXT NOT NULL,      -- bcrypt hash of node_secret
-  label         TEXT,               -- human-friendly display name
+  secret_hash   TEXT NOT NULL,      - bcrypt hash of node_secret
+  label         TEXT,               - human-friendly display name
   location_lat  REAL,
   location_lon  REAL,
   location_alt_m REAL,
   registered_at REAL,
   last_seen_at  REAL,
   last_ip       TEXT,
-  enabled       INTEGER DEFAULT 1,  -- admin can disable a node
-  config_json   TEXT                -- current assigned config (JSON), NULL = use server defaults
+  enabled       INTEGER DEFAULT 1,  - admin can disable a node
+  config_json   TEXT                - current assigned config (JSON), NULL = use server defaults
 )
 ```
 
@@ -1048,7 +1048,7 @@ work when `server.auth_mode = token`. Per-node auth activates under `auth_mode =
    `PATCH /api/v1/nodes/{node_id}`. The node polls (see below) until approved.
 
 3. **On startup after initial registration**, a node that already has a local
-   cached config (see §Config Caching) can skip registration and go straight
+   cached config (see SectionConfig Caching) can skip registration and go straight
    to the config-fetch poll, using a lower-cost `GET /api/v1/nodes/{node_id}/config`.
 
 ---
@@ -1080,7 +1080,7 @@ channel while still achieving near-real-time config delivery.
 
 **Fallback polling** (simpler alternative for nodes behind strict NAT/firewall):
 Node polls `GET /api/v1/nodes/{node_id}/config` every `config_poll_interval_s`
-(default 60 s, configurable in bootstrap). Uses `If-None-Match: <etag>` → 304
+(default 60 s, configurable in bootstrap). Uses `If-None-Match: <etag>` -> 304
 when unchanged.
 
 ---
@@ -1193,7 +1193,7 @@ nodes (
   registered_at REAL, last_seen_at REAL, last_ip TEXT,
   enabled INTEGER DEFAULT 1,
   config_version INTEGER DEFAULT 0,
-  config_json TEXT,                  -- current effective config (merged)
+  config_json TEXT,                  - current effective config (merged)
   config_template_id TEXT REFERENCES config_templates(template_id)
 )
 
@@ -1221,7 +1221,7 @@ node_heartbeats (
 A standalone script is provided at `scripts/manage_nodes.py` for managing node
 records directly in the SQLite database, without requiring the REST API or web UI
 to be running.  It creates the `nodes` and `node_config_history` tables on first
-use (idempotent — safe to run against an existing server database).
+use (idempotent - safe to run against an existing server database).
 
 ```
 # Point at the registry DB directly:
@@ -1254,7 +1254,7 @@ auth system is implemented with bcrypt, existing hashes are migrated on first lo
 
 ---
 
-### ✓ Mock Generator -- PTT Onset/Offset Pattern
+### [x] Mock Generator - PTT Onset/Offset Pattern
 
 `synthesise_onset()` + `synthesise_offset()`: each transmission follows
 onset -> [N s hold] -> offset -> [M s gap] -> next onset.
@@ -1264,27 +1264,27 @@ Both onset and offset fixes are polled and printed separately.
 New CLI: `--no-offset`, `--duration-mean-s`, `--gap-mean-s`.
 Scenario YAML: `transmission_duration_mean/sigma_s`, `inter_transmission_gap_mean/sigma_s`.
 
-### Heat Map Mode ✓
+### Heat Map Mode [x]
 
 Persistent Gaussian-weighted heat map accumulated in SQLite (`heatmap_cells` table).
-Each fix spreads weight across nearby cells using `exp(-(di²+dj²)/(2σ²))`.
+Each fix spreads weight across nearby cells using `exp(-(di^2+dj^2)/(2sigma^2))`.
 Rendered as a togglable Folium `HeatMap` layer with Leaflet `LayerControl`.
 Config: `map.heatmap_cell_m`, `map.heatmap_sigma_cells`.
 API: `DELETE /api/v1/heatmap` clears accumulated data.
 Control panel: "Reset Heat Map" button.
 
-### Web Page Control -- Reset Fix History ✓
+### Web Page Control - Reset Fix History [x]
 
 `DELETE /api/v1/fixes` endpoint (auth-gated) truncates the fixes table.
 "Reset Fix History" button in the map control panel with confirmation dialog.
 
-### Live Map Updates via SSE ✓
+### Live Map Updates via SSE [x]
 
 `GET /api/v1/fixes/stream` SSE endpoint; page auto-reloads on `new_fix` event.
 LIVE / NEW FIX / OFFLINE status badge in control panel header.
 25 s keepalive comments to prevent proxy timeouts.
 
-### Web Page Control -- Dynamic Aging Window ✓
+### Web Page Control - Dynamic Aging Window [x]
 
 Age-preset buttons (1 m / 5 m / 15 m / 1 h / 6 h / 24 h / ALL) in the map
 control panel.  Clicking a button calls `loadFixes(maxAgeS)` which fetches
@@ -1294,19 +1294,19 @@ call `loadFixes()` instead of `window.location.reload()`.
 `build_fix_geojson()` in `map_output.py` produces the GeoJSON; `build_map()`
 produces the static shell (node markers, heatmap) with no embedded fix data.
 
-### Map Control Panel ✓
+### Map Control Panel [x]
 
 Dark translucent panel (top-right): server label, time, last fix age, age-preset
 buttons, fix count (updated dynamically by `loadFixes()`). Extensible: new controls
 require only a new key in `_render_control_panel`, a row/button in `_PANEL_HTML`,
 and a JS handler reading `TDOA.<key>`.
 
-### Fix Layer Ordering + Hyperbola Generator ✓
+### Fix Layer Ordering + Hyperbola Generator [x]
 
 Fixed newest-on-top ordering (Leaflet z-order requires oldest-first insertion).
 Replaced broken grid-sampling hyperbola generator with analytic parametric form
-using `x = sgn·a·cosh(t)`, `y = b_h·sinh(t)` in a local flat-earth frame.
+using `x = sgn*a*cosh(t)`, `y = b_h*sinh(t)` in a local flat-earth frame.
 
 ---
 
-Copyright (c) 2026 Douglas P. Kingston III. MIT License — see [LICENSE](LICENSE).
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](LICENSE).

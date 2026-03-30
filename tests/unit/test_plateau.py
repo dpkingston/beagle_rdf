@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for peak-derivative detection in beagle_server/tdoa.py."""
 
 from __future__ import annotations
@@ -48,12 +48,12 @@ def _make_plateau_iq(
     event_type: str = "onset",
 ) -> np.ndarray:
     """
-    Generate a synthetic IQ array with noise → ramp → plateau (onset) structure.
+    Generate a synthetic IQ array with noise -> ramp -> plateau (onset) structure.
 
     Uses an AM-modulated QPSK carrier so that the power envelope has texture
     that power-envelope cross-correlation can use to find timing offsets.
 
-    For event_type="offset": the envelope is reversed (plateau → ramp-down → noise).
+    For event_type="offset": the envelope is reversed (plateau -> ramp-down -> noise).
     """
     rng = np.random.default_rng(seed)
     snr_linear = 10.0 ** (snr_db / 10.0)
@@ -81,7 +81,7 @@ def _make_plateau_iq(
 
 def _make_plateau_pair_iq(
     n_samples: int = 1280,
-    onset_sample: int = 320,  # 1/4 of n_samples — matches real snippet encoder
+    onset_sample: int = 320,  # 1/4 of n_samples - matches real snippet encoder
     ramp_samples: int = 8,
     prop_delay_samples: int = 10,
     snr_db: float = 30.0,
@@ -93,12 +93,12 @@ def _make_plateau_pair_iq(
     Node A is farther from the transmitter by prop_delay_samples.  Both snippets
     share the same AM-modulated carrier.  Node A's snippet is the carrier
     signal shifted left (earlier) by prop_delay_samples, so A's onset appears
-    prop_delay_samples earlier in its snippet window — consistent with A
+    prop_delay_samples earlier in its snippet window - consistent with A
     detecting the carrier prop_delay_samples later in wall-clock time (A's ring-
     buffer window starts later, placing the onset at a smaller sample index).
 
     Full-snippet power-envelope xcorr (B * conj(A)) returns a positive TDOA
-    (A heard the carrier later → farther).
+    (A heard the carrier later -> farther).
     """
     rng = np.random.default_rng(seed)
     snr_linear = 10.0 ** (snr_db / 10.0)
@@ -192,8 +192,8 @@ def test_power_envelope_smooth_samples_effect():
 
 def test_peak_deriv_onset_detected_near_ramp():
     """
-    Onset at sample 512, ramp of 8 samples → peak derivative is near the middle
-    of the ramp (sample ~516).  Detection must be within ±smooth_samples of the
+    Onset at sample 512, ramp of 8 samples -> peak derivative is near the middle
+    of the ramp (sample ~516).  Detection must be within +/-smooth_samples of the
     true ramp midpoint.
     """
     onset_sample = 512
@@ -216,7 +216,7 @@ def test_peak_deriv_offset_detected_near_ramp():
     """
     For offset with onset_sample=512 + ramp=8: after reversal, the drop is near
     sample n - onset_sample - ramp/2 = 1280 - 512 - 4 = 764.
-    Detection must be within ±smooth_samples of that.
+    Detection must be within +/-smooth_samples of that.
     """
     n = 1280
     onset_sample = 512
@@ -237,7 +237,7 @@ def test_peak_deriv_offset_detected_near_ramp():
 
 
 def test_peak_deriv_all_zeros_returns_none():
-    """All-zero IQ snippet → peak_val == 0 → returns None."""
+    """All-zero IQ snippet -> peak_val == 0 -> returns None."""
     iq = np.zeros(1280, dtype=np.complex64)
     result = _find_peak_derivative_sample(iq, event_type="onset")
     assert result is None
@@ -334,7 +334,7 @@ def test_xcorr_arrays_known_lag():
     a = np.fft.ifft(A).astype(np.complex64)
     b = np.roll(a, shift)
     # b = roll(a, shift): b has content of a from shift samples EARLIER (b is closer in broadcast).
-    # a (first arg) has LATER content → expected positive lag.
+    # a (first arg) has LATER content -> expected positive lag.
     lag_ns, snr = _xcorr_arrays(a, b, fs)
     expected_ns = shift / fs * 1e9
     assert abs(lag_ns - expected_ns) < 1.5 / fs * 1e9  # within 1.5 samples
@@ -362,7 +362,7 @@ def test_xcorr_arrays_negative_lag():
     a = np.fft.ifft(A).astype(np.complex64)
     b = np.roll(a, shift)
     # shift=-5: b = roll(a,-5), b has content of a from 5 samples LATER (b is farther).
-    # b (second arg) is farther → a (first arg) is closer → expected negative lag.
+    # b (second arg) is farther -> a (first arg) is closer -> expected negative lag.
     lag_ns, _ = _xcorr_arrays(a, b, fs)
     expected_ns = shift / fs * 1e9
     assert abs(lag_ns - expected_ns) < 1.5 / fs * 1e9
@@ -373,7 +373,7 @@ def test_xcorr_arrays_negative_lag():
 # ---------------------------------------------------------------------------
 
 def test_compute_tdoa_peak_deriv_onset_zero_lag():
-    """Two identical onset snippets → TDOA ≈ 0 (nodes at same lat/lon)."""
+    """Two identical onset snippets -> TDOA ~ 0 (nodes at same lat/lon)."""
     iq = _make_plateau_iq(n_samples=1280, snr_db=25.0)
     b64 = _iq_to_b64(iq)
     ev_a = _make_event_with_snippet(47.6, -122.3, 0, b64, node_id="a")
@@ -384,7 +384,7 @@ def test_compute_tdoa_peak_deriv_onset_zero_lag():
 
 
 def test_compute_tdoa_peak_deriv_offset_zero_lag():
-    """Two identical offset snippets → TDOA ≈ 0."""
+    """Two identical offset snippets -> TDOA ~ 0."""
     iq = _make_plateau_iq(n_samples=1280, snr_db=25.0, event_type="offset")
     b64 = _iq_to_b64(iq)
     ev_a = _make_event_with_snippet(47.6, -122.3, 0, b64, node_id="a", event_type="offset")
@@ -397,9 +397,9 @@ def test_compute_tdoa_peak_deriv_offset_zero_lag():
 def test_compute_tdoa_returns_none_flat_signal():
     """
     When power-envelope xcorr has SNR < threshold (flat constant signal gives
-    SNR ≈ 1.0) and no sync_delta is present, compute_tdoa_s returns None.
+    SNR ~ 1.0) and no sync_delta is present, compute_tdoa_s returns None.
     """
-    # Flat carrier — constant power envelope → xcorr SNR ≈ 1.0 < threshold
+    # Flat carrier - constant power envelope -> xcorr SNR ~ 1.0 < threshold
     iq = np.ones(1280, dtype=np.complex64) * 0.5
     b64 = _iq_to_b64(iq)
     ev_a = {
@@ -412,7 +412,7 @@ def test_compute_tdoa_returns_none_flat_signal():
     }
     ev_b = dict(ev_a)
     ev_b["node_id"] = "b"
-    # No sync_delta_ns → fallback unavailable
+    # No sync_delta_ns -> fallback unavailable
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=2.0)
     assert tdoa is None
 
@@ -433,8 +433,8 @@ def test_compute_tdoa_sync_delta_known_lag():
     ev_a = _make_event_with_snippet(47.6, -122.3, delta_ns, b64_a, node_id="a", sample_rate_hz=fs)
     ev_b = _make_event_with_snippet(47.6, -122.3, 0, b64_b, node_id="b", sample_rate_hz=fs)
     tdoa = compute_tdoa_s(ev_a, ev_b)
-    expected_s = prop_delay / fs  # A is later → positive
+    expected_s = prop_delay / fs  # A is later -> positive
     assert tdoa is not None
     assert abs(tdoa - expected_s) < 3 / fs, (
-        f"TDOA={tdoa*1e6:.1f} µs, expected={expected_s*1e6:.1f} µs"
+        f"TDOA={tdoa*1e6:.1f} usec, expected={expected_s*1e6:.1f} usec"
     )

@@ -1,7 +1,7 @@
 # Plateau Detection Tuning Guide
 
 Plateau-anchored cross-correlation finds the moment a carrier rises to (or falls
-from) its steady-state level — a property of the transmitter, not the receiver.
+from) its steady-state level - a property of the transmitter, not the receiver.
 This makes it independent of receiver gain differences between nodes, which is the
 primary source of error in threshold-crossing TDOA.
 
@@ -16,7 +16,7 @@ Once field deployments accumulate data, use the diagnostics below to tune them.
 ### `smooth_samples = 16`
 
 Box-filter half-width applied to the power envelope before derivative computation.
-At the 64 kHz target rate, 16 samples = 250 µs of smoothing.
+At the 64 kHz target rate, 16 samples = 250 usec of smoothing.
 
 **Increase if** you see `_find_plateau_sample` returning spurious plateau indices
 on signals that look stable in the envelope (noise spikes triggering a false
@@ -30,7 +30,7 @@ Excessive smoothing blurs sharp transitions below the `min_consecutive` threshol
 **Data to collect:** For each transmitter type in the deployment, run
 `colocated_pair_test.py --analyze-snippets` and note the `transition_w` values
 (in windows, each window = `window_samples / sample_rate_hz`). If median
-transition time < 4 × smooth_samples / sample_rate_hz, reduce smooth_samples.
+transition time < 4 x smooth_samples / sample_rate_hz, reduce smooth_samples.
 
 ---
 
@@ -65,7 +65,7 @@ plateau is confirmed. At 64 kHz and `window_samples=64`, 3 windows = 3 ms.
 **Increase if** brief mid-ramp amplitude fluctuations (e.g. from multipath) are
 triggering false plateau detections before the carrier actually stabilizes. Symptom:
 TDOA variance for co-located nodes is reduced relative to threshold-crossing but
-still > 50 µs std for clean LOS paths.
+still > 50 usec std for clean LOS paths.
 
 **Decrease if** short transmissions (PTT < 200 ms) frequently yield no plateau
 detection because the carrier never stays stable long enough. Symptom: high
@@ -81,7 +81,7 @@ disproportionately, reduce min_consecutive.
 ### `min_plateau_sharpness = 3.0`
 
 Minimum ratio of peak derivative to median derivative in the snippet. Rejects
-snippets where the "ramp" is not clearly sharper than background noise — i.e.,
+snippets where the "ramp" is not clearly sharper than background noise - i.e.,
 gradual-onset transmitters or noise-only captures.
 
 **Increase if** you see xcorr results with high SNR (> min_xcorr_snr) but wildly
@@ -110,11 +110,11 @@ method.
 
 The xcorr SNR has a structural ceiling: the PA cutoff spans only ~16 of the 640 xcorr
 output samples (2.5%).  Even for strong signals the peak/mean ratio tends toward
-1.0–2.0 rather than 10+ as it might for a pure tone.  A threshold of 1.3 accepts the
+1.0-2.0 rather than 10+ as it might for a pure tone.  A threshold of 1.3 accepts the
 large majority of real transmissions while rejecting noise-only correlations, which
-cluster near 1.0–1.05.  Field-validated on 92 co-located offset pairs:
+cluster near 1.0-1.05.  Field-validated on 92 co-located offset pairs:
 threshold=1.3 accepted 36/46 (up from 32/46 at 1.5) with no increase in false detections
-(geo filter handles those — see below).
+(geo filter handles those - see below).
 
 **Increase if** xcorr is accepting pairs with obviously scattered TDOA values (cross-
 correlation peak is on noise, not signal).  Start at 1.5.
@@ -130,10 +130,10 @@ Maximum physical baseline distance between any two nodes in the deployment (km).
 to compute the maximum plausible xcorr lag:
 
 ```
-max_lag_ns = max_xcorr_baseline_km × 1000 / c × 1e9
+max_lag_ns = max_xcorr_baseline_km x 1000 / c x 1e9
 ```
 
-At 100 km this gives ≈ 333 µs.  Any xcorr lag exceeding this value is geometrically
+At 100 km this gives ~ 333 usec.  Any xcorr lag exceeding this value is geometrically
 impossible (light travel time) and is rejected regardless of SNR, falling back to
 sync_delta.
 
@@ -143,8 +143,8 @@ slip through; setting too small rejects valid measurements from widely-separated
 pairs.
 
 Field validation: with a 100 km limit, 7 onset pairs that previously passed the
-SNR≥1.5 threshold (lags 386–782 µs) were correctly rejected and routed to sync_delta.
-The 36 accepted xcorr pairs all had lags ≤ 7 µs (consistent with co-located geometry).
+SNR>=1.5 threshold (lags 386-782 usec) were correctly rejected and routed to sync_delta.
+The 36 accepted xcorr pairs all had lags <= 7 usec (consistent with co-located geometry).
 
 ---
 
@@ -153,7 +153,7 @@ The 36 accepted xcorr pairs all had lags ≤ 7 µs (consistent with co-located g
 1. Run `colocated_pair_test.py --db <path>` with two co-located nodes for at least
    2 hours covering the transmitters of interest.
 2. Check the TDOA distribution for co-located pairs. With plateau-anchored xcorr,
-   a co-located pair should show mean ≈ 0 µs and std < 20 µs for signals with
+   a co-located pair should show mean ~ 0 usec and std < 20 usec for signals with
    clean transitions. If std is larger, the plateau parameter is the likely cause
    (see per-parameter guidance above).
 3. Check the plateau detection success rate: count events where `compute_tdoa_s()`
@@ -171,13 +171,13 @@ max_xcorr_baseline_km) are field-validated on 92 co-located offset pairs (2026-0
 
 | Parameter               | Default  | Likely range   | Notes                         |
 |-------------------------|----------|----------------|-------------------------------|
-| smooth_samples          | 16       | 8–32           | heuristic                     |
-| stable_fraction         | 0.15     | 0.05–0.30      | heuristic                     |
-| min_consecutive         | 3        | 2–8            | heuristic                     |
-| min_plateau_sharpness   | 3.0      | 2.0–6.0        | heuristic                     |
-| min_xcorr_snr           | 1.3      | 1.1–1.5        | field-validated                |
+| smooth_samples          | 16       | 8-32           | heuristic                     |
+| stable_fraction         | 0.15     | 0.05-0.30      | heuristic                     |
+| min_consecutive         | 3        | 2-8            | heuristic                     |
+| min_plateau_sharpness   | 3.0      | 2.0-6.0        | heuristic                     |
+| min_xcorr_snr           | 1.3      | 1.1-1.5        | field-validated                |
 | max_xcorr_baseline_km   | 100.0    | actual max km  | set to deployment max baseline |
 
 ---
 
-Copyright (c) 2026 Douglas P. Kingston III. MIT License — see [LICENSE](../LICENSE).
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](../LICENSE).

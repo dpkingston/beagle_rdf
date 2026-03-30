@@ -81,7 +81,7 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 | `node_location.altitude_m` | float | Node altitude above MSL (default 0) |
 | `node_location.uncertainty_m` | float | Node location uncertainty radius (default 5 m) |
 
-#### The TDOA measurement — primary fields
+#### The TDOA measurement - primary fields
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -99,7 +99,7 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `onset_time_ns` | int | GPS-disciplined wall-clock nanoseconds at the carrier edge.  Accuracy ±1–10 µs (kernel scheduling); used by the server only to match events across nodes, not for TDOA computation. |
+| `onset_time_ns` | int | GPS-disciplined wall-clock nanoseconds at the carrier edge.  Accuracy +/-1-10 usec (kernel scheduling); used by the server only to match events across nodes, not for TDOA computation. |
 | `offset_time_ns` | int or null | Wall-clock time of the carrier offset (falling edge).  May be null if the offset has not yet been observed. |
 | `duration_ms` | float or null | Transmission duration (ms).  Null until offset is known. |
 
@@ -111,20 +111,20 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 | `mean_power_db` | float | Mean power over the carrier-active period (dBFS) |
 | `noise_floor_db` | float | Estimated noise floor (dBFS) |
 | `snr_db` | float | Signal-to-noise ratio (dB) |
-| `sync_corr_peak` | float | FM pilot cross-correlation quality at the matched SyncEvent (0–1).  Values below ~0.3 indicate a weak or noisy pilot. |
+| `sync_corr_peak` | float | FM pilot cross-correlation quality at the matched SyncEvent (0-1).  Values below ~0.3 indicate a weak or noisy pilot. |
 
 #### Clock quality
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `clock_source` | enum | `"gps_1pps"`, `"ntp"`, `"unknown"` — source of the kernel clock used for `onset_time_ns` |
+| `clock_source` | enum | `"gps_1pps"`, `"ntp"`, `"unknown"` - source of the kernel clock used for `onset_time_ns` |
 | `clock_uncertainty_ns` | int | Chrony-reported RMS offset uncertainty (nanoseconds) |
 
 #### IQ cross-correlation (required)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `iq_snippet_b64` | string | **Required.** Base64-encoded int8-interleaved IQ samples captured at the carrier edge.  Used by the server to cross-correlate matched events from different nodes for µs-level TDOA refinement.  Encoding: interleaved real/imag int8, so N complex samples → 2N bytes.  The node captures `carrier.snippet_samples` (default 1280) complex samples centred on the transition edge. |
+| `iq_snippet_b64` | string | **Required.** Base64-encoded int8-interleaved IQ samples captured at the carrier edge.  Used by the server to cross-correlate matched events from different nodes for usec-level TDOA refinement.  Encoding: interleaved real/imag int8, so N complex samples -> 2N bytes.  The node captures `carrier.snippet_samples` (default 1280) complex samples centred on the transition edge. |
 | `channel_sample_rate_hz` | float | **Required.** Sample rate of the IQ snippet in Hz (`sdr_rate_hz / target_decimation`).  The server uses this to convert the xcorr peak lag (samples) to nanoseconds. |
 
 The server rejects any event missing either field with HTTP 422.
@@ -145,13 +145,13 @@ thread**:
 
 ```
 pipeline thread                    worker thread
-    │                                  │
-    ├── reporter.submit(event) ──►     │── _deliver(event) ──► HTTP POST
-    │   (non-blocking, <1 µs)         │
-    │                                  │── retry if HTTP error
-    │                                  │
-    │   (if queue full:                │── sleep (backoff)
-    │    drop oldest event)            │
+    |                                  |
+    +-- reporter.submit(event) -->     |-- _deliver(event) --> HTTP POST
+    |   (non-blocking, <1 usec)         |
+    |                                  |-- retry if HTTP error
+    |                                  |
+    |   (if queue full:                |-- sleep (backoff)
+    |    drop oldest event)            |
 ```
 
 The worker thread uses a persistent `httpx.Client` connection (keep-alive) to
@@ -173,9 +173,9 @@ Each event gets up to 3 delivery attempts with **exponential backoff**:
 
 | Attempt | Delay before retry |
 |---------|-------------------|
-| 1 → 2 | 1 second |
-| 2 → 3 | 2 seconds |
-| 3 (final) | — |
+| 1 -> 2 | 1 second |
+| 2 -> 3 | 2 seconds |
+| 3 (final) | - |
 
 On HTTP 2xx: success, increment `events_submitted` counter.
 On HTTP 4xx/5xx or network error: retry.
@@ -244,7 +244,7 @@ summary of pipeline state.  Relevant fields:
 }
 ```
 
-Monitor `events_dropped` (persistent queue overflow → server unreachable) and
+Monitor `events_dropped` (persistent queue overflow -> server unreachable) and
 `sdr_overflows` (USB bandwidth exhaustion) in production.
 
 ### Log fields
@@ -284,4 +284,4 @@ clock:
 
 ---
 
-Copyright (c) 2026 Douglas P. Kingston III. MIT License — see [LICENSE](../../LICENSE).
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](../../LICENSE).

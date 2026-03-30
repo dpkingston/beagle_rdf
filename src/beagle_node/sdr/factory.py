@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 SDR receiver factory.
 
@@ -25,7 +25,7 @@ def create_receiver(node_config: "NodeConfig", role: str = "target") -> SDRRecei
     node_config:
         Loaded and validated node configuration.
     role:
-        'target' or 'sync' -- relevant for two_sdr mode where each role
+        'target' or 'sync' - relevant for two_sdr mode where each role
         has its own SDR config.
 
     Returns

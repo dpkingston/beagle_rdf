@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Node configuration schema and YAML loader.
 
@@ -61,7 +61,7 @@ class FreqHopConfig(BaseModel):
     block.  sync_delta_ns therefore includes the remaining time in the sync
     block after the last sync event, plus settling_samples/sample_rate_hz,
     plus the time to onset detection within the target block.  This structural
-    delay (typically 20–40 ms depending on block sizes and settling) is absent
+    delay (typically 20-40 ms depending on block sizes and settling) is absent
     in RSPduo (simultaneous channels) and single_sdr nodes.
 
     Calibration: run scripts/colocated_pair_test.py --db against a co-located
@@ -101,7 +101,7 @@ class RSPduoConfig(BaseModel):
     """SoapySDR device args for the master device (first tuner opened)."""
     slave_device_args: str | None = None
     """SoapySDR device args for the slave device.
-    If None, uses master_device_args -- correct for a single RSPduo."""
+    If None, uses master_device_args - correct for a single RSPduo."""
     buffer_size: int = 65_536
     """IQ samples per read call per channel (~33 ms at 2 MSPS)."""
     pipeline_offset_ns: int = 0
@@ -111,8 +111,8 @@ class RSPduoConfig(BaseModel):
 
     For the RSPduo in DT mode the dominant hardware effect is the TDM ADC
     interleave: ch1 (target) lags ch0 (sync) by 0.5 ADC periods.  At 2 MSPS
-    one ADC period = 500 ns → interleave ≈ 250 ns.  Default 0 is adequate for
-    most deployments; set to 250 to correct when sub-µs accuracy is needed and
+    one ADC period = 500 ns -> interleave ~ 250 ns.  Default 0 is adequate for
+    most deployments; set to 250 to correct when sub-usec accuracy is needed and
     the RSPduo is paired with another RSPduo reference.
 
     Calibration: run scripts/colocated_pair_test.py --db with this RSPduo node
@@ -165,20 +165,20 @@ class TargetChannelConfig(BaseModel):
 class CarrierDetectConfig(BaseModel):
     """Carrier detector tuning parameters.
 
-    All fields are optional — omit the entire ``carrier:`` block to keep
+    All fields are optional - omit the entire ``carrier:`` block to keep
     the pipeline defaults.  Tune these when you see false detections
     (lower thresholds / increase min_hold) or missed signals (raise
     thresholds / reduce min_hold).
 
     onset_db / offset_db calibration
     ---------------------------------
-    Real LMR signals at the ADC are typically −40 to −60 dBFS.  If the
-    node never detects a carrier, lower ``onset_db`` (e.g. −50).  The
-    default −30 dBFS works well when gain is set correctly.
+    Real LMR signals at the ADC are typically -40 to -60 dBFS.  If the
+    node never detects a carrier, lower ``onset_db`` (e.g. -50).  The
+    default -30 dBFS works well when gain is set correctly.
 
     min_release_windows
     -------------------
-    Set to 4–8 (≈ 4–8 ms at the default 64-sample / 62.5 kHz window) to
+    Set to 4-8 (~ 4-8 ms at the default 64-sample / 62.5 kHz window) to
     suppress chattering caused by brief power fades mid-transmission.
     Chattering produces bursts of measurements spaced by exactly one
     power window (~1 ms); if you see that pattern, increase this value.
@@ -191,13 +191,13 @@ class CarrierDetectConfig(BaseModel):
     Must be lower (more negative) than onset_db."""
     window_samples: int = 64
     """IQ samples averaged per power measurement window.
-    At 62.5 kHz target rate: 64 samples ≈ 1 ms."""
+    At 62.5 kHz target rate: 64 samples ~ 1 ms."""
     min_hold_windows: int = 1
     """Consecutive above-threshold windows required before onset fires.
     1 = fire immediately; 4 = require ~4 ms of sustained carrier."""
     min_release_windows: int = 1
     """Consecutive below-threshold windows required before offset fires.
-    1 = fire immediately; 4–8 recommended for real-world RF signals."""
+    1 = fire immediately; 4-8 recommended for real-world RF signals."""
     snippet_samples: int = 640
     """IQ samples captured per event snippet.
 
@@ -206,11 +206,11 @@ class CarrierDetectConfig(BaseModel):
     post-event samples are appended up to this total.
 
     Each sample is 2 int8 bytes on the wire (interleaved real/imag), so the
-    payload per event ≈ snippet_samples × 2 × 4/3 bytes base64-encoded:
+    payload per event ~ snippet_samples x 2 x 4/3 bytes base64-encoded:
 
-      640  samples → ~1.7 KB   (default; 10 ms at 64 kHz)
-      1280 samples → ~3.4 KB   (20 ms)
-      2560 samples → ~6.8 KB   (40 ms — calibration/diagnostic mode)
+      640  samples -> ~1.7 KB   (default; 10 ms at 64 kHz)
+      1280 samples -> ~3.4 KB   (20 ms)
+      2560 samples -> ~6.8 KB   (40 ms - calibration/diagnostic mode)
 
     Use ``--analyze-snippets`` in colocated_pair_test.py to determine the
     minimum value needed to cover your transmitters' full rise/fall time, then
@@ -224,10 +224,10 @@ class CarrierDetectConfig(BaseModel):
     above snippet_samples / window_samples guarantees the shutoff is always
     captured.
 
-      None  → 3 × ceil(snippet_samples / window_samples) (safe default)
-      60    → 60 × 64 = 3840 samples = ~61 ms at 62.5 kHz (recommended)
+      None  -> 3 x ceil(snippet_samples / window_samples) (safe default)
+      60    -> 60 x 64 = 3840 samples = ~61 ms at 62.5 kHz (recommended)
 
-    Memory cost: ring_lookback_windows × window_samples × 8 bytes ≈ 30 KB at
+    Memory cost: ring_lookback_windows x window_samples x 8 bytes ~ 30 KB at
     the recommended setting (negligible).  Use analyze_fade_timing.py after
     data collection to confirm the ring is large enough for your transmitters."""
     min_active_windows_for_offset: int = 0
@@ -237,13 +237,13 @@ class CarrierDetectConfig(BaseModel):
     ``prime_state()`` sets state to ``active`` (carrier already present at block
     start), this many windows of power above ``offset_db`` must accumulate before
     a CarrierOffset is allowed.  Offsets that fire before this threshold are
-    suppressed — they represent carrier tails from a previous transmission that
+    suppressed - they represent carrier tails from a previous transmission that
     was ongoing during the sync block and drops within the first few windows of
     the target block.
 
     0 (default) = disabled.  With prime_state() using onset_db as its
     threshold, PLL settling transients no longer trigger false active states,
-    so this guard is rarely needed.  Set to 4–10 as defence-in-depth if
+    so this guard is rarely needed.  Set to 4-10 as defence-in-depth if
     spurious block-start offsets persist.
 
     Note: offsets that follow a genuine onset in the same block (i.e., the
@@ -256,11 +256,11 @@ class CarrierDetectConfig(BaseModel):
     collected this many additional windows of IQ *after* the threshold crossing.
     _encode_combined() places the transition at the snippet midpoint, independent
     of min_hold_windows.  This ensures consistent snippet anchoring across nodes
-    with different carrier detector settings — essential for mixed-hardware xcorr TDOA.
+    with different carrier detector settings - essential for mixed-hardware xcorr TDOA.
 
     Trade-offs:
-    - Latency: each event is delayed by snippet_post_windows × window_samples /
-      sample_rate_hz (e.g. 5 windows × 64 samples / 62500 Hz ≈ 5 ms).
+    - Latency: each event is delayed by snippet_post_windows x window_samples /
+      sample_rate_hz (e.g. 5 windows x 64 samples / 62500 Hz ~ 5 ms).
     - If an offset occurs during post-collection for an onset (or vice versa), the
       pending event is emitted immediately with only the pre-event snippet."""
 

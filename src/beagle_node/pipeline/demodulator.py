@@ -1,9 +1,9 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 FM discriminator demodulator.
 
 Converts a complex IQ stream (bandlimited to one FM channel) into
-instantaneous frequency deviation -- i.e., demodulated audio.
+instantaneous frequency deviation - i.e., demodulated audio.
 
 Algorithm: angle(conj(x[n-1]) * x[n]) / (2pi * deltat)
 This is the standard FM discriminator, numerically equivalent to

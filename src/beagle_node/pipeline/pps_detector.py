@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 GPS 1PPS spike detector for the two_sdr operating mode.
 
@@ -136,7 +136,7 @@ class PPSDetector:
                     self._last_anchor_sample = window_center
                 # Don't add spike windows to baseline
             else:
-                # Quiet window -- update baseline
+                # Quiet window - update baseline
                 self._baseline_buf.append(power_db)
                 if len(self._baseline_buf) > self._baseline_n:
                     self._baseline_buf.pop(0)

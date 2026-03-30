@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Quick SDR connectivity and IQ sanity check.
 Run outside the virtualenv (needs system SoapySDR bindings):
@@ -10,7 +10,7 @@ import sys
 import numpy as np
 import SoapySDR
 
-FREQ_HZ   = 99.9e6    # KISW FM -- strong signal, confirms reception
+FREQ_HZ   = 99.9e6    # KISW FM - strong signal, confirms reception
 RATE_SPS  = 2.048e6
 GAIN_DB   = 0
 N_SAMPLES = 131_072   # ~64 ms
@@ -24,7 +24,7 @@ def main() -> int:
         print(f"  driver={d.get('driver','?')}  label={d.get('label','?')}")
 
     if not results:
-        print("ERROR: No SDR found -- check USB connection and driver", file=sys.stderr)
+        print("ERROR: No SDR found - check USB connection and driver", file=sys.stderr)
         return 1
 
     # --- open ---
@@ -70,9 +70,9 @@ def main() -> int:
     print(f"  Any non-zero     : {np.any(samples != 0)}")
 
     if power_db < -40:
-        print("\nWARNING: Very low power -- check antenna connection or increase gain")
+        print("\nWARNING: Very low power - check antenna connection or increase gain")
     elif power_db > -3:
-        print("\nWARNING: Very high power -- may be clipping, reduce gain")
+        print("\nWARNING: Very high power - may be clipping, reduce gain")
     else:
         print(f"\nOK: Signal level looks reasonable for FM reception")
 

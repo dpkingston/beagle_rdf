@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for pipeline/pps_detector.py."""
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def test_double_trigger_suppressed():
     quiet = _noise(10_000, power_db=-60.0, rng=rng)
     det.process(quiet, start_sample=0)
 
-    # Two spikes 1000 samples apart (0.49 ms at 2 MSPS -- well within 0.1 s)
+    # Two spikes 1000 samples apart (0.49 ms at 2 MSPS - well within 0.1 s)
     iq = _noise(8192, power_db=-60.0, rng=rng)
     spike_amp = 10 ** (-10.0 / 20.0)
     iq[500:516]  = spike_amp
@@ -154,7 +154,7 @@ def test_two_spikes_one_second_apart():
     iq1 = _spike(4096, 500, 16, noise_db=-60.0, spike_db=-10.0, rng=rng)
     events1 = det.process(iq1, start_sample=10_000)
 
-    # Second spike -- well after min_spacing
+    # Second spike - well after min_spacing
     quiet2 = _noise(10_000, power_db=-60.0, rng=rng)
     det.process(quiet2, start_sample=14_096)
 

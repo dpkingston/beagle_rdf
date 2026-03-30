@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Live FM pilot sync detection verification.
 
@@ -9,12 +9,12 @@ reporting live statistics: events/sec, correlation peak, crystal correction.
 A high correlation peak (> 0.3) and stable crystal correction (near 1.0)
 confirm that the 19 kHz pilot is being reliably extracted.
 
-Primary usage (recommended) -- uses the actual node receiver + pipeline config:
+Primary usage (recommended) - uses the actual node receiver + pipeline config:
 --------------------------------------------------------------------
 python3 scripts/verify_sync.py --config tmp/node.rspduo.local.yaml --duration 30
 python3 scripts/verify_sync.py --config tmp/node.rtl-sdr.yaml --duration 30
 
-Simple usage -- bare RTL-SDR only, no config file needed:
+Simple usage - bare RTL-SDR only, no config file needed:
 --------------------------------------------------------------------
 python3 scripts/verify_sync.py --freq 99.9e6 --gain 0 --duration 30
 
@@ -91,7 +91,7 @@ def _print_header(freq_hz: float, gain: float, sdr_rate: float, sync_rate: float
     print(f"Running for {duration:.0f} s  (Ctrl-C to stop early)\n")
     print(f"{'Time':>6}  {'Events':>8}  {'Rate/s':>7}  "
           f"{'CorPeak':>8}  {'Crystal':>10}  {'Power':>8}")
-    print(f"  (ideal FM power: -10 to -40 dBFS; crystal <±50 ppm when pilot is good)")
+    print(f"  (ideal FM power: -10 to -40 dBFS; crystal <+/-50 ppm when pilot is good)")
     print("-" * 65)
 
 
@@ -106,8 +106,8 @@ def _report_loop(dec, dem, det, buf: np.ndarray, n: int,
 
     # Raw IQ power in dBFS (full scale = 1.0 for CF32 SoapySDR output).
     # Ideal FM signal: -10 to -40 dBFS.
-    # Near 0 dBFS → ADC saturation (reduce gain).
-    # Below -50 dBFS → signal too weak or wrong antenna (increase gain or check connections).
+    # Near 0 dBFS -> ADC saturation (reduce gain).
+    # Below -50 dBFS -> signal too weak or wrong antenna (increase gain or check connections).
     power_linear = float(np.mean(np.abs(iq) ** 2))
     state["last_power_dbfs"] = 10.0 * math.log10(max(power_linear, 1e-12))
 
@@ -115,10 +115,10 @@ def _report_loop(dec, dem, det, buf: np.ndarray, n: int,
     audio  = dem.process(iq_dec)
     events = det.process(audio, start_sample=dec_start)
 
-    pilot_period = det.sample_rate_hz / 19_000.0   # ≈13.47 samples at 256 kHz
+    pilot_period = det.sample_rate_hz / 19_000.0   # ~13.47 samples at 256 kHz
     # Expected stdev of (sample_index % pilot_period) if Phase 1 interpolation is active:
-    # offsets are uniformly distributed in [-half_period, +half_period] → σ = pilot_period/√12.
-    # Without Phase 1 (window-centre only), the value is constant → σ ≈ 0.
+    # offsets are uniformly distributed in [-half_period, +half_period] -> sigma = pilot_period/sqrt12.
+    # Without Phase 1 (window-centre only), the value is constant -> sigma ~ 0.
     state["pilot_period"] = pilot_period
     state["sync_period_samples"] = det.sync_period_samples
 
@@ -127,8 +127,8 @@ def _report_loop(dec, dem, det, buf: np.ndarray, n: int,
         state["last_correction"] = e.sample_rate_correction
         state["last_phase"]      = e.pilot_phase_rad
         # Record (sample_index % pilot_period) to diagnose Phase 1 interpolation.
-        # After Phase 1: offsets span all zero-crossings → σ ≈ pilot_period/√12 ≈ 3.8 samples.
-        # Before Phase 1: constant window-centre → σ ≈ 0.
+        # After Phase 1: offsets span all zero-crossings -> sigma ~ pilot_period/sqrt12 ~ 3.8 samples.
+        # Before Phase 1: constant window-centre -> sigma ~ 0.
         state["phase_mods"].append(e.sample_index % pilot_period)
 
     state["window_events"] += len(events)
@@ -147,7 +147,7 @@ def _maybe_report(state: dict, t_report_ref: list, t_start: float) -> None:
         corr_ppm = (state["last_correction"] - 1.0) * 1e6
         state["last_corr_ppm"] = corr_ppm
         # Snapshot ppm for the drift check in the summary.
-        # Require ≥ 100 events so the calibrator has had real data to converge
+        # Require >= 100 events so the calibrator has had real data to converge
         # before we lock in the baseline.  On hardware with a long initialisation
         # delay (e.g. RSPduo sdrplay service startup, ~15 s of timeouts) the
         # elapsed-time check alone fires too early, during the lock-in transient.
@@ -202,7 +202,7 @@ def run_with_config(args: argparse.Namespace) -> int:
         with receiver:
             if config.sdr_mode == "rspduo" and hasattr(receiver, "paired_stream"):
                 # RSPduoReceiver.paired_stream() reads BOTH channels on every
-                # iteration -- the only correct way to drive DT mode.  We only
+                # iteration - the only correct way to drive DT mode.  We only
                 # feed the sync buffer into the pilot pipeline.
                 dummy_buf = None
                 for sync_buf, target_buf, _buf_wall_ns in receiver.paired_stream():
@@ -309,44 +309,44 @@ def _print_summary(state: dict, elapsed: float) -> int:
     if ppm_at_10 is not None and elapsed >= 15.0:
         drift = abs(final_ppm - ppm_at_10)
         drift_ok = drift < 10.0
-        print(f"Crystal drift: {ppm_at_10:+.1f} ppm at t≈10 s → {final_ppm:+.1f} ppm at end  "
-              f"(drift={drift:.1f} ppm  {'OK' if drift_ok else 'WARN: >10 ppm -- calibrator may not have converged'})")
+        print(f"Crystal drift: {ppm_at_10:+.1f} ppm at t~10 s -> {final_ppm:+.1f} ppm at end  "
+              f"(drift={drift:.1f} ppm  {'OK' if drift_ok else 'WARN: >10 ppm - calibrator may not have converged'})")
     elif elapsed < 15.0:
-        print(f"Crystal: {final_ppm:+.1f} ppm  (run ≥ 60 s for drift check)")
+        print(f"Crystal: {final_ppm:+.1f} ppm  (run >= 60 s for drift check)")
 
     mods = state.get("phase_mods", [])
     pilot_period = state.get("pilot_period", 13.16)
-    expected_stdev = pilot_period / (12 ** 0.5)   # σ of uniform dist over [0, pilot_period)
+    expected_stdev = pilot_period / (12 ** 0.5)   # sigma of uniform dist over [0, pilot_period)
     if len(mods) >= 10:
         stdev_mod = _stats.stdev(mods)
         ratio = stdev_mod / expected_stdev
         # Check whether the sync period contains an integer number of pilot cycles.
-        # When sync_period / pilot_period ≈ integer (e.g. 7 ms × 19 kHz = 133.0 exactly),
-        # Phase 1 always snaps to the same zero-crossing, giving σ≈0 even though
+        # When sync_period / pilot_period ~ integer (e.g. 7 ms x 19 kHz = 133.0 exactly),
+        # Phase 1 always snaps to the same zero-crossing, giving sigma~0 even though
         # interpolation is working correctly.  The uniform-distribution diagnostic only
         # applies when the ratio is non-integer.
         sync_period_samples = state.get("sync_period_samples", 0)
         cycles = sync_period_samples / pilot_period if pilot_period > 0 else 0.0
         near_integer = abs(cycles - round(cycles)) < 0.02
         print(f"Phase 1 pilot interpolation: phase_mod stdev={stdev_mod:.3f} samples  "
-              f"(expected ≈{expected_stdev:.2f} if active; sync={sync_period_samples} "
+              f"(expected ~{expected_stdev:.2f} if active; sync={sync_period_samples} "
               f"samples = {cycles:.2f} pilot cycles)")
         if near_integer:
-            print(f"  OK (integer-cycle sync period): σ/σ_expected={ratio:.2f} — "
+            print(f"  OK (integer-cycle sync period): sigma/sigma_expected={ratio:.2f} - "
                   f"near-integer pilot cycles per window means Phase 1 always picks the "
-                  f"same zero-crossing.  σ≈0 is correct, not a sign of missing interpolation.")
+                  f"same zero-crossing.  sigma~0 is correct, not a sign of missing interpolation.")
         elif ratio > 0.7:
-            print(f"  ACTIVE: σ/σ_expected={ratio:.2f} — interpolation is running "
+            print(f"  ACTIVE: sigma/sigma_expected={ratio:.2f} - interpolation is running "
                   f"(each event snapped to its nearest zero-crossing)")
         else:
-            print(f"  INACTIVE or constant: σ/σ_expected={ratio:.2f} — "
-                  f"events may be stuck at window-centre (σ≈0 means no interpolation)")
+            print(f"  INACTIVE or constant: sigma/sigma_expected={ratio:.2f} - "
+                  f"events may be stuck at window-centre (sigma~0 means no interpolation)")
 
     if n > 0 and corr > 0.3:
         print("OK: Pilot detection looks good")
         return 0
     else:
-        print("WARNING: Low correlation peak -- check antenna, gain, or SDR setup")
+        print("WARNING: Low correlation peak - check antenna, gain, or SDR setup")
         return 1
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Feed stored IQ .npy files through the signal processing pipeline offline.
 
@@ -16,7 +16,7 @@ python3 scripts/replay_iq.py --sync tests/fixtures/iq_fm_kisw_99.9.npy
 # Detect LMR carrier onsets (no TDOA measurement without sync):
 python3 scripts/replay_iq.py --target tests/fixtures/iq_lmr_462.npy
 
-# Full pipeline -- FM sync + LMR target captured at the same time (single_sdr):
+# Full pipeline - FM sync + LMR target captured at the same time (single_sdr):
 python3 scripts/replay_iq.py \\
     --sync   tests/fixtures/iq_fm_kisw_99.9.npy \\
     --target tests/fixtures/iq_lmr_462.npy
@@ -168,7 +168,7 @@ def main() -> int:
 
         si = ti = 0  # sync/target block counters
         for blk in range(n_blocks):
-            raw_start = blk * FH   # no settling here -- files already start at sample 0
+            raw_start = blk * FH   # no settling here - files already start at sample 0
             if blk % 2 == 0 and sync_iq is not None and si < n_sync_blocks:
                 buf = sync_iq[si * FH:(si + 1) * FH]
                 pipeline.process_sync_buffer(buf, raw_start_sample=raw_start)
@@ -196,7 +196,7 @@ def main() -> int:
 
     if sync_iq is not None:
         rate = len(sync_events) / max(duration_s, 0.001)
-        ok = "[OK]" if rate >= 80 else "LOW -- check station/antenna/gain"
+        ok = "[OK]" if rate >= 80 else "LOW - check station/antenna/gain"
         print(f"Sync events:    {len(sync_events)}  ({rate:.1f}/s  target ~100/s)  {ok}")
 
     if target_iq is not None:

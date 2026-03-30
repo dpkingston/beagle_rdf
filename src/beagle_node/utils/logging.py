@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Structured logging configuration using structlog.
 
@@ -96,7 +96,7 @@ def configure_logging(
     root_logger.setLevel(log_level)
 
     # Silence httpx/httpcore request-level INFO lines (e.g. "HTTP Request:
-    # POST ... 201 Created") -- they add no operational value and clutter logs.
+    # POST ... 201 Created") - they add no operational value and clutter logs.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 

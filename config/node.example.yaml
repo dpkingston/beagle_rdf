@@ -1,5 +1,5 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
-# Beagle Node Configuration -- Example
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
+# Beagle Node Configuration - Example
 # Copy to node.yaml and edit for your deployment.
 
 node_id: "seattle-north-01"
@@ -23,7 +23,7 @@ location:
 #               valid when both signals fit within its bandwidth (e.g., FM +
 #               VHF LMR). Not suitable for FM + UHF LMR.
 # - rspduo:     SDRplay RSPduo dual-tuner. Two independent tuners share one
-#               24 MHz TCXO and ADC -- no GPS 1PPS required. ~250 ns
+#               24 MHz TCXO and ADC - no GPS 1PPS required. ~250 ns
 #               inter-channel timing offset calibrated via pipeline_offset_ns.
 sdr_mode: "freq_hop"
 
@@ -36,7 +36,7 @@ freq_hop:
 
   # Block sizes: set samples_per_block for symmetric mode (same size on both
   # channels), or also set target_samples_per_block for asymmetric mode.
-  # The USB callback buffer = gcd(sync_block, target_block) × 2 bytes, so both
+  # The USB callback buffer = gcd(sync_block, target_block) x 2 bytes, so both
   # block sizes must be multiples of 256 samples (= 512 bytes, one USB packet).
   #
   # Asymmetric example: sync=116736 (~57 ms) + target=233472 (~114 ms) gives
@@ -46,9 +46,9 @@ freq_hop:
   # target_samples_per_block: 116736        # target block (omit = same as sync)
 
   settling_samples: 58368                   # Discard first ~28.5 ms per block
-                                            # Measured on R820T/2: target→sync hop
-                                            # needs 19 ms raw + 1.5× safety = 28.5 ms
-                                            # (sync→target is faster: 16 ms raw).
+                                            # Measured on R820T/2: target->sync hop
+                                            # needs 19 ms raw + 1.5x safety = 28.5 ms
+                                            # (sync->target is faster: 16 ms raw).
                                             # Run measure_settling.py to recalibrate.
   sample_rate_hz: 2048000
   gain_db: 40
@@ -102,7 +102,7 @@ sync_signal:
                                # rate=2048000 the usable window is 8 ms, so keep this <= 7 ms.
   min_corr_peak: 0.3           # Reject SyncEvents below this quality threshold.
                                # Lower to 0.2 if you see 'Dropping onset/offset: no sync
-                               # within N samples' -- RSPduo typically gives 0.30-0.45.
+                               # within N samples' - RSPduo typically gives 0.30-0.45.
   max_sync_age_ms: 200.0       # Maximum age of a SyncEvent that can be paired with a
                                # carrier event.  Default 200 ms is ~28x sync_period at 7 ms.
                                # Increase if you still see 'Dropping' warnings after
@@ -125,7 +125,7 @@ carrier:
   # min_release_windows: require this many consecutive below-threshold windows
   # before the carrier is declared gone.  At 62.5 kHz target rate, 1 window ~1 ms.
   # Increase to 4-8 if you see bursts of measurements (multiple onset/offset events
-  # per transmission) spaced by ~1 ms -- that pattern means the power is hovering
+  # per transmission) spaced by ~1 ms - that pattern means the power is hovering
   # near the offset threshold and chattering.  8 windows ~8 ms hold time.
   onset_db: -30.0
   offset_db: -40.0
@@ -144,18 +144,18 @@ carrier:
                            # snippet then covers the full carrier rise/fall shape,
                            # improving xcorr accuracy for gradual-onset transmitters
                            # where co-located nodes may cross the threshold at
-                           # slightly different times. Each window ≈ 1 ms at 62.5 kHz.
-                           # Recommended: 5–10. 0 = disabled (emit immediately).
+                           # slightly different times. Each window ~ 1 ms at 62.5 kHz.
+                           # Recommended: 5-10. 0 = disabled (emit immediately).
   ring_lookback_windows: 60  # Depth of the IQ ring buffer in detector windows.
                              # Must be large enough to contain the PA shutoff at the
                              # moment offset detection fires.  Detection fires after
                              # min_release_windows consecutive below-threshold windows,
                              # which is min_release * window_samples after the fade
-                             # crosses offset_db — but a gradual fade can push the
-                             # actual shutoff much further back.  60 windows × 64
+                             # crosses offset_db - but a gradual fade can push the
+                             # actual shutoff much further back.  60 windows x 64
                              # samples = 3840 samples = ~61 ms at 62.5 kHz.  This
                              # safely covers any LMR transmitter fade.  Memory cost
-                             # is ~60 × 64 × 8 bytes = ~30 KB/channel (negligible).
+                             # is ~60 x 64 x 8 bytes = ~30 KB/channel (negligible).
                              # Use analyze_fade_timing.py to tune after data collection.
 
 reporter:

@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Beagle node entry point.
 
@@ -73,7 +73,7 @@ def _gc_callback(phase: str, info: dict) -> None:
 gc.callbacks.append(_gc_callback)
 
 # Exit code that signals "restart me with new config".
-# 75 = EX_TEMPFAIL from sysexits.h — conventional for "try again later".
+# 75 = EX_TEMPFAIL from sysexits.h - conventional for "try again later".
 # The systemd unit uses Restart=always to honour this.
 EXIT_RESTART = 75
 
@@ -81,7 +81,7 @@ EXIT_RESTART = 75
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="beagle-node",
-        description="Beagle node -- SDR capture and event reporting",
+        description="Beagle node - SDR capture and event reporting",
     )
     config_src = p.add_mutually_exclusive_group(required=True)
     config_src.add_argument("--config", metavar="PATH",
@@ -198,7 +198,7 @@ def run(args: argparse.Namespace | None = None) -> int:
     )
     reporter.start()
 
-    # Heartbeat payload — updated in the SDR loop with live telemetry.
+    # Heartbeat payload - updated in the SDR loop with live telemetry.
     # In bootstrap mode the config poll carries this data; in classic mode
     # it's sent via reporter.post_heartbeat().
     _heartbeat_payload: dict[str, object] = {
@@ -253,7 +253,7 @@ def run(args: argparse.Namespace | None = None) -> int:
             if changed_fields:
                 need_restart = True
                 logger.info(
-                    "Remote config update: SDR config changed (%s) — "
+                    "Remote config update: SDR config changed (%s) - "
                     "initiating automatic restart to apply",
                     ", ".join(changed_fields),
                 )
@@ -272,7 +272,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                 if carrier_needs_restart:
                     need_restart = True
                     logger.info(
-                        "Remote config update: carrier geometry changed — "
+                        "Remote config update: carrier geometry changed - "
                         "initiating restart"
                     )
                 # Threshold/debounce fields are hot-reloadable
@@ -434,15 +434,15 @@ def run(args: argparse.Namespace | None = None) -> int:
     # Raw ADC sample index corresponding to buf_wall_ns.
     #
     # For RSPduo (HAS_TIME): buf_wall_ns is the hardware timestamp of the first
-    # sample of the buffer pair → _buf_ref_sample = sample_count (buffer start).
+    # sample of the buffer pair -> _buf_ref_sample = sample_count (buffer start).
     #
     # For RSPduo (no HAS_TIME): buf_wall_ns = time.time_ns() after readStream()
-    # returns ≈ time of last sample of the buffer.  We still use sample_count
-    # (buffer start) here; this introduces a ~½ buffer systematic offset
+    # returns ~ time of last sample of the buffer.  We still use sample_count
+    # (buffer start) here; this introduces a ~0.5 buffer systematic offset
     # (~16 ms) that cancels between co-located nodes.
     #
     # For freq_hop: buf_wall_ns = time.time_ns() immediately after read_bytes()
-    # returns in the background thread ≈ time of the LAST raw sample of the
+    # returns in the background thread ~ time of the LAST raw sample of the
     # block (including settling region).  The block ends at raw ADC position
     # adc_pos + block_n, so _buf_ref_sample is set to that value.
     _buf_ref_sample: int = 0
@@ -453,9 +453,9 @@ def run(args: argparse.Namespace | None = None) -> int:
         if buf_wall_ns is not None:
             # Compute precise within-buffer onset position.
             # m.target_sample is in *sync-decimated* space (sample_rate/8 = 256 kHz):
-            # process_target_buffer maps carrier events from target space (÷32) back
-            # to raw (×32) then to sync space (÷8) before passing to DeltaComputer.
-            # Convert to raw (×8) and compute the signed offset from _buf_ref_sample
+            # process_target_buffer maps carrier events from target space (/32) back
+            # to raw (x32) then to sync space (/8) before passing to DeltaComputer.
+            # Convert to raw (x8) and compute the signed offset from _buf_ref_sample
             # (the raw ADC position corresponding to buf_wall_ns).  Negative means
             # the event occurred before the reference point (freq_hop case); positive
             # means after (RSPduo HAS_TIME case where buf_wall_ns is buffer start).
@@ -509,9 +509,9 @@ def run(args: argparse.Namespace | None = None) -> int:
         / _sync_dec_factor
     )
 
-    # Target channel decimated sample rate — used to annotate CarrierEvents so
+    # Target channel decimated sample rate - used to annotate CarrierEvents so
     # the server cross-correlator can convert lag samples to nanoseconds.
-    # PipelineConfig.target_decimation is fixed at 32 (2 MSPS → 64 kHz / 62.5 kHz).
+    # PipelineConfig.target_decimation is fixed at 32 (2 MSPS -> 64 kHz / 62.5 kHz).
     _target_sample_rate_hz: float = receiver.config.sample_rate_hz / 32
 
     pipeline = NodePipeline(
@@ -715,7 +715,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                         )
 
     except KeyboardInterrupt:
-        logger.info("KeyboardInterrupt -- shutting down")
+        logger.info("KeyboardInterrupt - shutting down")
     except Exception as exc:
         logger.exception("Fatal error in main loop: %s", exc)
         exit_code = 1

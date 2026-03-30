@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for beagle_server/solver.py."""
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ _C_M_S = 299_792_458.0
 # We use a simplified model: all nodes have sync_delta_ns = constant + arrival_delay_ns
 # where arrival_delay_ns = dist(tx, node) / c * 1e9.
 #
-# This produces exact TDOA = 0 when corrected -- which would place the fix at
+# This produces exact TDOA = 0 when corrected - which would place the fix at
 # the transmitter.  To test a real fix scenario, we place a target transmitter
 # at a different location and derive sync_deltas from there.
 
@@ -50,9 +50,9 @@ def _dist(lat1, lon1, lat2, lon2):
     return haversine_m(lat1, lon1, lat2, lon2)
 
 
-_SNIPPET_RATE_HZ = 1_000_000   # 1 MHz — gives ±1 µs = ~±300 m timing precision
-_SNIPPET_LEN    = 10_000       # 10 ms @ 1 MHz — enough headroom for all onset offsets
-_SNIPPET_BASE   = _SNIPPET_LEN // 4  # onset at 1/4 — matches real snippet encoder
+_SNIPPET_RATE_HZ = 1_000_000   # 1 MHz - gives +/-1 usec = ~+/-300 m timing precision
+_SNIPPET_LEN    = 10_000       # 10 ms @ 1 MHz - enough headroom for all onset offsets
+_SNIPPET_BASE   = _SNIPPET_LEN // 4  # onset at 1/4 - matches real snippet encoder
 
 # Signal model: all nodes share the same AM-modulated base snippet, shifted in
 # time by their propagation delay relative to the closest node.  The TDOA is
@@ -128,8 +128,8 @@ def make_synthetic_events(
     # Use the node with the smallest sync_delta as the carrier reference (delay=0).
     # All other nodes have a positive carrier delay proportional to how much later
     # they received the target carrier.  Power-envelope xcorr(A, B) of the rolled
-    # snippets gives lag_ns ≈ (carrier_delay_A - carrier_delay_B) / rate * 1e9
-    # = sync_delta_A - sync_delta_B  (within ±1 sample rounding from integer-
+    # snippets gives lag_ns ~ (carrier_delay_A - carrier_delay_B) / rate * 1e9
+    # = sync_delta_A - sync_delta_B  (within +/-1 sample rounding from integer-
     # sample quantisation of the carrier delay at 1 MHz).
     min_delta = min(sync_deltas)
 
@@ -270,7 +270,7 @@ def test_solve_fix_excluded_nodes_empty_by_default():
 def test_solve_fix_outlier_node_detected_and_excluded():
     """
     When one node's sync_delta_ns is wildly wrong, the outlier detector should
-    flag it and re-run the fix without it — provided at least 2 other nodes remain.
+    flag it and re-run the fix without it - provided at least 2 other nodes remain.
 
     We use 4 nodes so that after exclusion of the outlier, 3 remain, keeping
     the fix geometrically determined.  No IQ snippets: the sync_delta fallback

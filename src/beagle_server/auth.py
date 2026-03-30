@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 User authentication helpers for the TDOA aggregation server.
 
@@ -24,8 +24,8 @@ Roles
 -----
 Two roles are supported:
 
-  admin  -- full access: all management endpoints, user administration
-  viewer -- read-only access: fixes, map, events, health (no writes)
+  admin  - full access: all management endpoints, user administration
+  viewer - read-only access: fixes, map, events, health (no writes)
 
 The role is embedded in the session row so that role checks do not require a
 separate users table lookup per request.
@@ -70,7 +70,7 @@ def verify_password(plaintext: str, stored_hash: str) -> bool:
     Handles both pbkdf2 hashes (userdb) and the legacy ``sha256:<hex>``
     format used by manage_nodes.py for node secrets.
     """
-    # OAuth-only users have no password — always reject
+    # OAuth-only users have no password - always reject
     if stored_hash == "oauth:nologin":
         return False
     if stored_hash.startswith("pbkdf2:"):

@@ -1,6 +1,6 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-EventReporter -- non-blocking HTTP event submission.
+EventReporter - non-blocking HTTP event submission.
 
 Accepts CarrierEvent objects via submit(), queues them, and POSTs them to
 the central server from a background worker thread.  The pipeline is never
@@ -14,7 +14,7 @@ no per-failure logging.  Reconnection is logged at ERROR level so it stands
 out in production logs.  An hourly reminder is logged if still disconnected.
 
 If the queue is full (default 1000 events), the oldest event is dropped and
-a warning is logged -- this prevents memory growth during extended outages.
+a warning is logged - this prevents memory growth during extended outages.
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ class EventReporter:
                 pass
             with self._lock:
                 self._events_dropped += 1
-            logger.warning("Reporter queue full -- dropping oldest event")
+            logger.warning("Reporter queue full - dropping oldest event")
             try:
                 self._queue.put_nowait(event)
             except queue.Full:
@@ -164,7 +164,7 @@ class EventReporter:
         self._thread.start()
         if self._disabled:
             logger.warning(
-                "EventReporter: no server_url configured -- events will be logged "
+                "EventReporter: no server_url configured - events will be logged "
                 "locally only (set reporter.server_url in node.yaml to enable upload)"
             )
         else:
@@ -226,7 +226,7 @@ class EventReporter:
                 sleep_s = self._retry_base * (2 ** attempt)
                 time.sleep(sleep_s)
 
-        # All retries exhausted — enter disconnected state.
+        # All retries exhausted - enter disconnected state.
         self._on_fail_connected()
 
     def _try_post(self, client: httpx.Client, payload: str, event_id: str) -> bool:
@@ -256,7 +256,7 @@ class EventReporter:
         with self._lock:
             self._events_dropped += 1
         logger.error(
-            "Server unreachable at %s -- entering disconnected mode; "
+            "Server unreachable at %s - entering disconnected mode; "
             "will retry once per event without backoff",
             self._url,
         )

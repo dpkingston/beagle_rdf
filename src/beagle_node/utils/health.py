@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 HTTP health endpoint for the TDOA node.
 
@@ -140,7 +140,7 @@ class HealthState:
             if uptime < 30.0:
                 status = "starting"
             else:
-                # Sync loss is the real health indicator — target activity
+                # Sync loss is the real health indicator - target activity
                 # is intermittent by nature (push-to-talk, etc.)
                 if last_sync_age is None:
                     reasons.append("no sync events received yet")

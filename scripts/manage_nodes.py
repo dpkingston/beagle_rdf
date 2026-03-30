@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Beagle Node Config Manager
 ===========================
@@ -33,7 +33,7 @@ Database tables
 This script creates the ``nodes`` and ``node_config_history`` tables if they
 do not already exist (idempotent).  The aggregation server (beagle-server) also
 creates these tables at startup, so running this script against a live server
-database is safe — they will not conflict.
+database is safe - they will not conflict.
 
 Usage
 -----
@@ -111,7 +111,7 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Schema (subset — only the tables this script manages)
+# Schema (subset - only the tables this script manages)
 # ---------------------------------------------------------------------------
 
 _NODES_SCHEMA = """
@@ -311,7 +311,7 @@ def cmd_show(con: sqlite3.Connection, args: argparse.Namespace) -> None:
         except json.JSONDecodeError:
             print(f"config_json (raw): {r['config_json']}")
     else:
-        print("config_json:    (none — node uses server defaults)")
+        print("config_json:    (none - node uses server defaults)")
 
 
 def cmd_set_config(con: sqlite3.Connection, args: argparse.Namespace) -> None:
@@ -353,9 +353,9 @@ def cmd_set_config(con: sqlite3.Connection, args: argparse.Namespace) -> None:
     con.commit()
 
     if new_json is None:
-        print(f"Config cleared for '{node_id}' (version → {new_version}).")
+        print(f"Config cleared for '{node_id}' (version -> {new_version}).")
     else:
-        print(f"Config updated for '{node_id}' (version → {new_version}).")
+        print(f"Config updated for '{node_id}' (version -> {new_version}).")
 
 
 def cmd_enable(con: sqlite3.Connection, args: argparse.Namespace) -> None:
@@ -624,7 +624,7 @@ def cmd_group_set_node(con: sqlite3.Connection, args: argparse.Namespace) -> Non
     _record_config_history(
         con, node_id, new_version, None,
         changed_by="manage_nodes.py",
-        diff_note=f"freq_group_id → {group_id or '(none)'}",
+        diff_note=f"freq_group_id -> {group_id or '(none)'}",
     )
     con.execute(
         "UPDATE nodes SET freq_group_id = ?, config_version = ? WHERE node_id = ?",
@@ -633,9 +633,9 @@ def cmd_group_set_node(con: sqlite3.Connection, args: argparse.Namespace) -> Non
     con.commit()
 
     if group_id:
-        print(f"Node '{node_id}' assigned to group '{group_id}' (version → {new_version}).")
+        print(f"Node '{node_id}' assigned to group '{group_id}' (version -> {new_version}).")
     else:
-        print(f"Node '{node_id}' removed from its frequency group (version → {new_version}).")
+        print(f"Node '{node_id}' removed from its frequency group (version -> {new_version}).")
 
 
 # ---------------------------------------------------------------------------

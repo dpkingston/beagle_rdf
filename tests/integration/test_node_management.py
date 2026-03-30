@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Integration tests for node management API endpoints.
 
@@ -142,7 +142,7 @@ def _node_hdrs(node_id: str, secret: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/nodes -- list all nodes
+# GET /api/v1/nodes - list all nodes
 # ---------------------------------------------------------------------------
 
 def test_list_nodes_requires_admin_token(client: TestClient) -> None:
@@ -169,7 +169,7 @@ def test_list_nodes_hides_secret_hash(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/nodes/{node_id} -- single node detail
+# GET /api/v1/nodes/{node_id} - single node detail
 # ---------------------------------------------------------------------------
 
 def test_get_node_ok(client: TestClient) -> None:
@@ -195,7 +195,7 @@ def test_get_node_requires_admin_token(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/nodes/register -- node self-registration
+# POST /api/v1/nodes/register - node self-registration
 # ---------------------------------------------------------------------------
 
 def test_register_returns_pending_when_no_config(client: TestClient) -> None:
@@ -278,7 +278,7 @@ def test_register_no_headers_returns_401(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/nodes/{node_id}/config -- fetch config (node auth)
+# GET /api/v1/nodes/{node_id}/config - fetch config (node auth)
 # ---------------------------------------------------------------------------
 
 def test_get_config_pending_when_no_config_assigned(client: TestClient) -> None:
@@ -319,7 +319,7 @@ def test_get_config_returns_304_on_long_poll_timeout(client: TestClient) -> None
 
 
 def test_get_config_returns_immediately_when_ahead_of_since_version(client: TestClient) -> None:
-    """since_version=0 with current version=1 → returns immediately without waiting."""
+    """since_version=0 with current version=1 -> returns immediately without waiting."""
     resp = client.get(
         f"/api/v1/nodes/{_NODE_2_ID}/config",
         headers=_node_hdrs(_NODE_2_ID, _NODE_2_SECRET),
@@ -347,7 +347,7 @@ def test_get_config_node_id_mismatch_returns_403(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# PATCH /api/v1/nodes/{node_id} -- update node (admin)
+# PATCH /api/v1/nodes/{node_id} - update node (admin)
 # ---------------------------------------------------------------------------
 
 def test_patch_disable_node(client: TestClient) -> None:
@@ -433,7 +433,7 @@ def test_patch_node_requires_admin_token(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/events -- nodedb auth mode
+# POST /api/v1/events - nodedb auth mode
 # ---------------------------------------------------------------------------
 
 def _make_test_snippet_b64() -> str:

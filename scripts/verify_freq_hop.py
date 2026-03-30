@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 End-to-end verification of freq_hop mode using pyrtlsdr.
 
@@ -233,7 +233,7 @@ def main() -> int:
 
                 block_size = args.block if role == "sync" else target_block
 
-                # Drain startup transient -- advance adc_pos but skip pipeline
+                # Drain startup transient - advance adc_pos but skip pipeline
                 if startup_blocks_left > 0:
                     startup_blocks_left -= 1
                     adc_pos += block_size

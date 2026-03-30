@@ -1,14 +1,14 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Folium map generation for the TDOA aggregation server.
 
 The map is split into two parts for dynamic updates:
 
-1.  ``build_map()`` -- returns the static Folium HTML shell: node markers,
+1.  ``build_map()`` - returns the static Folium HTML shell: node markers,
     sync-TX markers, and the heatmap layer.  Fix markers and hyperbola arcs
     are NOT embedded here; they are loaded dynamically by the browser.
 
-2.  ``build_fix_geojson()`` -- returns a GeoJSON FeatureCollection served
+2.  ``build_fix_geojson()`` - returns a GeoJSON FeatureCollection served
     by ``GET /map/data``.  The page JS calls this endpoint on load and on
     every SSE ``new_fix`` event, then renders the features as Leaflet layers
     without a full page reload.  Age-preset buttons let the user choose the
@@ -34,7 +34,7 @@ from beagle_server.tdoa import _C_M_S, haversine_m
 # ---------------------------------------------------------------------------
 # Page chrome: favicon (bullseye SVG) + title
 # ---------------------------------------------------------------------------
-# Bullseye: red → white → red → white, 4 concentric circles.
+# Bullseye: red -> white -> red -> white, 4 concentric circles.
 # Only # must be percent-encoded in SVG data URLs.
 _FAVICON_HTML = (
     "<link rel='icon' type='image/svg+xml' href=\"data:image/svg+xml,"
@@ -72,7 +72,7 @@ _FAVICON_HTML = (
 #   3. New JS in _PANEL_JS that reads from TDOA.*
 # ---------------------------------------------------------------------------
 
-# CSS lives in its own raw string -- no f-string brace escaping needed.
+# CSS lives in its own raw string - no f-string brace escaping needed.
 _PANEL_CSS = """<style>
 #tdoa-panel {
     position: fixed; top: 10px; right: 10px; z-index: 9999;
@@ -392,7 +392,7 @@ _PANEL_CSS = """<style>
 }
 </style>"""
 
-# Static HTML shell -- dynamic values are filled by JS on load.
+# Static HTML shell - dynamic values are filled by JS on load.
 _PANEL_HTML = """
 <div id="tdoa-login-overlay" class="tdoa-login-overlay" style="display:none">
   <div class="tdoa-login-card">
@@ -515,25 +515,25 @@ _PANEL_HTML = """
   </div>
 </div>"""
 
-# Pure JS -- reads from the TDOA data object injected below.
+# Pure JS - reads from the TDOA data object injected below.
 # Uses only var/function (ES5-compatible) for broad browser support.
 _PANEL_JS = """<script>
 (function () {
 'use strict';
 
-/* -- Guard: TDOA data block must have loaded before this script -- */
+/* - Guard: TDOA data block must have loaded before this script - */
 if (typeof TDOA === 'undefined') {
-    console.error('[Beagle] TDOA data block not found -- panel disabled');
+    console.error('[Beagle] TDOA data block not found - panel disabled');
     return;
 }
 
-/* -- Module state -- */
+/* - Module state - */
 var currentMaxAgeS = TDOA.defaultMaxAgeS;
 var leafletMap;        /* set after window 'load' fires */
 var _fixLayers = [];   /* Leaflet layers added by loadFixes(); cleared each call */
 var _lopLayers = [];   /* 2-node LOP arcs; toggled independently */
 var _lopVisible = true; /* LOP toggle state */
-/* Group state -- shared between Nodes and Groups tabs */
+/* Group state - shared between Nodes and Groups tabs */
 var _currentGroups = [];
 var _GROUP_COLORS = [
     '#3498db', '#e67e22', '#2ecc71', '#9b59b6', '#e74c3c',
@@ -552,17 +552,17 @@ var windowMode  = false;  /* true when a fixed [fromS, toS] window is active */
 var windowFromS = 0;      /* window start: Unix seconds */
 var windowToS   = 0;      /* window end:   Unix seconds */
 
-/* -- Helper: set element text, no-op if element missing -- */
+/* - Helper: set element text, no-op if element missing - */
 function setText(id, val) {
     var el = document.getElementById(id);
     if (el) el.textContent = val;
     else console.warn('[Beagle] element not found: ' + id);
 }
 
-/* -- Populate static field from server data -- */
+/* - Populate static field from server data - */
 setText('tdoa-host', TDOA.serverLabel);
 
-/* -- Helpers -- */
+/* - Helpers - */
 function fmtAge(sec) {
     if (sec <= 0)   return 'never';
     if (sec < 90)   return Math.round(sec) + 's ago';
@@ -575,7 +575,7 @@ function setLive(text, bg) {
     if (el) { el.textContent = text; el.style.background = bg; }
 }
 
-/* -- Clock: updates every second -- */
+/* - Clock: updates every second - */
 function updateClock() {
     var now = new Date();
     setText('tdoa-time',
@@ -583,13 +583,13 @@ function updateClock() {
         now.getMinutes().toString().padStart(2, '0'));
 }
 
-/* -- Last-fix age: updates every 30 s -- */
+/* - Last-fix age: updates every 30 s - */
 function updateLastFix() {
     setText('tdoa-last-fix',
         TDOA.lastFixTs ? fmtAge(Date.now() / 1000 - TDOA.lastFixTs) : 'none');
 }
 
-/* -- Hide-status label -- */
+/* - Hide-status label - */
 function updateHideStatus() {
     var hiddenBefore = parseFloat(localStorage.getItem('tdoa_hidden_before_t') || '0') || 0;
     var el = document.getElementById('tdoa-hide-status');
@@ -605,7 +605,7 @@ function updateHideStatus() {
     }
 }
 
-/* -- Format Unix seconds as YYYY-MM-DDTHH:MM (for datetime-local inputs) -- */
+/* - Format Unix seconds as YYYY-MM-DDTHH:MM (for datetime-local inputs) - */
 function toDatetimeLocal(unixSec) {
     var d = new Date(unixSec * 1000);
     var pad = function (n) { return n.toString().padStart(2, '0'); };
@@ -613,7 +613,7 @@ function toDatetimeLocal(unixSec) {
            'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
-/* -- Age colour: mirrors Python _age_color() --
+/* - Age colour: mirrors Python _age_color() --
    Maps age ratio 0..1 through red -> orange -> yellow -> grey. */
 function ageColor(age_s, maxAgeS) {
     var t = (maxAgeS > 0) ? Math.max(0, Math.min(1, age_s / maxAgeS)) : 0;
@@ -637,9 +637,9 @@ function ageColor(age_s, maxAgeS) {
     return '#aaaaaa';
 }
 
-/* -- loadFixes: fetch /map/data GeoJSON and render Leaflet layers --
+/* - loadFixes: fetch /map/data GeoJSON and render Leaflet layers --
    Called on: page load, age-preset button click, SSE new_fix event.
-   Does NOT reload the page -- only the fix/hyperbola layer group changes. */
+   Does NOT reload the page - only the fix/hyperbola layer group changes. */
 function loadFixes(maxAgeS) {
     if (!leafletMap) return;
     currentMaxAgeS = maxAgeS;
@@ -800,7 +800,7 @@ function loadFixes(maxAgeS) {
         });
 }
 
-/* -- loadHeatmap: fetch /map/heatmap and update the Leaflet.heat layer in place.
+/* - loadHeatmap: fetch /map/heatmap and update the Leaflet.heat layer in place.
    Called on SSE new_fix so the heatmap accumulates without a page reload.
    The FeatureGroup is always present; setLatLngs([]) on an empty server
    response simply leaves the layer transparent. */
@@ -824,13 +824,13 @@ function loadHeatmap() {
         });
 }
 
-/* -- Heat map toggle + age buttons + initial fix load --
+/* - Heat map toggle + age buttons + initial fix load --
    Folium emits layer scripts AFTER </body>, so Leaflet variables only
    exist after 'load' fires. */
 window.addEventListener('load', function () {
     leafletMap = window[TDOA.mapId];
 
-    /* Heat map toggle -- button is always present; the layer may be empty */
+    /* Heat map toggle - button is always present; the layer may be empty */
     var toggleBtn = document.getElementById('tdoa-heatmap-toggle-btn');
     var heatFg = TDOA.heatLayerId ? window[TDOA.heatLayerId] : null;
     if (heatFg && leafletMap && toggleBtn) {
@@ -945,7 +945,7 @@ window.addEventListener('load', function () {
     setInterval(function () { loadFixes(currentMaxAgeS); }, 15000);
 });
 
-/* -- Reset buttons: two-click confirmation to avoid blocked confirm() -- */
+/* - Reset buttons: two-click confirmation to avoid blocked confirm() - */
 function makeResetHandler(btnId, url, origLabel) {
     var btn = document.getElementById(btnId);
     if (!btn) { console.warn('[Beagle] button not found: ' + btnId); return; }
@@ -987,7 +987,7 @@ function makeResetHandler(btnId, url, origLabel) {
 }
 makeResetHandler('tdoa-heatmap-reset-btn', '/api/v1/heatmap', 'Reset Heat Map');
 
-/* -- SSE live connection --
+/* - SSE live connection --
    On new_fix: update fix layers without a full page reload. */
 function connect() {
     var src = new EventSource('/api/v1/fixes/stream');
@@ -1043,13 +1043,13 @@ function _hdrJson() {
     return h;
 }
 
-/* Authenticated fetch wrapper -- shows login overlay on 401 */
+/* Authenticated fetch wrapper - shows login overlay on 401 */
 function _fetch(url, opts) {
     opts = opts || {};
     if (!opts.headers) opts.headers = _hdr();
     return fetch(url, opts).then(function (r) {
         if (r.status === 401 && TDOA.authMode === 'userdb') {
-            _showLogin('Session expired -- please log in again.');
+            _showLogin('Session expired - please log in again.');
             return Promise.reject(new Error('Unauthorized'));
         }
         return r;
@@ -1840,7 +1840,7 @@ window._tdoaAutoCalibrate = function (nodeId, noiseFloor) {
     document.getElementById('ct-offset-' + nodeId).value = offset;
     /* Flash the margin text to indicate values changed */
     var btn = event.target;
-    btn.textContent = 'Set to ' + onset + ' / ' + offset + ' — click Save';
+    btn.textContent = 'Set to ' + onset + ' / ' + offset + ' - click Save';
     setTimeout(function () { btn.textContent = 'Auto-Calibrate'; }, 3000);
 };
 
@@ -2398,7 +2398,7 @@ window._tdoaDisable2fa = function (btn, userId) {
         })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function () {
-            /* Sessions revoked — must re-login */
+            /* Sessions revoked - must re-login */
             sessionStorage.removeItem('tdoa_token');
             _currentUser = null;
             _setUserInfo(null);
@@ -2541,13 +2541,13 @@ def _hyperbola_points(
     if a >= c_h or c_h < 1.0:
         if c_h < 1.0:
             _logger.debug(
-                "LOP not rendered: baseline too short (%.1f m) — "
+                "LOP not rendered: baseline too short (%.1f m) - "
                 "nodes are co-located or have identical positions",
                 baseline_m,
             )
         else:
             _logger.info(
-                "LOP not rendered: |TDOA| (%.1f m) >= baseline (%.1f m) — "
+                "LOP not rendered: |TDOA| (%.1f m) >= baseline (%.1f m) - "
                 "degenerate hyperbola",
                 abs(target_diff_m), baseline_m,
             )
@@ -2610,7 +2610,7 @@ def build_fix_geojson(
 
     Parameters
     ----------
-    fixes : list of fix dicts from db.fetch_fixes() -- newest first
+    fixes : list of fix dicts from db.fetch_fixes() - newest first
     recent_events : list of event dicts (for node lat/lon lookup)
     max_age_s : age-out window (0 = all fixes)
     hyperbola_points : points per hyperbola arc
@@ -2663,7 +2663,7 @@ def build_fix_geojson(
                     "nodes": nodes,
                     "channel_hz": fix["channel_hz"],
                     "event_type": fix["event_type"],
-                    "tooltip": f"Fix {fix['id']} -- {age_s:.0f}s ago",
+                    "tooltip": f"Fix {fix['id']} - {age_s:.0f}s ago",
                 },
             })
 
@@ -2682,7 +2682,7 @@ def build_fix_geojson(
             features, lop_fix, node_pos, hyperbola_points, feature_type="lop",
         )
 
-    # Node features — most recent position per node_id from events and heartbeats.
+    # Node features - most recent position per node_id from events and heartbeats.
     # Included here so the JS receives fresh node state on every loadFixes()
     # call and on every SSE new_fix event, without requiring a page reload.
     seen_nodes: dict[str, dict[str, Any]] = {}
@@ -2760,8 +2760,8 @@ def _collect_hyperbola_features(
     """Append GeoJSON LineString features for hyperbola arcs to features.
 
     feature_type controls the GeoJSON property:
-      "hyperbola" -- arcs for a 3+-node full fix (solid red)
-      "lop"       -- 2-node line-of-position (dashed amber)
+      "hyperbola" - arcs for a 3+-node full fix (solid red)
+      "lop"       - 2-node line-of-position (dashed amber)
     """
     nodes: list[str] = fix.get("nodes", [])
     fix_lat = fix["latitude_deg"]
@@ -2783,7 +2783,7 @@ def _collect_hyperbola_features(
             )
             if pts:
                 label = "LOP" if feature_type == "lop" else "TDOA"
-                tooltip = f"{label} {n_a}<->{n_b}: {tdoa_s * 1e6:.2f} µs"
+                tooltip = f"{label} {n_a}<->{n_b}: {tdoa_s * 1e6:.2f} usec"
                 age_s = time.time() - fix["computed_at"]
                 # GeoJSON uses [lon, lat] coordinate order
                 coordinates = [[p[1], p[0]] for p in pts]
@@ -2803,7 +2803,7 @@ def _collect_hyperbola_features(
 
 
 # ---------------------------------------------------------------------------
-# Main map builder (static shell -- fix layer loaded dynamically)
+# Main map builder (static shell - fix layer loaded dynamically)
 # ---------------------------------------------------------------------------
 
 def build_map(
@@ -2827,7 +2827,7 @@ def build_map(
 
     Parameters
     ----------
-    fixes : list of fix dicts from db.fetch_fixes() -- used only for map centre
+    fixes : list of fix dicts from db.fetch_fixes() - used only for map centre
     recent_events : list of event dicts (for sync tx markers; node markers are dynamic)
     max_age_s : default age-out window passed to the page JS as ``defaultMaxAgeS``
     center_lat, center_lon : fallback map centre if no fixes available
@@ -2848,7 +2848,7 @@ def build_map(
     # entries), so they update live as new events arrive without page reloads.
 
     # -----------------------------------------------------------------------
-    # Sync transmitter markers -- unique sync_tx_id
+    # Sync transmitter markers - unique sync_tx_id
     # -----------------------------------------------------------------------
     seen_sync: dict[str, dict[str, Any]] = {}
     for ev in recent_events:

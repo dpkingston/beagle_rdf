@@ -1,5 +1,5 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
-"""Unit tests for events/model.py -- CarrierEvent."""
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
+"""Unit tests for events/model.py - CarrierEvent."""
 
 from __future__ import annotations
 

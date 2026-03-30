@@ -1,6 +1,6 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-Event loop watchdog — detects when the asyncio event loop is blocked.
+Event loop watchdog - detects when the asyncio event loop is blocked.
 
 A daemon thread periodically schedules a no-op callback on the event loop.
 If the callback doesn't execute within ``threshold_s``, the watchdog logs
@@ -79,18 +79,18 @@ class EventLoopWatchdog:
         try:
             self._loop.call_soon_threadsafe(_pong)
         except RuntimeError:
-            # Event loop is closed — server is shutting down.
+            # Event loop is closed - server is shutting down.
             return
 
         if responded.wait(timeout=self._threshold_s):
             return  # event loop is healthy
 
-        # Event loop did not respond in time — dump diagnostics.
+        # Event loop did not respond in time - dump diagnostics.
         self._dump_diagnostics()
 
     def _dump_diagnostics(self) -> None:
         logger.warning(
-            "EVENT LOOP BLOCKED — no response in %.1fs. Dumping diagnostics.",
+            "EVENT LOOP BLOCKED - no response in %.1fs. Dumping diagnostics.",
             self._threshold_s,
         )
 

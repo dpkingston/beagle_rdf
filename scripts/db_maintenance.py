@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Beagle Database Maintenance
 ============================
@@ -19,7 +19,7 @@ Registry DB (tdoa_registry.db):
      most recent versions per node
   6. WAL checkpoint (TRUNCATE)
 
-Both databases are safe to maintain while the server is running — all
+Both databases are safe to maintain while the server is running - all
 operations use normal DELETE + WAL checkpoint, not VACUUM.  If you need
 to reclaim disk space after a large prune, stop the server and run
 ``sqlite3 <db> "VACUUM;"`` manually.
@@ -272,7 +272,7 @@ def _resolve_paths(args: argparse.Namespace) -> tuple[str | None, str | None]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Beagle database maintenance — prune old data and expired sessions.",
+        description="Beagle database maintenance - prune old data and expired sessions.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
@@ -325,9 +325,9 @@ def main() -> None:
 
     dry_run = args.dry_run
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    print(f"=== Beagle DB Maintenance — {timestamp} ===")
+    print(f"=== Beagle DB Maintenance - {timestamp} ===")
     if dry_run:
-        print("    (DRY RUN — no changes will be made)\n")
+        print("    (DRY RUN - no changes will be made)\n")
     else:
         print()
 

@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Sample-domain to wall-clock timestamp conversion.
 
@@ -34,7 +34,7 @@ class EventStamper:
 
     The `calibration_offset_ns` compensates for the constant latency between
     when samples were captured and when time_ns() is called (USB buffering,
-    SoapySDR overhead -- typically 1-10 ms).
+    SoapySDR overhead - typically 1-10 ms).
 
     Note: this produces rough absolute times (+/-1-10 us) useful for event
     association but NOT for TDOA precision. See pipeline/delta.py.

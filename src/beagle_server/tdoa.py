@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 TDOA arithmetic for the aggregation server.
 
@@ -108,13 +108,13 @@ def _find_peak_derivative_sample(
     """
     Find the sample of maximum power-change rate in an IQ snippet.
 
-    For onset: argmax of d(power)/dt — the steepest point of the carrier rise.
-    For offset: argmin of d(power)/dt — the steepest point of the carrier fall.
+    For onset: argmax of d(power)/dt - the steepest point of the carrier rise.
+    For offset: argmin of d(power)/dt - the steepest point of the carrier fall.
 
     Both are transmitter properties (set by PA electronics) and are observed at
     the same physical instant by all receivers, regardless of their gain or noise
     floor.  This makes them robust anchors for inter-node cross-correlation even
-    when nodes have 8–10 dB noise-floor differences.
+    when nodes have 8-10 dB noise-floor differences.
 
     Replaces the former plateau-start/end approach, which required finding a
     "stable" derivative region whose detection threshold was SNR-dependent.
@@ -180,10 +180,10 @@ def _resample_to_rate(signal: np.ndarray, src_rate: float, dst_rate: float) -> n
     polyphase resampling (scipy.signal.resample_poly).
 
     The up/down integers are derived from the integer representation of the
-    two rates, so common SDR rates (62500, 64000, …) map to small exact
+    two rates, so common SDR rates (62500, 64000, ...) map to small exact
     fractions:
-        62500 → 64000 : up=128, down=125
-        64000 → 62500 : up=125, down=128
+        62500 -> 64000 : up=128, down=125
+        64000 -> 62500 : up=125, down=128
 
     Returns the input array unchanged if src_rate == dst_rate (within 1 ppm).
     """
@@ -286,9 +286,9 @@ def cross_correlate_snippets(
 
     # Cross-correlate power envelopes to remove LO phase dependence.
     # Independent receivers have unrelated LO phases and small frequency
-    # offsets (±30 ppm for RTL-SDR at 443 MHz = ±13 kHz) that cause the
+    # offsets (+/-30 ppm for RTL-SDR at 443 MHz = +/-13 kHz) that cause the
     # complex IQ to rotate at different rates, destroying the complex
-    # cross-correlation peak.  The power envelope |IQ|² is phase-free.
+    # cross-correlation peak.  The power envelope |IQ|^2 is phase-free.
     env_a = _compute_power_envelope(a).astype(np.float32)
     env_b = _compute_power_envelope(b).astype(np.float32)
 
@@ -336,7 +336,7 @@ def cross_correlate_snippets(
 # Used to disambiguate which pilot pulse each node used for sync_delta.
 _T_SYNC_NS: float = 7_000_000.0
 
-# Speed of light in m/s — used to convert baseline distance to max TDOA.
+# Speed of light in m/s - used to convert baseline distance to max TDOA.
 _C_M_PER_S: float = 299_792_458.0
 
 
@@ -357,9 +357,9 @@ def compute_tdoa_s(
     Method selection
     ----------------
     1. **xcorr** (primary): when both events carry ``iq_snippet_b64``, the
-       power-envelope cross-correlation is computed.  If SNR ≥ min_xcorr_snr
-       AND |lag| ≤ max physical TDOA for max_xcorr_baseline_km, the xcorr lag
-       is returned directly as the TDOA — no path correction is applied because
+       power-envelope cross-correlation is computed.  If SNR >= min_xcorr_snr
+       AND |lag| <= max physical TDOA for max_xcorr_baseline_km, the xcorr lag
+       is returned directly as the TDOA - no path correction is applied because
        xcorr measures the physical carrier arrival time difference between nodes
        directly, bypassing the sync-event reference.  The geometric plausibility
        filter rejects false detections caused by snippets where the PA transition
@@ -367,7 +367,7 @@ def compute_tdoa_s(
 
     2. **sync_delta** (fallback): when snippets are absent, xcorr SNR is below
        threshold, or the xcorr lag fails the geometric plausibility check.
-       Computes sync_delta_A − sync_delta_B with pilot disambiguation (requires
+       Computes sync_delta_A - sync_delta_B with pilot disambiguation (requires
        onset_time_ns) and adds the sync-tx path-delay correction.
 
     Parameters
@@ -389,13 +389,13 @@ def compute_tdoa_s(
         Maximum node-pair separation in km.  Used as a geometric plausibility
         filter: any xcorr lag whose magnitude exceeds the corresponding maximum
         physical TDOA (baseline / c) is treated as a false detection and falls
-        back to sync_delta.  Defaults to 100 km (≈ 333 µs max TDOA).
+        back to sync_delta.  Defaults to 100 km (~ 333 usec max TDOA).
 
     Returns
     -------
     float or None
         TDOA in seconds, or None if sync_delta_ns is missing and xcorr
-        is unavailable.  Positive → A heard the carrier *later* than B.
+        is unavailable.  Positive -> A heard the carrier *later* than B.
     """
     node_a = event_a.get("node_id", "?")
     node_b = event_b.get("node_id", "?")
@@ -418,18 +418,18 @@ def compute_tdoa_s(
             max_lag_ns = max_xcorr_baseline_km * 1_000.0 / _C_M_PER_S * 1e9
             if abs(xcorr_lag_ns) <= max_lag_ns:
                 logger.info(
-                    "TDOA (xcorr): %.1f ns (SNR=%.2f, type=%s) %s↔%s",
+                    "TDOA (xcorr): %.1f ns (SNR=%.2f, type=%s) %s<->%s",
                     xcorr_lag_ns, xcorr_snr, event_type, node_a, node_b,
                 )
                 return float(xcorr_lag_ns / 1e9)
             logger.info(
-                "xcorr rejected (lag): %.1f ns > geo limit %.1f ns (%.0f km) for %s↔%s (%s); "
+                "xcorr rejected (lag): %.1f ns > geo limit %.1f ns (%.0f km) for %s<->%s (%s); "
                 "falling back to sync_delta",
                 xcorr_lag_ns, max_lag_ns, max_xcorr_baseline_km, node_a, node_b, event_type,
             )
         else:
             logger.info(
-                "xcorr rejected (SNR): %.2f < %.2f for %s↔%s (%s); falling back to sync_delta",
+                "xcorr rejected (SNR): %.2f < %.2f for %s<->%s (%s); falling back to sync_delta",
                 xcorr_snr, min_xcorr_snr, node_a, node_b, event_type,
             )
 
@@ -438,7 +438,7 @@ def compute_tdoa_s(
     delta_b = event_b.get("sync_delta_ns")
     if delta_a is None or delta_b is None:
         logger.warning(
-            "Missing sync_delta_ns for %s↔%s (%s) — pair skipped",
+            "Missing sync_delta_ns for %s<->%s (%s) - pair skipped",
             node_a, node_b, event_type,
         )
         return None
@@ -458,20 +458,20 @@ def compute_tdoa_s(
 
     # --- Pilot sync event disambiguation ---
     # Two nodes independently lock to the FM pilot at different cycle boundaries,
-    # so raw_ns = true_TDOA + n × T_sync for some unknown integer n.
+    # so raw_ns = true_TDOA + n x T_sync for some unknown integer n.
     #
-    # Geometric disambiguation: |true_TDOA| ≤ dist(A,B)/c ≤ 100 km/c ≈ 333 µs,
-    # which is << T_sync/2 = 3500 µs.  Therefore:
+    # Geometric disambiguation: |true_TDOA| <= dist(A,B)/c <= 100 km/c ~ 333 usec,
+    # which is << T_sync/2 = 3500 usec.  Therefore:
     #
     #   n = round((raw_ns + correction_ns) / T_sync)
     #
-    # is unambiguous — no onset_time_ns (NTP) required.  There are at most 3
-    # candidate values of n (−1, 0, +1) and the geometry selects the unique
+    # is unambiguous - no onset_time_ns (NTP) required.  There are at most 3
+    # candidate values of n (-1, 0, +1) and the geometry selects the unique
     # one that leaves |true_TDOA| < T_sync/2.
     n = round((raw_ns + correction_ns) / _T_SYNC_NS)
     if n != 0:
         logger.debug(
-            "Pilot disambiguation %s↔%s (%s): n=%+d raw_ns=%+.0f→%+.0f ns",
+            "Pilot disambiguation %s<->%s (%s): n=%+d raw_ns=%+.0f->%+.0f ns",
             node_a, node_b, event_type, n, raw_ns, raw_ns - n * _T_SYNC_NS,
         )
         raw_ns -= n * _T_SYNC_NS
@@ -479,7 +479,7 @@ def compute_tdoa_s(
     tdoa_ns = raw_ns + correction_ns
 
     logger.info(
-        "TDOA (sync_delta): %.1f ns (raw=%.1f + corr=%.1f, type=%s) %s↔%s",
+        "TDOA (sync_delta): %.1f ns (raw=%.1f + corr=%.1f, type=%s) %s<->%s",
         tdoa_ns, raw_ns, correction_ns, event_type, node_a, node_b,
     )
     return float(tdoa_ns / 1e9)

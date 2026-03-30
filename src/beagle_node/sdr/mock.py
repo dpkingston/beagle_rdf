@@ -1,10 +1,10 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Mock SDR receiver for testing and development without hardware.
 
 Provides two factory methods:
-- MockReceiver.synthetic()  -- generates configurable synthetic IQ signals
-- MockReceiver.from_file()  -- replays a .npy file of complex64 samples
+- MockReceiver.synthetic()  - generates configurable synthetic IQ signals
+- MockReceiver.from_file()  - replays a .npy file of complex64 samples
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ class MockReceiver(SDRReceiver):
     In-memory SDR receiver for testing.
 
     Yields pre-computed or synthetically generated IQ buffers at the
-    configured sample rate (in wall time -- buffers are delivered as fast
+    configured sample rate (in wall time - buffers are delivered as fast
     as possible in tests, or with optional real-time pacing).
     """
 

@@ -1,12 +1,12 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Integration tests for the Beagle aggregation server.
 
 Uses FastAPI's TestClient (synchronous) with a temporary in-memory SQLite DB.
-The delivery_buffer_s is set to 50 ms -- long enough to collect all sequential
+The delivery_buffer_s is set to 50 ms - long enough to collect all sequential
 POSTs before the timer fires, short enough for fast tests.
 
-Test geometry (same triangle as test_solver.py -- known to give < 500 m fix error)
+Test geometry (same triangle as test_solver.py - known to give < 500 m fix error)
 -------------
 Three nodes around Seattle, known target at (47.660, -122.310).
 
@@ -53,7 +53,7 @@ _TARGET_LAT = 47.660
 _TARGET_LON = -122.310
 _CHANNEL_HZ = 155_100_000.0
 
-# Same triangle as test_solver.py -- known to give < 500 m fix error
+# Same triangle as test_solver.py - known to give < 500 m fix error
 _NODES = {
     "node-a": (47.700, -122.400),
     "node-b": (47.620, -122.220),
@@ -65,16 +65,16 @@ _NODES = {
 # Synthetic IQ snippet helpers
 # ---------------------------------------------------------------------------
 
-_SNIPPET_RATE_HZ = 1_000_000   # 1 MHz encoding rate — ±1 µs = ~±300 m timing precision
-_SNIPPET_LEN     = 10_000      # 10 ms at 1 MHz — plenty of headroom for all onset offsets
+_SNIPPET_RATE_HZ = 1_000_000   # 1 MHz encoding rate - +/-1 usec = ~+/-300 m timing precision
+_SNIPPET_LEN     = 10_000      # 10 ms at 1 MHz - plenty of headroom for all onset offsets
 
 # Amplitude-modulated carrier sequence used across all nodes.
 # Each node receives the same transmission with its content starting at a
 # different offset into _CARRIER_SEQ (encoding the inter-node TDOA).
 # The carrier has a slowly-varying AM envelope so that the power envelope has
-# texture for cross-correlation — pure QPSK (constant power) would give a flat
+# texture for cross-correlation - pure QPSK (constant power) would give a flat
 # power envelope that makes power-envelope xcorr unable to find any lag.
-_BASE_ONSET    = _SNIPPET_LEN // 4   # onset at 1/4 — matches real snippet encoder
+_BASE_ONSET    = _SNIPPET_LEN // 4   # onset at 1/4 - matches real snippet encoder
 _RAMP_SAMPLES  = 32                  # PA rise time; same for all nodes
 _CARRIER_TOTAL = _SNIPPET_LEN * 4
 _rng_carrier = np.random.default_rng(0xCAFE)
@@ -82,8 +82,8 @@ _bits_i = _rng_carrier.integers(0, 2, _CARRIER_TOTAL) * 2 - 1
 _bits_q = _rng_carrier.integers(0, 2, _CARRIER_TOTAL) * 2 - 1
 _qpsk: np.ndarray = (_bits_i + 1j * _bits_q).astype(np.complex64) / np.sqrt(2)
 # AM envelope with ~8-sample correlation length so that power-envelope xcorr
-# can resolve a 4-sample carrier delay (= 4 µs TDOA at 1 MHz).
-# Shorter smoothing → AM decorrelates over 4 samples → clear xcorr peak at correct lag.
+# can resolve a 4-sample carrier delay (= 4 usec TDOA at 1 MHz).
+# Shorter smoothing -> AM decorrelates over 4 samples -> clear xcorr peak at correct lag.
 _rng_am = np.random.default_rng(0xBEEF)
 _am_raw = np.convolve(
     np.abs(_rng_am.standard_normal(_CARRIER_TOTAL + 16)),
@@ -104,7 +104,7 @@ def _make_node_snippet_b64(sync_delta_ns: int) -> str:
     The carrier content starts carrier_delay = sync_delta_ns - _MIN_SYNC_DELTA
     (in samples at _SNIPPET_RATE_HZ) into the shared AM-carrier sequence.
     Power-envelope xcorr of centred windows gives:
-        lag_ns ≈ (carrier_delay_A - carrier_delay_B) / rate * 1e9
+        lag_ns ~ (carrier_delay_A - carrier_delay_B) / rate * 1e9
                = sync_delta_A - sync_delta_B
     Note: xcorr lag = raw sync_delta difference (without path correction), so
     xcorr-as-primary in compute_tdoa_s gives the wrong answer for this synthetic
@@ -116,7 +116,7 @@ def _make_node_snippet_b64(sync_delta_ns: int) -> str:
     carrier_delay = round((sync_delta_ns - _MIN_SYNC_DELTA) * _SNIPPET_RATE_HZ / 1e9)
     carrier_offset = carrier_delay
 
-    rng_noise = np.random.default_rng(42)  # fixed seed → same noise for every node
+    rng_noise = np.random.default_rng(42)  # fixed seed -> same noise for every node
     iq = np.zeros(_SNIPPET_LEN, dtype=np.complex64)
     iq[:onset] = (
         rng_noise.standard_normal(onset) + 1j * rng_noise.standard_normal(onset)
@@ -165,7 +165,7 @@ def _make_event_payload(
     # onset_time_ns must reflect the true carrier arrival time at each node.
     #
     # When multiple nodes observe the same transmission, onset_time_ns should
-    # differ between nodes only by the propagation delay from the target (µs
+    # differ between nodes only by the propagation delay from the target (usec
     # range).  Using time.time_ns() inside a loop gives different base times
     # for each node (HTTP POST overhead can be 1-5 ms per call), which causes
     # pilot disambiguation to incorrectly round raw_ns to the nearest T_sync.
@@ -257,7 +257,7 @@ def test_health_ok(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/events -- basic ingestion
+# POST /api/v1/events - basic ingestion
 # ---------------------------------------------------------------------------
 
 def test_post_event_accepted(client: TestClient) -> None:
@@ -298,7 +298,7 @@ def test_post_event_amendment(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Fix computation -- three synthetic nodes
+# Fix computation - three synthetic nodes
 # ---------------------------------------------------------------------------
 
 def test_three_nodes_produce_fix(client: TestClient) -> None:
@@ -443,14 +443,14 @@ def test_get_routes_require_no_auth(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 def test_nodes_snr_empty(client: TestClient) -> None:
-    """No events → empty list."""
+    """No events -> empty list."""
     resp = client.get("/api/v1/nodes/snr")
     assert resp.status_code == 200
     assert resp.json() == []
 
 
 def test_nodes_snr_basic(client: TestClient) -> None:
-    """Events from two nodes → two entries with correct structure."""
+    """Events from two nodes -> two entries with correct structure."""
     for node_id in ("node-a", "node-b"):
         payload = _make_event_payload(node_id, *_NODES[node_id])
         payload["peak_power_db"] = -28.0
@@ -498,7 +498,7 @@ def test_nodes_snr_no_auth_required(client: TestClient) -> None:
 def test_nodes_snr_snr_null_for_zero_noise_floor(client: TestClient) -> None:
     """Events with noise_floor_db=0 (old schema default) yield null snr_db fields."""
     payload = _make_event_payload("node-a", *_NODES["node-a"])
-    payload["noise_floor_db"] = 0.0   # old default — not a real measurement
+    payload["noise_floor_db"] = 0.0   # old default - not a real measurement
     client.post("/api/v1/events", json=payload)
 
     resp = client.get("/api/v1/nodes/snr")
@@ -545,7 +545,7 @@ def test_heartbeat_no_auth_required() -> None:
 
 
 # ---------------------------------------------------------------------------
-# GET /map/nodes -- merged node list with heartbeats
+# GET /map/nodes - merged node list with heartbeats
 # ---------------------------------------------------------------------------
 
 def test_map_nodes_empty(client: TestClient) -> None:
@@ -880,7 +880,7 @@ def test_patch_node_label(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/nodes/{node_id}/config — heartbeat-in-config-poll
+# POST /api/v1/nodes/{node_id}/config - heartbeat-in-config-poll
 # ---------------------------------------------------------------------------
 
 def test_config_poll_post_carries_heartbeat(client: TestClient) -> None:

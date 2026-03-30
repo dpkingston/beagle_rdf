@@ -20,9 +20,9 @@ versa). Both tuners are clocked from the **same 24 MHz TCXO**. All data
 flows through one USB 2.0 connection as a single interleaved stream.
 
 ```
-Tuner 1 (sync, e.g. 99.9 MHz FM)  ─┐
-                                    ├─► single ADC (TDM) ─► USB ─► host
-Tuner 2 (target, e.g. 155 MHz LMR) ─┘
+Tuner 1 (sync, e.g. 99.9 MHz FM)  -+
+                                    +-> single ADC (TDM) -> USB -> host
+Tuner 2 (target, e.g. 155 MHz LMR) -+
 ```
 
 ### Why this matters for Beagle
@@ -30,8 +30,8 @@ Tuner 2 (target, e.g. 155 MHz LMR) ─┘
 The design document's `two_sdr` mode complexity (GPS 1PPS injection circuit,
 attenuator hardware, `PPSDetector`, `PPSAnchor` pipeline) exists entirely to
 solve one problem: two separate USB SDRs have independent sample clocks and
-independent USB transfer scheduling, so inter-channel timing has ~1–10 ms
-USB jitter — far too coarse for TDOA.
+independent USB transfer scheduling, so inter-channel timing has ~1-10 ms
+USB jitter - far too coarse for TDOA.
 
 The RSPduo eliminates this problem by design:
 
@@ -43,21 +43,21 @@ The RSPduo eliminates this problem by design:
 | Coverage gaps | `freq_hop` only | **None** |
 | Tuner settling time | `freq_hop` only | **None** |
 | ADC resolution | 8-bit | **14-bit** |
-| Frequency range | 24 MHz – 1.8 GHz | **1 kHz – 2 GHz** |
+| Frequency range | 24 MHz - 1.8 GHz | **1 kHz - 2 GHz** |
 
 ### Timing model
 
 The single-sample ADC interleave introduces a **deterministic 0.5-sample
-offset** between the two channels. At 2 MHz sample rate, this is 0.25 µs.
+offset** between the two channels. At 2 MHz sample rate, this is 0.25 usec.
 It is constant and correctable with a single fixed term:
 
 ```
-sync_delta_corrected_ns = sync_delta_raw_ns − (0.5 / sample_rate_hz) × 1e9
+sync_delta_corrected_ns = sync_delta_raw_ns - (0.5 / sample_rate_hz) x 1e9
 ```
 
 This makes the RSPduo timing model almost identical to `freq_hop`: both
 channels share one continuous sample clock, so `sync_delta_ns` is simply
-`(target_sample − sync_sample) × 1e9 / rate − pipeline_offset_ns`.
+`(target_sample - sync_sample) x 1e9 / rate - pipeline_offset_ns`.
 No `PPSAnchor` machinery is needed.
 
 ### Comparison to existing modes
@@ -65,12 +65,12 @@ No `PPSAnchor` machinery is needed.
 ```
 freq_hop:   one ADC clock, no extra hardware, but has coverage gaps
             and ~20 ms settling time per frequency hop
-rspduo:     one ADC clock, no extra hardware, no gaps, no settling  ← sweet spot
+rspduo:     one ADC clock, no extra hardware, no gaps, no settling  <- sweet spot
 two_sdr:    two ADC clocks, requires GPS 1PPS injection hardware,
             no gaps, no settling
 ```
 
-The RSPduo sits between `freq_hop` and full `two_sdr` — it gets the
+The RSPduo sits between `freq_hop` and full `two_sdr` - it gets the
 continuous-coverage benefit of `two_sdr` without the GPS 1PPS hardware
 requirement.
 
@@ -85,7 +85,7 @@ requirement.
   the upstream master or pre-built packages.  See `docs/setup-rspduo-debian.md`.
 - **Single USB connection = single point of failure** for both channels.
   Acceptable for a node; loss of the USB connection loses both channels.
-- **~$200–250** vs. ~$35 per RTL-SDR dongle.
+- **~$200-250** vs. ~$35 per RTL-SDR dongle.
 
 ### API note: Init and Tuner B parameters
 
@@ -104,7 +104,7 @@ The SDRplay API library enforces one selected device per `sdrplay_api_Open()`
 handle.  SoapySDRPlay3 uses a process-wide singleton for this handle.
 Opening a "Slave" device object calls `sdrplay_api_SelectDevice()` on the
 same handle that the "Master" already holds, which returns `sdrplay_api_Fail`
-inside the library — the request never reaches the sdrplay service.  The
+inside the library - the request never reaches the sdrplay service.  The
 symptom is the Slave `SoapySDR.Device()` constructor always throws
 `RuntimeError("sdrplay_api_Fail")` regardless of retry count.
 
@@ -115,7 +115,7 @@ Use DT mode (single device object, two streams) instead.
 The `rspduo` mode is implemented as a first-class SDR mode alongside
 `freq_hop`, `two_sdr`, and `single_sdr`:
 
-- **`sdr/rspduo.py`** — `RSPduoReceiver` opens the RSPduo in DT mode
+- **`sdr/rspduo.py`** - `RSPduoReceiver` opens the RSPduo in DT mode
   (Dual Tuner) as a single SoapySDR device with two separate single-channel
   streams.  The `rspduo-dual-independent-tuners` branch adds independent
   per-channel tuning to DT mode via a lazy-split mechanism.  The key method
@@ -123,18 +123,18 @@ The `rspduo` mode is implemented as a first-class SDR mode alongside
   pairs.  The `stream()` method is a compatibility shim for the `SDRReceiver`
   ABC.  Post-init frequency and gain re-apply (after both `activateStream`
   calls) are handled in `open()` as a safety net.
-- **`config/schema.py`** — `RSPduoConfig` with `sync_frequency_hz`,
+- **`config/schema.py`** - `RSPduoConfig` with `sync_frequency_hz`,
   `target_frequency_hz`, `sample_rate_hz`, `sync_gain_db`, `sync_lna_state`,
   `target_gain_db`, `target_lna_state`, `master_device_args`,
   `slave_device_args` (ignored; kept for config compat), `buffer_size`, and
   `pipeline_offset_ns` (default 0; calibrate empirically).
-- **`sdr/factory.py`** — `create_receiver()` handles `sdr_mode="rspduo"`.
-- **`main.py`** — dedicated `rspduo` loop branch using `paired_stream()`;
+- **`sdr/factory.py`** - `create_receiver()` handles `sdr_mode="rspduo"`.
+- **`main.py`** - dedicated `rspduo` loop branch using `paired_stream()`;
   `pipeline_offset_ns` is subtracted from every `sync_delta_ns` before
   the `CarrierEvent` is submitted to the reporter.
-- **No changes** to `sync_detector.py`, `carrier_detect.py`, or `delta.py` —
+- **No changes** to `sync_detector.py`, `carrier_detect.py`, or `delta.py` --
   the timing model is identical to `freq_hop`.
-- **`PPSDetector` not used** — shared ADC clock eliminates GPS 1PPS need.
+- **`PPSDetector` not used** - shared ADC clock eliminates GPS 1PPS need.
 
 To enable: set `sdr_mode: rspduo` and add an `rspduo:` block in `node.yaml`.
 See `config/node.example.yaml` for a commented template and
@@ -143,10 +143,10 @@ See `config/node.example.yaml` for a commented template and
 ### References
 
 - [SDRplay RSPduo product page](https://www.sdrplay.com/rspduo/)
-- [RTL-SDR.com review — dual-tuner architecture details](https://www.rtl-sdr.com/sdrplay-release-a-dual-tuner-sdr-called-rspduo/)
-- [DuoTools — dual-channel sample utilities](https://github.com/msiner/DuoTools)
-- [SoapySDRPlay3 — Dual Tuner (independent RX) mode](https://github.com/pothosware/SoapySDRPlay3)
+- [RTL-SDR.com review - dual-tuner architecture details](https://www.rtl-sdr.com/sdrplay-release-a-dual-tuner-sdr-called-rspduo/)
+- [DuoTools - dual-channel sample utilities](https://github.com/msiner/DuoTools)
+- [SoapySDRPlay3 - Dual Tuner (independent RX) mode](https://github.com/pothosware/SoapySDRPlay3)
 
 ---
 
-Copyright (c) 2026 Douglas P. Kingston III. MIT License — see [LICENSE](../../LICENSE).
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](../../LICENSE).

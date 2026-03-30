@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Profile the Beagle node signal-processing pipeline.
 
@@ -19,7 +19,7 @@ Usage
     python scripts/profile_pipeline.py --duration 10 --cprofile profile_out.prof
 
     # With py-spy (run separately):
-    #   py-spy record -o flame.svg -- python scripts/profile_pipeline.py --duration 30
+    #   py-spy record -o flame.svg - python scripts/profile_pipeline.py --duration 30
 
 The script prints a per-stage breakdown showing where wall-clock time is
 spent, so you can identify the dominant hotspots without external tooling.
@@ -118,7 +118,7 @@ class StageTimer:
 
     def report(self, total_iq_seconds: float):
         total = sum(self._times.values())
-        print(f"\n{'Stage':<35s} {'Time (s)':>10s} {'%':>6s} {'Calls':>8s} {'µs/call':>10s}")
+        print(f"\n{'Stage':<35s} {'Time (s)':>10s} {'%':>6s} {'Calls':>8s} {'usec/call':>10s}")
         print("-" * 75)
         for name in sorted(self._times, key=lambda k: -self._times[k]):
             t = self._times[name]
@@ -140,7 +140,7 @@ def run_profiled(duration_s: float = 5.0, buffer_samples: int = 65536):
     total_samples = int(duration_s * sdr_rate)
     n_buffers = total_samples // buffer_samples
 
-    print(f"Generating {duration_s:.0f}s of synthetic IQ ({n_buffers} buffers × "
+    print(f"Generating {duration_s:.0f}s of synthetic IQ ({n_buffers} buffers x "
           f"{buffer_samples} samples @ {sdr_rate/1e6:.3f} MSPS)...")
 
     # Pre-generate all buffers to exclude generation time from profiling
@@ -273,7 +273,7 @@ def main():
     args = parser.parse_args()
 
     if args.cprofile:
-        print(f"Running with cProfile → {args.cprofile}")
+        print(f"Running with cProfile -> {args.cprofile}")
         profiler = cProfile.Profile()
         profiler.enable()
         run_profiled(duration_s=args.duration, buffer_samples=args.buffer_size)

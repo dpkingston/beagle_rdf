@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Integration test: synthetic FM pilot + LMR carrier -> correct sync_delta_ns.
 
@@ -112,7 +112,7 @@ class TestPipelineE2E:
 
     def test_produces_at_least_one_measurement(self):
         """End-to-end pipeline with known inputs should produce measurements."""
-        # Carrier starts 100 ms in -- after multiple sync events have accumulated
+        # Carrier starts 100 ms in - after multiple sync events have accumulated
         carrier_start = int(SDR_RATE * 0.100)
         measurements = self._run(
             total_samples=int(SDR_RATE * 0.5),   # 0.5 seconds
@@ -138,7 +138,7 @@ class TestPipelineE2E:
         m = measurements[0]
         # Must be non-negative (onset after sync)
         assert m.sync_delta_ns >= 0, f"Negative sync_delta_ns: {m.sync_delta_ns}"
-        # Must be within 2 sync periods (20 ms) -- accounting for filter latency
+        # Must be within 2 sync periods (20 ms) - accounting for filter latency
         assert m.sync_delta_ns <= 20_000_000, \
             f"sync_delta_ns too large: {m.sync_delta_ns} ns"
 
@@ -328,7 +328,7 @@ class TestFreqHopTiming:
         pipeline_no.process_target_buffer(target_buf)       # raw_start=0
 
         if not m_hop or not measurements_no_offset:
-            pytest.skip("No measurements produced -- adjust thresholds")
+            pytest.skip("No measurements produced - adjust thresholds")
 
         delta_hop = m_hop[0].sync_delta_ns
         delta_no  = measurements_no_offset[0].sync_delta_ns

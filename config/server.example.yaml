@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 # Beagle Aggregation Server Configuration
 # Copy to server.yaml and edit before running.
 # Run with: beagle-server --config config/server.yaml
@@ -13,19 +13,19 @@ server:
 
 database:
   path: "data/tdoa_data.db"              # Operational DB: events, fixes, heatmap. Created automatically.
-                                         # Safe to delete for a clean data slate — nodes/users are preserved.
+                                         # Safe to delete for a clean data slate - nodes/users are preserved.
   registry_path: "data/tdoa_registry.db" # Registry DB: nodes, users, sessions. Created automatically.
-                                         # Contains permanent configuration — do not delete casually.
+                                         # Contains permanent configuration - do not delete casually.
 
 pairing:
-  # Bucketing window for T_sync -- the estimated absolute time of the FM sync
+  # Bucketing window for T_sync - the estimated absolute time of the FM sync
   # event at the transmitter, derived per-event as:
   #   T_sync = onset_time_ns - sync_delta_ns - dist(sync_tx, node) / c
   # Events from different nodes land in the same bucket if their T_sync values
   # agree within this window. Rapid key-ups produce distinct T_sync values and
   # are correctly placed into separate groups.
   # Set to >= 2* your worst inter-node NTP offset.  Fixture data shows a maximum
-  # observed inter-node T_sync spread of ~39 ms, so 0.2 s (±100 ms half-window)
+  # observed inter-node T_sync spread of ~39 ms, so 0.2 s (+/-100 ms half-window)
   # provides a comfortable 2.5x safety margin for typical internet NTP:
   #   0.2  s = standard internet NTP (observed max spread ~39 ms)
   #   0.005 s = GPS-disciplined nodes
@@ -55,13 +55,13 @@ solver:
   min_xcorr_snr: 1.5              # Minimum power-envelope xcorr peak-to-sidelobe ratio.
                                   # Pairs below this fall back to sync_delta subtraction.
                                   # Xcorr uses only the transition half of each snippet:
-                                  #   onset SNR typically 6–28; offset SNR typically 1.5–2.5.
+                                  #   onset SNR typically 6-28; offset SNR typically 1.5-2.5.
                                   # 0 = always accept xcorr (use only if debugging).
   max_xcorr_baseline_km: 50.0     # Maximum physically plausible xcorr lag (km-equivalent).
                                   # Any xcorr lag > this distance / c is treated as a noise
                                   # peak and falls back to sync_delta.  Set to the maximum
                                   # node-to-node separation in your deployment area.
-                                  # 50 km => max lag ~167 µs.  0 = disable the check.
+                                  # 50 km => max lag ~167 usec.  0 = disable the check.
   # xcorr_resample_rate_hz: null  # Target rate for resampling snippets in mixed-hardware
                                   # deployments (RTL-SDR = 64000 Hz, RSPduo = 62500 Hz).
                                   # null (default) = automatically use the lower of the two

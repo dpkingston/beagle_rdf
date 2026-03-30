@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for sdr/rspduo.py."""
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Minimal SoapySDR stub -- injected before importing rspduo
+# Minimal SoapySDR stub - injected before importing rspduo
 # ---------------------------------------------------------------------------
 
 def _make_soapy_stub():
@@ -90,7 +90,7 @@ def inject_soapy_stub(monkeypatch):
     def _big_delta_monotonic():
         c = _calls[0]
         _calls[0] += 1
-        return c * 100_000_000  # 100 ms per call → always > threshold
+        return c * 100_000_000  # 100 ms per call -> always > threshold
 
     monkeypatch.setattr(_time_module, "monotonic_ns", _big_delta_monotonic)
 
@@ -291,7 +291,7 @@ def test_timeout_rolling_window_reopens_on_storm(inject_soapy_stub, monkeypatch)
 
     def alternating(stream, buffers, num_samples, timeoutUs=1_000_000):
         call_count[0] += 1
-        # Alternate: timeout, ok — simulates sync/target-swap storm.
+        # Alternate: timeout, ok - simulates sync/target-swap storm.
         if call_count[0] % 2 == 1:
             return stub._StreamResult(-1)  # timeout
         for buf in buffers:
@@ -313,7 +313,7 @@ def test_timeout_rolling_window_reopens_on_storm(inject_soapy_stub, monkeypatch)
 
 
 def test_timeout_rolling_window_retries_reopen_until_success(inject_soapy_stub, monkeypatch):
-    """After a timeout storm, reopen is retried until it succeeds — not fatal."""
+    """After a timeout storm, reopen is retried until it succeeds - not fatal."""
     stub = inject_soapy_stub
 
     def all_timeout(stream, buffers, num_samples, timeoutUs=1_000_000):
@@ -345,7 +345,7 @@ def test_timeout_rolling_window_retries_reopen_until_success(inject_soapy_stub, 
 
 
 def test_timeout_single_does_not_exit(inject_soapy_stub, monkeypatch):
-    """A single timeout within the window retries and continues — not fatal."""
+    """A single timeout within the window retries and continues - not fatal."""
     stub = inject_soapy_stub
     call_count = [0]
 
@@ -379,7 +379,7 @@ def test_timeout_window_expiry_resets_count(inject_soapy_stub, monkeypatch):
     def timeout_then_ok(stream, buffers, num_samples, timeoutUs=1_000_000):
         call_count[0] += 1
         if call_count[0] <= 4:
-            # 4 timeouts at t=0 — just under the max of 5
+            # 4 timeouts at t=0 - just under the max of 5
             return stub._StreamResult(-1)
         # Advance time past the window before the 5th call
         mono_time[0] += 61.0
@@ -414,9 +414,9 @@ def test_timeout_first_logs_info_second_logs_warning(
     def sync_timeouts_twice(stream, buffers, num_samples, timeoutUs=1_000_000):
         call_count[0] += 1
         c = call_count[0]
-        # Calls 1 and 3 are sync reads (the blocking calls) → timeout.
-        # Calls 2 and 4 are tgt reads (always ok) → success.
-        # Calls 5+ are both ok → yield.
+        # Calls 1 and 3 are sync reads (the blocking calls) -> timeout.
+        # Calls 2 and 4 are tgt reads (always ok) -> success.
+        # Calls 5+ are both ok -> yield.
         if c in (1, 3):
             return stub._StreamResult(-1)
         for buf in buffers:
@@ -445,7 +445,7 @@ def test_timeout_first_logs_info_second_logs_warning(
 
 
 def test_instant_timeout_after_reopen_does_not_spinloop(inject_soapy_stub, monkeypatch):
-    """Regression: instant TIMEOUT (ret=-1, read_ms≈0, HAS_TIME=False) after reopen
+    """Regression: instant TIMEOUT (ret=-1, read_ms~0, HAS_TIME=False) after reopen
     must not bypass the error handler via the stale-buffer drain path.
 
     Scenario: sdrplay_api service is redeployed; after paired_stream() triggers a
@@ -462,7 +462,7 @@ def test_instant_timeout_after_reopen_does_not_spinloop(inject_soapy_stub, monke
         return stub._StreamResult(-1)  # always timeout, instant return
 
     # Replace the Device factory so ALL devices (before and after reopen) always
-    # return timeout — simulating a persistently broken sdrplay_api service.
+    # return timeout - simulating a persistently broken sdrplay_api service.
     class _AlwaysTimeoutDevice:
         def __new__(cls, args):
             dev = MagicMock()
@@ -492,7 +492,7 @@ def test_instant_timeout_after_reopen_does_not_spinloop(inject_soapy_stub, monke
             next(it)
 
     # Verify the error handler was reached: call count should be ~20 (5 timeouts
-    # per storm × 2 pairs per timeout × 2 storms before bail), not 500.
+    # per storm x 2 pairs per timeout x 2 storms before bail), not 500.
     assert call_count[0] < 500, (
         "Generator should have exited early via error handler, not iterated 500 times"
     )
@@ -549,7 +549,7 @@ def test_restarts_without_recovery_counter_resets_on_yield(inject_soapy_stub, mo
     rx.open()
 
     it = rx.paired_stream()
-    # Storm 1 → reopen → 2 yields → storm 2 → reopen → 2 more yields.
+    # Storm 1 -> reopen -> 2 yields -> storm 2 -> reopen -> 2 more yields.
     # If the counter did not reset on yield, storm 2 would bail immediately
     # (without_recovery=2 > _MAX=1) instead of reopening and recovering.
     results = [next(it), next(it), next(it), next(it)]
@@ -648,7 +648,7 @@ def test_open_reapplies_ch1_frequency_after_activate():
     calls = dev.method_calls
 
     activate_indices = [i for i, c in enumerate(calls) if c[0] == "activateStream"]
-    # All setFrequency(RX, 1, ...) calls on ch1 -- there are two: one pre-init
+    # All setFrequency(RX, 1, ...) calls on ch1 - there are two: one pre-init
     # (writes struct) and one post-init (sends sdrplay_api_Update).
     freq_ch1_indices = [
         i for i, c in enumerate(calls)
@@ -711,13 +711,13 @@ def test_gain_uses_named_ifgr_not_distribution():
 
     SoapySDRPlay3's unnamed setGain(float) distributes gain across RFGR and
     IFGR based on its own table, which for the sync channel (ch0) produced
-    IFGR≈25 (high IF gain) instead of the intended ≈59 (max attenuation).
+    IFGR~25 (high IF gain) instead of the intended ~59 (max attenuation).
     IFGR=25 on ch0 risks saturating the shared TDM ADC with a strong FM
     signal, corrupting ch1's interleaved samples.
 
     Expected IFGR = max(20, min(59, 79 - int(gain_db))):
-      sync_gain_db=5   → IFGR = max(20, min(59, 74)) = 59
-      target_gain_db=30 → IFGR = max(20, min(59, 49)) = 49
+      sync_gain_db=5   -> IFGR = max(20, min(59, 74)) = 59
+      target_gain_db=30 -> IFGR = max(20, min(59, 49)) = 49
     """
     rx = _make_receiver(sync_gain_db=5, target_gain_db=30,
                         sync_lna_state=9, target_lna_state=0)
@@ -746,7 +746,7 @@ def test_gain_uses_named_ifgr_not_distribution():
         and c[1][0] == RX and isinstance(c[1][2], float)
     ]
     assert not unnamed_gain_calls, (
-        f"Unnamed setGain(float) must not be used -- found: {unnamed_gain_calls}"
+        f"Unnamed setGain(float) must not be used - found: {unnamed_gain_calls}"
     )
 
     # Verify the computed IFGR values are correct for both channels
@@ -801,11 +801,11 @@ class TestBacklogDrain:
     # buffer_size=256, rate=2 MSPS:
     #   _buf_dur_ns       = 256 / 2_000_000 * 1e9 = 128_000 ns
     #   _drain_thresh_ns  = 64_000 ns  (HAS_TIME age threshold)
-    #   _fallback_thresh_ns = 1_000_000 ns (1 ms, fixed — not buffer-size-based)
+    #   _fallback_thresh_ns = 1_000_000 ns (1 ms, fixed - not buffer-size-based)
     _BUF_SIZE = 256
     _THRESH_NS = 64_000
     _FALLBACK_THRESH_NS = 1_000_000  # 1 ms
-    _NORMAL_READ_NS = 2_000_000      # 2 ms > fallback threshold → not stale
+    _NORMAL_READ_NS = 2_000_000      # 2 ms > fallback threshold -> not stale
 
     def test_backlog_drain_count_starts_zero(self):
         rx = _make_receiver()
@@ -814,8 +814,8 @@ class TestBacklogDrain:
     # ------ fallback path (flags=0, no HAS_TIME) ------
 
     def test_fallback_normal_read_yields_triple(self, monkeypatch, inject_soapy_stub):
-        """Slow readStream (delta >= fallback threshold) → not stale → yields 3-tuple."""
-        # monotonic_ns: pairs of (start, start+2_000_000) → delta=2 ms > 1 ms threshold
+        """Slow readStream (delta >= fallback threshold) -> not stale -> yields 3-tuple."""
+        # monotonic_ns: pairs of (start, start+2_000_000) -> delta=2 ms > 1 ms threshold
         values = itertools.chain(
             [0, self._NORMAL_READ_NS], itertools.cycle([0, self._NORMAL_READ_NS])
         )
@@ -827,9 +827,9 @@ class TestBacklogDrain:
         assert rx.backlog_drain_count == 0
 
     def test_fallback_fast_read_discards(self, monkeypatch, inject_soapy_stub):
-        """Fast readStream (delta < 1 ms fallback threshold) → stale → discards, drain_count += 1."""
-        # Iter 1: delta=1_000 ns < 1_000_000 ns → stale → discard
-        # Iter 2: delta=2_000_000 ns > 1_000_000 ns → not stale → yield
+        """Fast readStream (delta < 1 ms fallback threshold) -> stale -> discards, drain_count += 1."""
+        # Iter 1: delta=1_000 ns < 1_000_000 ns -> stale -> discard
+        # Iter 2: delta=2_000_000 ns > 1_000_000 ns -> not stale -> yield
         values = itertools.chain(
             [0, 1_000, 0, self._NORMAL_READ_NS],
             itertools.cycle([0, self._NORMAL_READ_NS]),
@@ -877,7 +877,7 @@ class TestBacklogDrain:
     # ------ HAS_TIME path ------
 
     def test_has_time_not_stale_yields_triple(self, monkeypatch, inject_soapy_stub):
-        """HAS_TIME set, buffer age < threshold → not stale → yields triple."""
+        """HAS_TIME set, buffer age < threshold -> not stale -> yields triple."""
         stub = inject_soapy_stub
         hw_time_ns = 1_700_000_000_000_000_000
 
@@ -890,7 +890,7 @@ class TestBacklogDrain:
         rx.open()
         rx._dev.readStream.side_effect = read_has_time
 
-        # age = time.time_ns() - hw_time_ns = 5_000 < 64_000 → not stale
+        # age = time.time_ns() - hw_time_ns = 5_000 < 64_000 -> not stale
         monkeypatch.setattr(_time_module, "time_ns", lambda: hw_time_ns + 5_000)
 
         s, t, w = next(rx.paired_stream())
@@ -898,10 +898,10 @@ class TestBacklogDrain:
         assert rx.backlog_drain_count == 0
 
     def test_has_time_stale_discards(self, monkeypatch, inject_soapy_stub):
-        """HAS_TIME set, buffer with old timestamp → yielded (not drained).
+        """HAS_TIME set, buffer with old timestamp -> yielded (not drained).
 
         Hardware timestamps are always accurate regardless of how old the buffer
-        is in the FIFO — a slow host may queue many buffer periods.  No drain
+        is in the FIFO - a slow host may queue many buffer periods.  No drain
         is performed when HAS_TIME is set; the buffer is passed through normally.
         """
         stub = inject_soapy_stub
@@ -919,7 +919,7 @@ class TestBacklogDrain:
         rx._dev.readStream.side_effect = read_old_timestamp
         monkeypatch.setattr(_time_module, "time_ns", lambda: now_ns)
 
-        # Buffer should be yielded despite being 60 s old — timestamps are correct.
+        # Buffer should be yielded despite being 60 s old - timestamps are correct.
         sync_buf, target_buf, buf_wall_ns = next(rx.paired_stream())
         assert buf_wall_ns == old_time_ns
         assert rx.backlog_drain_count == 0
@@ -938,7 +938,7 @@ class TestBacklogDrain:
         rx.open()
         rx._dev.readStream.side_effect = read_has_time
 
-        # age = 1_000 ns < 64_000 ns threshold → not stale
+        # age = 1_000 ns < 64_000 ns threshold -> not stale
         monkeypatch.setattr(_time_module, "time_ns", lambda: hw_time_ns + 1_000)
 
         _, _, w = next(rx.paired_stream())
@@ -946,7 +946,7 @@ class TestBacklogDrain:
 
     def test_has_time_future_sanity_check_fallback(self, monkeypatch, inject_soapy_stub,
                                                     caplog):
-        """HAS_TIME timestamp > 5 s in the future → logs warning once, applies
+        """HAS_TIME timestamp > 5 s in the future -> logs warning once, applies
         offset correction; first bad buffer yields buf_wall_ns == now."""
         import logging
         stub = inject_soapy_stub
@@ -967,7 +967,7 @@ class TestBacklogDrain:
         with caplog.at_level(logging.WARNING, logger="beagle_node.sdr.rspduo"):
             _, _, w = next(rx.paired_stream())
 
-        # First bad buffer: correction = now - future_ns → corrected = future_ns + (now - future_ns) = now
+        # First bad buffer: correction = now - future_ns -> corrected = future_ns + (now - future_ns) = now
         assert w == now_ns, "first bad buffer: corrected timestamp should equal time.time_ns()"
         warn_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
         assert any("HAS_TIME timestamp offset" in m for m in warn_msgs), (
@@ -994,9 +994,9 @@ class TestBacklogDrain:
 
         it = rx.paired_stream()
         with caplog.at_level(logging.WARNING, logger="beagle_node.sdr.rspduo"):
-            next(it)   # first bad buffer → warn
-            next(it)   # second bad buffer → no new warn
-            next(it)   # third bad buffer → no new warn
+            next(it)   # first bad buffer -> warn
+            next(it)   # second bad buffer -> no new warn
+            next(it)   # third bad buffer -> no new warn
 
         warn_msgs = [r for r in caplog.records
                      if r.levelno == logging.WARNING and "HAS_TIME timestamp offset" in r.message]
@@ -1046,7 +1046,7 @@ class TestBacklogDrain:
         )
 
     def test_has_time_slightly_future_accepted(self, monkeypatch, inject_soapy_stub):
-        """HAS_TIME timestamp ≤ 5 s in the future → accepted (NTP clock skew)."""
+        """HAS_TIME timestamp <= 5 s in the future -> accepted (NTP clock skew)."""
         stub = inject_soapy_stub
         now_ns = 1_742_000_000_000_000_000
         slightly_future = now_ns + 3_000_000_000  # 3 seconds ahead (within tolerance)
@@ -1062,7 +1062,7 @@ class TestBacklogDrain:
         monkeypatch.setattr(_time_module, "time_ns", lambda: now_ns)
 
         _, _, w = next(rx.paired_stream())
-        assert w == slightly_future, "timestamp ≤5 s in the future should be accepted"
+        assert w == slightly_future, "timestamp <=5 s in the future should be accepted"
 
     # ------ Post-reinit recovery (backlog storm suppression) ------
     # These tests route timestamps per-stream: sync_stream gets the driving
@@ -1072,8 +1072,8 @@ class TestBacklogDrain:
         """Return a readStream side_effect that feeds sync_pattern to sync calls only.
 
         paired_stream() always calls readStream for sync before target in each
-        loop iteration, so even-numbered calls (0, 2, 4, …) are sync and odd
-        calls (1, 3, 5, …) are target.  The mock returns the same stream handle
+        loop iteration, so even-numbered calls (0, 2, 4, ...) are sync and odd
+        calls (1, 3, 5, ...) are target.  The mock returns the same stream handle
         for both channels, so stream-identity comparison is unreliable; using
         call order is the correct approach.
         """
@@ -1097,7 +1097,7 @@ class TestBacklogDrain:
         """After HAS_TIME correction fires, individual backlog WARNINGs are suppressed.
 
         Simulates the FIFO oscillation pattern seen in node-greenlake logs:
-          bad_timestamp → stale(12) fresh(1) stale(1) fresh(1) stale(1) stale(14)
+          bad_timestamp -> stale(12) fresh(1) stale(1) fresh(1) stale(1) stale(14)
         followed by stable fresh buffers.  Expected: zero backlog WARNINGs,
         one INFO summary at the end.
         """
@@ -1111,10 +1111,10 @@ class TestBacklogDrain:
             [future_ns]        # triggers correction + enters recovery
             + [old_ns] * 12    # stale episode 1
             + [now_ns] * 1     # fresh (consecutive=1, not yet 5)
-            + [old_ns] * 1     # stale → resets consecutive
+            + [old_ns] * 1     # stale -> resets consecutive
             + [now_ns] * 1     # fresh (consecutive=1)
-            + [old_ns] * 14    # stale → resets consecutive
-            + [now_ns] * 10    # 10 fresh → exit recovery after 5
+            + [old_ns] * 14    # stale -> resets consecutive
+            + [now_ns] * 10    # 10 fresh -> exit recovery after 5
         )
 
         rx = _make_receiver(buffer_size=self._BUF_SIZE)
@@ -1188,7 +1188,7 @@ class TestBacklogDrain:
         future_ns = now_ns + 4 * 365 * 24 * 3600 * 1_000_000_000
         old_ns = now_ns - 60_000_000_000
 
-        # Alternating stale/fresh/stale/fresh — each "clear" should be suppressed.
+        # Alternating stale/fresh/stale/fresh - each "clear" should be suppressed.
         sync_pattern = [future_ns, old_ns, now_ns, old_ns, now_ns] + [now_ns] * 6
 
         rx = _make_receiver(buffer_size=self._BUF_SIZE)
@@ -1226,11 +1226,11 @@ class TestBacklogDrain:
         now_ns = 1_742_000_000_000_000_000
         future_ns = now_ns + 4 * 365 * 24 * 3600 * 1_000_000_000
 
-        # Phase 1: correction fires, 5 consecutive fresh → recovery ends.
-        # Phase 2: another future timestamp → correction applied silently (no WARNING).
+        # Phase 1: correction fires, 5 consecutive fresh -> recovery ends.
+        # Phase 2: another future timestamp -> correction applied silently (no WARNING).
         sync_pattern = (
             [future_ns]        # correction fires, recovery starts
-            + [now_ns] * 5     # 5 consecutive fresh → recovery ends
+            + [now_ns] * 5     # 5 consecutive fresh -> recovery ends
             + [future_ns]      # post-recovery future: correction applies silently
             + [now_ns] * 3     # stable fresh
         )
@@ -1267,13 +1267,13 @@ class TestBacklogDrain:
     ):
         """A negative or impossibly old HAS_TIME timestamp falls back to time.time_ns().
 
-        This guards against C driver int64 overflow (observed as buf_wall_ns ≈
+        This guards against C driver int64 overflow (observed as buf_wall_ns ~
         -7.45e18 producing 'buf age 9.22e12 ms' warnings and infinite stale loop).
         """
         import logging
         stub = inject_soapy_stub
         now_ns = 1_742_000_000_000_000_000
-        # Simulate C driver int64 overflow → large negative timeNs
+        # Simulate C driver int64 overflow -> large negative timeNs
         bad_timeNs = -7_450_000_000_000_000_000
 
         call_count = [0]

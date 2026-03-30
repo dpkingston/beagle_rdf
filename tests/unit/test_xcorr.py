@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for IQ snippet cross-correlation (beagle_server.tdoa)."""
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def _bandlimited_noise(n: int = 640, seed: int = 0) -> np.ndarray:
 
     Bandlimited noise has a non-flat autocorrelation so the cross-correlation
     peak is sharp and SNR is high.  Pure tones have constant-magnitude
-    autocorrelation (SNR ≈ 1) regardless of lag and are unsuitable for
+    autocorrelation (SNR ~ 1) regardless of lag and are unsuitable for
     cross-correlation tests.
     """
     rng = np.random.default_rng(seed)
@@ -52,7 +52,7 @@ def test_decode_roundtrip():
     b64 = _encode_iq(original)
     decoded = _decode_iq_snippet(b64)
     assert len(decoded) == 128
-    # After normalise-to-±1 roundtrip, phases should be preserved; magnitudes ~1
+    # After normalise-to-+/-1 roundtrip, phases should be preserved; magnitudes ~1
     phase_orig = np.angle(original)
     phase_dec  = np.angle(decoded)
     phase_diff = np.abs(np.angle(np.exp(1j * (phase_dec - phase_orig))))
@@ -60,7 +60,7 @@ def test_decode_roundtrip():
 
 
 # ---------------------------------------------------------------------------
-# cross_correlate_snippets -- lag recovery
+# cross_correlate_snippets - lag recovery
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("lag_samples", [0, 1, 5, 10, -5, -10])
@@ -71,7 +71,7 @@ def test_known_lag_recovery(lag_samples: int):
     np.roll(base, D) gives b[n] = a[n-D], which physically models node A
     detecting the carrier D samples *later* than node B (A is later).
     The correlator should return a positive lag (A is later) equal to +D samples.
-    Tolerance: ±1.5 samples.
+    Tolerance: +/-1.5 samples.
     """
     rate = 64_000.0
     n = 640
@@ -83,7 +83,7 @@ def test_known_lag_recovery(lag_samples: int):
 
     lag_ns, snr = cross_correlate_snippets(b64_a, b64_b, sample_rate_hz_a=rate)
 
-    # b[n] = a[n - D] → A started D samples later → A is later → positive lag
+    # b[n] = a[n - D] -> A started D samples later -> A is later -> positive lag
     expected_ns = lag_samples * 1e9 / rate
     tol_ns = 1.5 * 1e9 / rate
     assert abs(lag_ns - expected_ns) < tol_ns, (
@@ -91,7 +91,7 @@ def test_known_lag_recovery(lag_samples: int):
     )
     if lag_samples != 0:
         # Power-envelope xcorr SNR is inherently low (~1.6) for random noise snippets
-        # because the DC component of |IQ|² dominates the sidelobe mean.  Real carrier
+        # because the DC component of |IQ|^2 dominates the sidelobe mean.  Real carrier
         # snippets with onset/offset transitions yield higher SNR.  The key property
         # tested here is lag accuracy, not SNR magnitude.
         assert snr > 1.1, f"Expected SNR > 1.1 for bandlimited noise, got {snr:.2f}"
@@ -102,7 +102,7 @@ def test_zero_lag_gives_near_zero_ns():
     b64 = _encode_iq(_bandlimited_noise(640, seed=2))
     lag_ns, snr = cross_correlate_snippets(b64, b64, sample_rate_hz_a=64_000.0)
     assert abs(lag_ns) < 1.0  # sub-ns for identical signals
-    # Power-envelope autocorrelation SNR ≈ 1 + Var(|IQ|²)/mean(|IQ|²)² ≈ 1.6 for noise
+    # Power-envelope autocorrelation SNR ~ 1 + Var(|IQ|^2)/mean(|IQ|^2)^2 ~ 1.6 for noise
     assert snr > 1.1
 
 
@@ -124,7 +124,7 @@ def test_sample_rate_scales_lag():
 
 
 # ---------------------------------------------------------------------------
-# cross_correlate_snippets -- robustness
+# cross_correlate_snippets - robustness
 # ---------------------------------------------------------------------------
 
 def test_all_zero_input_does_not_crash():
@@ -150,7 +150,7 @@ def test_low_snr_produces_low_correlation_snr():
     noise_a = (rng.standard_normal(640) + 1j * rng.standard_normal(640)).astype(np.complex64)
     noise_b = (rng.standard_normal(640) + 1j * rng.standard_normal(640)).astype(np.complex64)
     _, snr = cross_correlate_snippets(_encode_iq(noise_a), _encode_iq(noise_b))
-    # Independent noise should give SNR close to 1 (peak ≈ mean sidelobe)
+    # Independent noise should give SNR close to 1 (peak ~ mean sidelobe)
     assert snr < 5.0
 
 
@@ -162,7 +162,7 @@ def test_mixed_sample_rate_resampling():
     Two sub-tests:
 
     1. Zero TDOA: the same physical signal resampled to each node's rate must
-       give lag ≈ 0 ns.  Without rate-aware resampling this would give a large
+       give lag ~ 0 ns.  Without rate-aware resampling this would give a large
        systematic error proportional to the rate difference (2.4%).
 
     2. Known TDOA: node A is delayed by D samples at 64 kHz (= D/64000 s).
@@ -181,7 +181,7 @@ def test_mixed_sample_rate_resampling():
         + 1j * _rsp(base_64k.imag, 125, 128).astype(np.float32)
     ).astype(np.complex64)
 
-    tolerance_ns = 1e9 / 62_500.0 * 2  # ±2 samples at 62.5 kHz ≈ ±32 µs
+    tolerance_ns = 1e9 / 62_500.0 * 2  # +/-2 samples at 62.5 kHz ~ +/-32 usec
 
     # --- Sub-test 1: zero TDOA ---
     lag_zero, _ = cross_correlate_snippets(
@@ -190,17 +190,17 @@ def test_mixed_sample_rate_resampling():
         sample_rate_hz_b=62_500.0,
     )
     assert abs(lag_zero) < tolerance_ns, (
-        f"Zero-TDOA mixed-rate lag should be ≈0 ns, got {lag_zero:.0f} ns"
+        f"Zero-TDOA mixed-rate lag should be ~0 ns, got {lag_zero:.0f} ns"
     )
 
-    # --- Sub-test 2: B delayed by 10 samples at 64 kHz = 156.25 µs ---
+    # --- Sub-test 2: B delayed by 10 samples at 64 kHz = 156.25 usec ---
     # Correlation convention: lag > 0 when B is delayed (B arrives later).
     # We delay B (base_62k shifted by ~10 samples worth in physical time) so
     # the sign of the expected result is unambiguous.
     delay_samples = 10
     true_lag_ns = delay_samples * 1e9 / 64_000.0  # 156 250 ns
     # Delay B by rolling the 62.5 kHz signal by the equivalent sample count.
-    delay_62k = round(delay_samples * 62_500.0 / 64_000.0)  # 10 samples at 64k → ~10 at 62.5k
+    delay_62k = round(delay_samples * 62_500.0 / 64_000.0)  # 10 samples at 64k -> ~10 at 62.5k
     delayed_b = np.roll(base_62k, delay_62k)
 
     lag_known, _ = cross_correlate_snippets(
@@ -210,7 +210,7 @@ def test_mixed_sample_rate_resampling():
     )
     assert abs(lag_known - true_lag_ns) < tolerance_ns, (
         f"Mixed-rate lag wrong: {lag_known:.0f} ns vs {true_lag_ns:.0f} ns "
-        f"(tolerance ±{tolerance_ns:.0f} ns)"
+        f"(tolerance +/-{tolerance_ns:.0f} ns)"
     )
 
     # Explicit target_rate_hz should give the same result as auto-lower.
@@ -278,8 +278,8 @@ def test_misaligned_onset_snippet_returns_zero_snr():
     final 1/8 is well outside this window (no convolution bleed at 16 samples).
     """
     n = 1280
-    # Carrier starts at 7/8 of snippet (sample 1120) — completely outside the
-    # first-3/4 trim [0:960], with ≥ 160 samples of margin vs. the 16-sample
+    # Carrier starts at 7/8 of snippet (sample 1120) - completely outside the
+    # first-3/4 trim [0:960], with >= 160 samples of margin vs. the 16-sample
     # smooth kernel, ensuring no power bleed into the trim window.
     sig = np.zeros(n, dtype=np.complex64)
     carrier = _bandlimited_noise(n, seed=20)

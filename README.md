@@ -1,4 +1,4 @@
-# Beagle — Open Source RDF
+# Beagle - Open Source RDF
 
 Software for a distributed Time Difference of Arrival (TDOA) system that
 locates land mobile radio (LMR) transmissions to neighbourhood-level accuracy
@@ -6,12 +6,12 @@ using low-cost RTL-SDR hardware.
 
 The system has two components:
 
-- **Nodes** — Raspberry Pi (or other Linux system) + SDR receivers deployed at fixed locations.  Each
+- **Nodes** - Raspberry Pi (or other Linux system) + SDR receivers deployed at fixed locations.  Each
   node listens for LMR carrier events and measures their timing relative to an
   FM broadcast pilot tone used as a shared clock reference.  Nodes POST their
   measurements to the central server.
 
-- **Aggregation Server** — A central server (laptop, Pi, or cloud VM typically running Linux) that
+- **Aggregation Server** - A central server (laptop, Pi, or cloud VM typically running Linux) that
   collects measurements from all nodes, computes hyperbolic position fixes, and
   serves a live map.  The server is where you see results.
 
@@ -29,7 +29,7 @@ measurements.
 **Setting up the server?**  Follow [Installation (server)](#aggregation-server-host)
 then [Aggregation Server](#aggregation-server).  You can test the server
 immediately using the [Mock Event Generator](#mock-event-generator-demo-without-hardware)
-— no SDR hardware needed.
+-- no SDR hardware needed.
 
 **Managing a multi-node deployment?**  See [Node Management](#node-management)
 for registering nodes, pushing configs, and monitoring health.
@@ -39,24 +39,24 @@ for registering nodes, pushing configs, and monitoring health.
 ## Contents
 
 ### Installation
-- [Time synchronisation](#nodes-and-servers--time-synchronisation) — chrony setup (all machines)
+- [Time synchronisation](#nodes-and-servers--time-synchronisation) - chrony setup (all machines)
 - [Node (Pi/Linux + SDR)](#node-pi--sdr)
 - [Server](#aggregation-server-host)
 
 ### Node
-- [SDR Modes](#sdr-modes) — freq_hop, rspduo, two_sdr, single_sdr
-- [Node Quick Start](#node-quick-start) — configure, verify, run
-- [Calibration](#calibration) — threshold tuning, crystal check, accuracy verification
+- [SDR Modes](#sdr-modes) - freq_hop, rspduo, two_sdr, single_sdr
+- [Node Quick Start](#node-quick-start) - configure, verify, run
+- [Calibration](#calibration) - threshold tuning, crystal check, accuracy verification
 - [Production Deployment](#production-deployment-systemd)
 
 ### Server
-- [Aggregation Server](#aggregation-server) — config, startup, live map, controls
-- [Mock Event Generator](#mock-event-generator-demo-without-hardware) — test without hardware
-- [Node Management](#node-management) — register nodes, push configs
+- [Aggregation Server](#aggregation-server) - config, startup, live map, controls
+- [Mock Event Generator](#mock-event-generator-demo-without-hardware) - test without hardware
+- [Node Management](#node-management) - register nodes, push configs
 
 ### Reference
-- [How It Works](#how-it-works) — timing model, signal processing, solver
-- [Scripts](#scripts) — verification, analysis, provisioning tools
+- [How It Works](#how-it-works) - timing model, signal processing, solver
+- [Scripts](#scripts) - verification, analysis, provisioning tools
 - [Tests](#tests)
 - [Project Layout](#project-layout)
 
@@ -66,8 +66,8 @@ for registering nodes, pushing configs, and monitoring health.
 
 Time Difference of Arrival locates a radio transmitter by measuring how much
 earlier or later its signal arrives at each receiver.  If node A hears a
-transmission 3 µs before node B, the transmitter lies somewhere on a hyperbola
-whose foci are A and B — with a 3 µs × c ≈ 900 m path difference.  Two or
+transmission 3 usec before node B, the transmitter lies somewhere on a hyperbola
+whose foci are A and B - with a 3 usec x c ~ 900 m path difference.  Two or
 more such hyperbolas from different node pairs intersect at the transmitter's
 location.  The challenge is measuring those sub-microsecond arrival-time
 differences with inexpensive, unsynchronised hardware.
@@ -78,15 +78,15 @@ Every FM broadcast station transmits this tone locked to a GPS-traceable
 frequency standard.  Each node continuously cross-correlates the pilot against
 a reference template, producing a `SyncEvent` timestamp every 10 ms with
 sub-microsecond precision.  When a land mobile radio (LMR) carrier is detected,
-the node records `sync_delta_ns = target_onset_sample − sync_event_sample`,
+the node records `sync_delta_ns = target_onset_sample - sync_event_sample`,
 expressed in nanoseconds on the local sample clock.  Because both measurements
 use the same unbroken ADC clock, the absolute clock offset cancels out entirely
-— only the interval between two events on that clock matters.
+-- only the interval between two events on that clock matters.
 
 The aggregation server collects `sync_delta_ns` reports from all nodes,
 corrects for the known FM transmitter-to-node propagation delay (computed from
 FCC-documented station coordinates), and computes
-`TDOA_AB = sync_delta_A − sync_delta_B`.  A scipy L-BFGS-B solver minimises
+`TDOA_AB = sync_delta_A - sync_delta_B`.  A scipy L-BFGS-B solver minimises
 the squared residuals across all node pairs to produce a latitude/longitude fix,
 which is logged to SQLite and displayed on a live Folium map.
 
@@ -103,25 +103,25 @@ which is logged to SQLite and displayed on a live Folium map.
             +-----------> DeltaComputer <-----------+
                                 |
                                 v
-                    sync_delta_ns = target_onset − sync_event
-                         (same ADC clock — offset cancels)
+                    sync_delta_ns = target_onset - sync_event
+                         (same ADC clock - offset cancels)
                                 |
                                 v
-                         EventReporter  ──►  HTTP POST /api/v1/events
+                         EventReporter  -->  HTTP POST /api/v1/events
                                                        |
                                                        v
                                            Aggregation Server
-                                      pair events · correct path delay
-                                      solve hyperbolic fix · update map
+                                      pair events * correct path delay
+                                      solve hyperbolic fix * update map
 ```
 
 **Further reading:**
 
-- Knapp & Carter (1976) — [The Generalized Correlation Method for Estimation of Time Delay](https://www.semanticscholar.org/paper/The-generalized-correlation-method-for-estimation-Knapp-Carter/29c74aad1986ff2e907e084820e990a0544e743a) — foundational cross-correlation technique underlying the FM pilot detector
-- Chan & Ho (1994) — [A Simple and Efficient Estimator for Hyperbolic Location](https://www.semanticscholar.org/paper/A-simple-and-efficient-estimator-for-hyperbolic-Chan-Ho/fc51fb822024805533ff9eef4f7e486b38437109) — the closed-form TDOA solver this system is based on
-- Howland, Maksimiuk & Reitsma (2005) — [FM Radio Based Bistatic Radar](https://www.theiet.org/media/11278/fm-radio-based-bistatic-radar.pdf) — demonstrates FM broadcasts as passive location reference signals
-- Abramson (2020) — [Thesis: Locating Transmitters with TDOA and RTL-SDRs](https://www.rtl-sdr.com/thesis-on-locating-transmitters-with-tdoa-and-rtl-sdrs/) — end-to-end RTL-SDR TDOA system with source and tooling
-- Lanius, MIT Lincoln Laboratory (GRCon 2023) — [Wideband TDOA Geolocation with GNU Radio](https://events.gnuradio.org/event/18/contributions/252/) ([video](https://www.youtube.com/watch?v=o9gbsxsLH9Q)) — practical SDR-based TDOA geolocation techniques
+- Knapp & Carter (1976) - [The Generalized Correlation Method for Estimation of Time Delay](https://www.semanticscholar.org/paper/The-generalized-correlation-method-for-estimation-Knapp-Carter/29c74aad1986ff2e907e084820e990a0544e743a) - foundational cross-correlation technique underlying the FM pilot detector
+- Chan & Ho (1994) - [A Simple and Efficient Estimator for Hyperbolic Location](https://www.semanticscholar.org/paper/A-simple-and-efficient-estimator-for-hyperbolic-Chan-Ho/fc51fb822024805533ff9eef4f7e486b38437109) - the closed-form TDOA solver this system is based on
+- Howland, Maksimiuk & Reitsma (2005) - [FM Radio Based Bistatic Radar](https://www.theiet.org/media/11278/fm-radio-based-bistatic-radar.pdf) - demonstrates FM broadcasts as passive location reference signals
+- Abramson (2020) - [Thesis: Locating Transmitters with TDOA and RTL-SDRs](https://www.rtl-sdr.com/thesis-on-locating-transmitters-with-tdoa-and-rtl-sdrs/) - end-to-end RTL-SDR TDOA system with source and tooling
+- Lanius, MIT Lincoln Laboratory (GRCon 2023) - [Wideband TDOA Geolocation with GNU Radio](https://events.gnuradio.org/event/18/contributions/252/) ([video](https://www.youtube.com/watch?v=o9gbsxsLH9Q)) - practical SDR-based TDOA geolocation techniques
 
 ---
 
@@ -129,10 +129,10 @@ which is logged to SQLite and displayed on a live Folium map.
 
 | Mode | Hardware | Clock alignment | Accuracy |
 |------|----------|----------------|----------|
-| `freq_hop` | 1 × RTL-SDR | Same unbroken ADC clock | 1–5 µs |
-| `rspduo` | 1 × SDRplay RSPduo | Shared TCXO + single ADC | ~1–2 µs |
-| `two_sdr` + GPS 1PPS | 2 × RTL-SDR + GPS | GPS 1PPS injected into both inputs (untested) | <1 µs |
-| `single_sdr` | 1 × wideband SDR | Same ADC clock (untested) | <1 µs |
+| `freq_hop` | 1 x RTL-SDR | Same unbroken ADC clock | 1-5 usec |
+| `rspduo` | 1 x SDRplay RSPduo | Shared TCXO + single ADC | ~1-2 usec |
+| `two_sdr` + GPS 1PPS | 2 x RTL-SDR + GPS | GPS 1PPS injected into both inputs (untested) | <1 usec |
+| `single_sdr` | 1 x wideband SDR | Same ADC clock (untested) | <1 usec |
 
 **`freq_hop`** is recommended for single-dongle development.  The RTL2832
 ADC runs continuously while the R820T tuner alternates between the FM sync
@@ -141,9 +141,9 @@ frequency and the LMR target frequency using pyrtlsdr's synchronous
 
 **`rspduo`** is recommended for production when GPS 1PPS injection hardware
 is undesirable.  The RSPduo's two tuners share one ADC clock and one USB
-connection — no inter-channel jitter, no coverage gaps, no settling time.
+connection - no inter-channel jitter, no coverage gaps, no settling time.
 Requires the SDRplay API installer (from sdrplay.com) and the SoapySDRPlay3
-plugin (built from source on Debian — see
+plugin (built from source on Debian - see
 [docs/setup-rspduo-debian.md](docs/setup-rspduo-debian.md)).
 
 **`two_sdr`** and **`single_sdr`** are theoretically supported but have not
@@ -153,7 +153,7 @@ been tested due to lack of equipment.
 
 ## Installation
 
-### Nodes and servers — time synchronisation
+### Nodes and servers - time synchronisation
 
 Beagle requires all nodes and the server to have good time synchronisation.
 Use `chrony` with the **same NTP sources** on every machine to minimise
@@ -200,7 +200,7 @@ They include setup of SDRplay API + SoapySDRPlay3.
 sudo apt install python3-pip python3-venv python3-soapysdr soapysdr-tools rtl-sdr chrony gpsd
 
 # Clone the repository and create the Python environment
-git clone https://github.com/dpkingston/beagle.git
+git clone https://github.com/dpkingston/beagle_rdf.git
 cd beagle
 python3 -m venv --system-site-packages env
 source env/bin/activate
@@ -214,7 +214,7 @@ pip install -e .
 sudo apt install python3-pip python3-venv chrony
 
 # Clone the repository and create the Python environment
-git clone https://github.com/dpkingston/beagle.git
+git clone https://github.com/dpkingston/beagle_rdf.git
 cd beagle
 python3 -m venv env
 source env/bin/activate
@@ -228,14 +228,14 @@ pip install -e ".[server]"
 Follow the [Installation](#installation) steps first, then choose one of the
 two configuration approaches:
 
-- **Local config** — the node reads a full `node.yaml` on startup.  Suitable
+- **Local config** - the node reads a full `node.yaml` on startup.  Suitable
   for development and single-node deployments.
-- **Remote config** (recommended for multi-node deployments) — the node starts
+- **Remote config** (recommended for multi-node deployments) - the node starts
   with a minimal `bootstrap.yaml` and fetches its operating config from the
   server.  The server can push config updates at any time without SSHing to
   each box.  See [Node Management](#node-management) for the setup workflow.
 
-### 1 — Configure
+### 1 - Configure
 
 #### Option A: local config
 
@@ -264,7 +264,7 @@ lives on the server and is fetched automatically.  The node only needs a minimal
 
 **On the server:** create a node config file the same way as Option A, register
 the node, and push the config.  See [Node Management](#node-management) for
-the full workflow — step 2 (registration) prints the secret you'll need below.
+the full workflow - step 2 (registration) prints the secret you'll need below.
 
 **On the node:** create the bootstrap file using the secret from registration:
 
@@ -283,25 +283,25 @@ This is the **only** file the node needs locally.  The operating config is
 fetched from the server on startup and updated automatically whenever the
 server config changes.
 
-### 2 — Verify hardware and pilot detection
+### 2 - Verify hardware and pilot detection
 
 The verification script depends on your SDR hardware:
 
-**RTL-SDR (`freq_hop` mode)** — confirm FM pilot detection before a full run:
+**RTL-SDR (`freq_hop` mode)** - confirm FM pilot detection before a full run:
 ```bash
 python3 scripts/verify_sync.py --config config/node.yaml --duration 10
 ```
-Expected: steady sync event rate, mean `corr_peak` ≥ 0.5.
+Expected: steady sync event rate, mean `corr_peak` >= 0.5.
 
-**RSPduo (`rspduo` mode)** — end-to-end dual-tuner pipeline test:
+**RSPduo (`rspduo` mode)** - end-to-end dual-tuner pipeline test:
 ```bash
 python3 scripts/verify_rspduo.py --sync-freq 99.9e6 --target-freq 462.5625e6
 ```
-Expected: sync rate ≥ 95/s, 0 overflows, measurements produced when an LMR
+Expected: sync rate >= 95/s, 0 overflows, measurements produced when an LMR
 transmission is present.  See [docs/setup-rspduo-debian.md](docs/setup-rspduo-debian.md)
 for installation and setup of the SDRplay API and SoapySDRPlay3.
 
-### 3 — Calibrate carrier detection thresholds
+### 3 - Calibrate carrier detection thresholds
 
 Tune the SDR to your target frequency and key your transmitter a few times.
 `check_target.py` reports the noise floor and peak signal level and recommends
@@ -319,11 +319,11 @@ carrier:
   offset_db: -28
 ```
 
-Skip this step for a first smoke-test with the default thresholds (−30/−40 dBFS),
+Skip this step for a first smoke-test with the default thresholds (-30/-40 dBFS),
 but run it before production deployment.  See [Calibration](#calibration)
 for the full calibration procedure.
 
-### 4 — Run the node
+### 4 - Run the node
 
 ```bash
 # Local config
@@ -336,7 +336,7 @@ python -m beagle_node --bootstrap /etc/beagle/bootstrap.yaml
 python -m beagle_node --config config/node.yaml --mock --mock-duration 30
 ```
 
-### 5 — Check health
+### 5 - Check health
 
 ```bash
 curl http://localhost:8080/health
@@ -360,9 +360,9 @@ curl http://localhost:8080/health
 
 The aggregation server receives events from all nodes, pairs them, computes
 hyperbolic fixes, and serves a live Folium map.  It can run on any machine
-reachable by the nodes — a laptop, a Pi, or a cloud VM.
+reachable by the nodes - a laptop, a Pi, or a cloud VM.
 
-### 1 — Install server extras
+### 1 - Install server extras
 
 The server dependencies (FastAPI, uvicorn, aiosqlite, folium) are not
 installed by default.  With the venv active:
@@ -371,7 +371,7 @@ installed by default.  With the venv active:
 pip install -e ".[server]"
 ```
 
-### 2 — Create a server config
+### 2 - Create a server config
 
 ```bash
 cp config/server.example.yaml config/server.yaml
@@ -389,15 +389,15 @@ The only fields you must change before first use:
 
 All other defaults are reasonable for a first run.
 
-### 3 — Start the server
+### 3 - Start the server
 
 ```bash
 env/bin/beagle-server --config config/server.yaml
 ```
 
 Two SQLite databases are created automatically on first run:
-- `data/tdoa_data.db` — operational data (events, fixes, heatmap)
-- `data/tdoa_registry.db` — permanent configuration (nodes, users, sessions)
+- `data/tdoa_data.db` - operational data (events, fixes, heatmap)
+- `data/tdoa_registry.db` - permanent configuration (nodes, users, sessions)
 
 The operational database can be deleted at any time for a clean start;
 node registrations and user accounts in the registry are unaffected.
@@ -411,14 +411,14 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
 ```
 
-### 4 — Create the first admin user (userdb mode)
+### 4 - Create the first admin user (userdb mode)
 
 If you set `server.auth_mode: userdb` in your config, register the first admin
 account while the server is running.  You can do this from the browser or the
 command line.
 
 **Browser:** Open `http://localhost:8765/map`.  The login overlay has a
-"Create" link while no users exist — fill in a username, password, and the
+"Create" link while no users exist - fill in a username, password, and the
 `admin` role.
 
 **Command line:**
@@ -432,10 +432,10 @@ curl -s -X POST http://localhost:8765/auth/register \
 Once the first user is created, all further registrations require an admin
 session token.  See [ADMIN.md](ADMIN.md) for full user management documentation.
 
-> **Skip this step** if using `auth_mode: token` or `auth_mode: nodedb` — those
+> **Skip this step** if using `auth_mode: token` or `auth_mode: nodedb` - those
 > modes use the shared `auth_token` instead of per-user accounts.
 
-### 5 — Verify it is running
+### 5 - Verify it is running
 
 ```bash
 curl http://localhost:8765/health
@@ -452,13 +452,13 @@ curl http://localhost:8765/health
 }
 ```
 
-### 6 — Open the live map
+### 6 - Open the live map
 
 ```
 http://localhost:8765/map
 ```
 
-The map updates live via SSE — each new fix is rendered without a page reload.
+The map updates live via SSE - each new fix is rendered without a page reload.
 Nodes send a periodic heartbeat (`POST /api/v1/heartbeat`) every 60 seconds,
 so they appear on the map with a green (online) or red (offline) indicator
 even before any carrier events arrive.
@@ -475,22 +475,22 @@ The control panel in the top-right corner provides the following controls.
 | **Fixes** | Number of fix markers currently visible on the map. |
 | **Visible** | Shows *All* normally; shows *since HH:MM:SS* when the Hide Fixes filter is active. |
 
-#### Age-preset buttons — `1m  5m  15m  1h  6h  24h  ALL`
+#### Age-preset buttons - `1m  5m  15m  1h  6h  24h  ALL`
 
 Rolling time window: show fixes from the last N minutes or hours.  The active
 preset is highlighted blue.  `ALL` shows every fix in the database.  Clicking
 any preset cancels an active fixed window and resumes live updates.  Any active
 Hide Fixes filter continues to apply.
 
-#### Fixed time window — `From` / `To` / `Set Window` / `Clear`
+#### Fixed time window - `From` / `To` / `Set Window` / `Clear`
 
-Pin the display to an absolute time range — useful for reviewing a specific
+Pin the display to an absolute time range - useful for reviewing a specific
 incident without new fixes entering the view.  Both inputs are pre-filled with
 the last hour on page load.
 
-- **Set Window** — activates the fixed window; age-preset buttons go inactive.
+- **Set Window** - activates the fixed window; age-preset buttons go inactive.
   The button highlights blue while a window is active.
-- **Clear** — cancels the fixed window and returns to rolling age-preset mode.
+- **Clear** - cancels the fixed window and returns to rolling age-preset mode.
 
 Fixed-window mode and rolling age-preset mode are mutually exclusive.
 
@@ -507,11 +507,11 @@ Fixed-window mode and rolling age-preset mode are mutually exclusive.
 
 | Marker | Meaning |
 |--------|---------|
-| Coloured circle (red → grey) | Fix location (3+ nodes). Red = newest, grey = oldest relative to the current age window. Click to open the popup. |
-| Green circle | Receiving node — online (heartbeat received within 120 s). Click for node ID and last-seen time. |
-| Red circle | Receiving node — offline (no recent heartbeat). |
+| Coloured circle (red -> grey) | Fix location (3+ nodes). Red = newest, grey = oldest relative to the current age window. Click to open the popup. |
+| Green circle | Receiving node - online (heartbeat received within 120 s). Click for node ID and last-seen time. |
+| Red circle | Receiving node - offline (no recent heartbeat). |
 | Grey antenna | FM sync transmitter used for timing reference. |
-| Dashed amber line | Line of Position (LOP) — 2-node solution (see below). |
+| Dashed amber line | Line of Position (LOP) - 2-node solution (see below). |
 
 **Fix popup** (click a fix circle) shows:
 
@@ -526,7 +526,7 @@ Each arc is the locus of transmitter positions consistent with the TDOA measured
 by one node pair.  Where the arcs intersect is the computed fix.
 
 **Lines of Position** (dashed amber arcs): when only 2 nodes observe an event,
-the system cannot compute a unique fix — instead it displays the hyperbola arc
+the system cannot compute a unique fix - instead it displays the hyperbola arc
 representing all positions consistent with the measured TDOA.  The transmitter
 is somewhere along this line.  LOPs fade with age and are stored as fixes with
 `node_count=2`.
@@ -545,7 +545,7 @@ overlay.  Enter your username and password to sign in.  Your session is stored
 in the browser tab and cleared when you close it.
 
 If your administrator has configured Google OAuth, a **Sign in with Google**
-button is also available — click it and follow the Google consent flow to log in
+button is also available - click it and follow the Google consent flow to log in
 without a password.
 
 **Enabling two-factor authentication (2FA):**
@@ -601,19 +601,19 @@ The `--pilot-sigma-us` flag sets the 1-sigma FM pilot timing noise, which
 directly determines TDOA and position accuracy:
 
 ```bash
-# Uncalibrated RTL-SDR crystal (100 ppm * 200 ms window) -- expect ~6 km error
+# Uncalibrated RTL-SDR crystal (100 ppm * 200 ms window) - expect ~6 km error
 python3 scripts/mock_event_generator.py \
     --scenario scripts/mock_scenario_seattle.yaml \
     --delivery-buffer-s 10 \
     --pilot-sigma-us 20.0
 
-# RTL-SDR TCXO + FM pilot calibration -- expect ~500-1500 m error (default)
+# RTL-SDR TCXO + FM pilot calibration - expect ~500-1500 m error (default)
 python3 scripts/mock_event_generator.py \
     --scenario scripts/mock_scenario_seattle.yaml \
     --delivery-buffer-s 10 \
     --pilot-sigma-us 2.0
 
-# two_sdr mode with GPS 1PPS injection -- expect ~100-400 m error
+# two_sdr mode with GPS 1PPS injection - expect ~100-400 m error
 python3 scripts/mock_event_generator.py \
     --scenario scripts/mock_scenario_seattle.yaml \
     --delivery-buffer-s 10 \
@@ -642,10 +642,10 @@ total), not merge them.
 ## Node Management
 
 `scripts/manage_nodes.py` manages node records directly in the server's SQLite
-database.  It creates the required tables on first use (idempotent — safe to run
+database.  It creates the required tables on first use (idempotent - safe to run
 against an existing database).
 
-Most node management tasks can also be performed from the **web UI** — see the
+Most node management tasks can also be performed from the **web UI** - see the
 Nodes tab in the map control panel.  The web UI supports registering nodes,
 regenerating secrets, editing labels, editing config JSON, enabling/disabling
 nodes, and deleting nodes.  The CLI remains useful for scripted provisioning and
@@ -654,7 +654,7 @@ when the server is not running.
 ### Typical workflow
 
 **1. Create a node config file** on the server, following the same format as
-[Option A (local config)](#option-a-local-config) — set the node_id, location,
+[Option A (local config)](#option-a-local-config) - set the node_id, location,
 SDR mode, frequencies, carrier thresholds, and reporter URL:
 
 ```bash
@@ -663,7 +663,7 @@ $EDITOR configs/seattle-north-01.yaml
 ```
 
 **2. Register the node** in the server database.  This prints a one-time secret
-— save it for the bootstrap file:
+-- save it for the bootstrap file:
 
 ```bash
 python3 scripts/manage_nodes.py --db data/tdoa_registry.db add seattle-north-01 \
@@ -671,7 +671,7 @@ python3 scripts/manage_nodes.py --db data/tdoa_registry.db add seattle-north-01 
 ```
 
 The output includes the bootstrap config block with the `node_secret` value.
-Copy this secret immediately — it is shown only once and cannot be retrieved
+Copy this secret immediately - it is shown only once and cannot be retrieved
 later.
 
 **3. Push the config** to the server so the node can fetch it:
@@ -707,8 +707,8 @@ when the version increments).  The behaviour depends on what changed:
 
 | Changed fields | Behaviour |
 |----------------|-----------|
-| Carrier thresholds, target channels, clock calibration, sync signal thresholds | **Hot-reloaded** — applied immediately, no downtime |
-| SDR hardware params (gain, sample rate, mode, antennas), sync frequency | **Automatic restart** — node exits cleanly (code 75) and systemd restarts it with the new config (~2-3 s downtime) |
+| Carrier thresholds, target channels, clock calibration, sync signal thresholds | **Hot-reloaded** - applied immediately, no downtime |
+| SDR hardware params (gain, sample rate, mode, antennas), sync frequency | **Automatic restart** - node exits cleanly (code 75) and systemd restarts it with the new config (~2-3 s downtime) |
 
 No manual intervention is needed in either case.  The systemd unit
 (`etc/beagle-node.service`) has `Restart=on-failure` which covers exit code 75.
@@ -762,7 +762,7 @@ are bumped, triggering them to pick up the new plan via long-poll.
 
 The web UI (Groups tab in the map control panel) provides a full management
 interface for groups: creating, editing, and deleting groups, managing target
-channels, and assigning or unassigning member nodes — all without CLI access.
+channels, and assigning or unassigning member nodes - all without CLI access.
 
 ### Server config for nodedb mode
 
@@ -779,7 +779,7 @@ In `nodedb` mode:
 - Disabled nodes' events are rejected at ingest time (HTTP 403).
 - The shared `auth_token` is still checked on admin endpoints (`GET /api/v1/nodes`, `PATCH /api/v1/nodes/{id}`, etc.).
 - Nodes running the old `--config` path continue to work as long as
-  `auth_mode: token` is set — the two modes can coexist during rollout.
+  `auth_mode: token` is set - the two modes can coexist during rollout.
 
 ---
 
@@ -801,7 +801,7 @@ Without a config file (bare RTL-SDR, SoapySDR path):
 python3 scripts/verify_sync.py --device "driver=rtlsdr" --freq 99.9e6 --gain 0 --duration 10
 ```
 
-Pass criteria: steady sync event rate, corr_peak ≥ 0.5.
+Pass criteria: steady sync event rate, corr_peak >= 0.5.
 
 ---
 
@@ -824,8 +824,8 @@ Options:
 | `--gain` | 30 | Gain dB |
 | `--block` | 65536 | Samples per freq block |
 | `--settling` | 49152 | Settling samples to discard |
-| `--onset-db` | −15 | Carrier onset threshold dBFS |
-| `--offset-db` | −25 | Carrier offset threshold dBFS |
+| `--onset-db` | -15 | Carrier onset threshold dBFS |
+| `--offset-db` | -25 | Carrier offset threshold dBFS |
 | `--min-corr` | 0.1 | Minimum pilot corr_peak |
 | `--duration` | 60 | Run time seconds |
 | `--device-serial` | *(first found)* | RTL-SDR USB serial number |
@@ -855,8 +855,8 @@ Options:
 | `--device-args` | `driver=sdrplay` | SoapySDR device string |
 | `--rate` | 2.0e6 | Sample rate (max 2 MHz in dual-tuner mode) |
 | `--buffer` | 65536 | Samples per read per channel |
-| `--onset-db` | −15 | Carrier onset threshold dBFS |
-| `--offset-db` | −25 | Carrier offset threshold dBFS |
+| `--onset-db` | -15 | Carrier onset threshold dBFS |
+| `--offset-db` | -25 | Carrier offset threshold dBFS |
 | `--min-corr` | 0.1 | Minimum pilot corr_peak |
 | `--duration` | 60 | Run time seconds |
 
@@ -870,12 +870,12 @@ Measures `time.time_ns()` scheduling jitter and reports expected
 python3 scripts/verify_clock.py --samples 50000 --show-chrony
 ```
 
-| Jitter (P99−P50) | Verdict |
+| Jitter (P99-P50) | Verdict |
 |-----------------|---------|
-| < 10 µs | Excellent — GPS-disciplined kernel |
-| < 100 µs | Good — NTP class |
-| < 1 ms | Fair — event association still works |
-| > 1 ms | Poor — check system load |
+| < 10 usec | Excellent - GPS-disciplined kernel |
+| < 100 usec | Good - NTP class |
+| < 1 ms | Fair - event association still works |
+| > 1 ms | Poor - check system load |
 
 ---
 
@@ -934,11 +934,11 @@ Options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--sync` | — | Sync channel `.npy` |
-| `--target` | — | Target channel `.npy` |
+| `--sync` | - | Sync channel `.npy` |
+| `--target` | - | Target channel `.npy` |
 | `--rate` | 2.048e6 | SDR sample rate of the files |
-| `--onset-db` | −30 | Carrier onset threshold dBFS |
-| `--offset-db` | −40 | Carrier offset threshold dBFS |
+| `--onset-db` | -30 | Carrier onset threshold dBFS |
+| `--offset-db` | -40 | Carrier offset threshold dBFS |
 | `--min-corr` | 0.1 | Minimum pilot corr_peak |
 | `--freq-hop-block` | 0 | Enable freq_hop mode with this block size |
 
@@ -968,7 +968,7 @@ physical location.  Supports Monte Carlo simulation (no hardware) and live data
 analysis from the aggregation server DB.
 
 ```bash
-# Simulation -- model RSPduo vs RTL-SDR 2freq timing noise
+# Simulation - model RSPduo vs RTL-SDR 2freq timing noise
 python3 scripts/colocated_pair_test.py --simulate \
     --node-a-sigma-us 1.0 --node-b-sigma-us 2.0 --n-trials 1000
 
@@ -987,7 +987,7 @@ as long as both nodes report to the same aggregation server.
 #### `scripts/analyze_xcorr_tdoa.py`
 
 Analyses cross-correlation TDOA measurements from the server database and
-reports the µs-level inter-node timing difference for each matched event pair.
+reports the usec-level inter-node timing difference for each matched event pair.
 Groups events by transmission (channel, event type, sync transmitter, onset
 proximity), runs the power-envelope xcorr on each node pair, and summarises
 results by event type with per-pair disposition (OK / LOW\_SNR / BASELINE\_REJ).
@@ -1018,16 +1018,16 @@ Options:
 Example output (two co-located nodes, true TDOA = 0):
 
 ```
-onset   rspduo-test↔node-discovery    -1.587   6.71  OK
-onset   rspduo-test↔node-discovery    -4.827  28.59  OK
-offset  rspduo-test↔node-discovery    -1.275   1.71  OK
+onset   rspduo-test<->node-discovery    -1.587   6.71  OK
+onset   rspduo-test<->node-discovery    -4.827  28.59  OK
+offset  rspduo-test<->node-discovery    -1.275   1.71  OK
 ...
-  onset  (n=14): mean=+17.091 µs  median=+1.369 µs  stdev=41.600 µs
-  offset (n=11): mean=-0.017 µs   median=+0.116 µs  stdev=0.657 µs
+  onset  (n=14): mean=+17.091 usec  median=+1.369 usec  stdev=41.600 usec
+  offset (n=11): mean=-0.017 usec   median=+0.116 usec  stdev=0.657 usec
 ```
 
-Offset events typically have lower SNR (1.5–2.5) but tighter timing (< 1 µs
-stdev); onset events have higher SNR (6–28) with occasional false peaks from
+Offset events typically have lower SNR (1.5-2.5) but tighter timing (< 1 usec
+stdev); onset events have higher SNR (6-28) with occasional false peaks from
 ambiguous carrier patterns.
 
 ---
@@ -1052,7 +1052,7 @@ python3 scripts/manage_nodes.py --db data/tdoa_registry.db set-config <node_id> 
 
 ## Calibration
 
-Each step builds on the previous.  Steps 2–5 require no test transmitter;
+Each step builds on the previous.  Steps 2-5 require no test transmitter;
 only Step 6 requires a transmitter at a known location.
 
 Steps marked **freq_hop only**, **rspduo only**, or **two_sdr only** apply to
@@ -1067,19 +1067,19 @@ that mode exclusively.  All other steps apply to every SDR mode.
 - **`freq_hop` mode only:** pyrtlsdr installed (`pip install pyrtlsdr`) and
   librtlsdr system library present (`sudo apt install librtlsdr0`)
 - **`rspduo` mode only:** SDRplay API and SoapySDRPlay3
-  (`rspduo-dual-independent-tuners` branch) installed — see
+  (`rspduo-dual-independent-tuners` branch) installed - see
   [docs/setup-rspduo-debian.md](docs/setup-rspduo-debian.md).
   Confirm the device is visible: `SoapySDRUtil --find`
 
 ---
 
-### Step 1 — Measure Tuner Settling Time *(freq_hop mode only)*
+### Step 1 - Measure Tuner Settling Time *(freq_hop mode only)*
 
 **Goal:** Empirically determine how many samples the R820T tuner needs to
 settle after a frequency hop, so `settling_samples` in `node.yaml` is correct
 for your specific dongle.
 
-The settling time varies across RTL-SDR dongles (typically 10–60 ms at
+The settling time varies across RTL-SDR dongles (typically 10-60 ms at
 2.048 MSPS).  Setting `settling_samples` too low means pilot and carrier data
 include settling artefacts; too high wastes usable signal.
 
@@ -1108,14 +1108,14 @@ freq_hop:
 
 **Record result:**
 ```
-Settling to sync freq  (99.9 → 462.5625 MHz): _____ samples (~___ ms)
-Settling to target freq (462.5625 → 99.9 MHz): _____ samples (~___ ms)
+Settling to sync freq  (99.9 -> 462.5625 MHz): _____ samples (~___ ms)
+Settling to target freq (462.5625 -> 99.9 MHz): _____ samples (~___ ms)
 settling_samples set to: _____
 ```
 
 ---
 
-### Step 2 — Verify FM Pilot Detection and Crystal Calibration
+### Step 2 - Verify FM Pilot Detection and Crystal Calibration
 
 **Goal:** Confirm the sync chain produces clean SyncEvents and the
 CrystalCalibrator converges to a stable correction factor.
@@ -1127,29 +1127,29 @@ python3 scripts/verify_sync.py --config config/node.yaml --duration 60
 The same run covers both checks: pilot quality is visible from the first
 few rows; crystal convergence requires ~60 s.
 
-**Pilot detection — pass criteria (read from first 10 s of output):**
-- Event rate: **≥ 95 events / 10 s** (ideally ~120, one per ~8 ms window)
-- Mean `corr_peak` ≥ **0.5** for a well-received station
+**Pilot detection - pass criteria (read from first 10 s of output):**
+- Event rate: **>= 95 events / 10 s** (ideally ~120, one per ~8 ms window)
+- Mean `corr_peak` >= **0.5** for a well-received station
 - Values stable row-to-row (no sudden drops)
 
-**Crystal calibration — pass criteria (read from full 60 s run):**
-- `Crystal` converges within ~10 s and stays within **±100 ppm**
+**Crystal calibration - pass criteria (read from full 60 s run):**
+- `Crystal` converges within ~10 s and stays within **+/-100 ppm**
 - Drift between t=10 s and t=60 s: **< 10 ppm** (shown in summary line)
-- RSPduo values near 0 ppm (< ±10 ppm) are normal and excellent
+- RSPduo values near 0 ppm (< +/-10 ppm) are normal and excellent
 
 **Tuning:**
 - If `corr_peak` is low, try a stronger FM station or increase gain.
   KISW 99.9 MHz works well in the Seattle metro area from a rooftop.
 - If gain is too high the ADC will clip; reduce it until the IQ magnitude
-  is ≤ −6 dBFS RMS.
-- `min_corr_peak` in `node.yaml` → `sync_signal.min_corr_peak` filters out
+  is <= -6 dBFS RMS.
+- `min_corr_peak` in `node.yaml` -> `sync_signal.min_corr_peak` filters out
   weak sync events.  Set it to 0.3 for normal operation.
 
 **Interpreting the Crystal column:**
 - `Crystal = 0.0 ppm`: crystal is exact (or calibrator not yet converged)
-- `Crystal = +50.0 ppm`: crystal runs 50 ppm fast → corrected automatically
-- Values outside ±200 ppm suggest a low-quality crystal; use a TCXO
-  RTL-SDR for best accuracy; RSPduo should always be well within ±10 ppm
+- `Crystal = +50.0 ppm`: crystal runs 50 ppm fast -> corrected automatically
+- Values outside +/-200 ppm suggest a low-quality crystal; use a TCXO
+  RTL-SDR for best accuracy; RSPduo should always be well within +/-10 ppm
 
 *RTL-SDR (standard crystal, ~50 ppm drift):*
 ```
@@ -1158,7 +1158,7 @@ few rows; crystal convergence requires ~60 s.
   10.0      1000    100.0    0.7198   +43.1 ppm   -21.8 dBFS
   60.0      6000    100.0    0.7211   +43.0 ppm   -22.1 dBFS
 
-Crystal drift: +43.1 ppm at t≈10 s → +43.0 ppm at end  (drift=0.1 ppm  OK)
+Crystal drift: +43.1 ppm at t~10 s -> +43.0 ppm at end  (drift=0.1 ppm  OK)
 ```
 
 *RSPduo (24 MHz TCXO, < 10 ppm):*
@@ -1168,7 +1168,7 @@ Crystal drift: +43.1 ppm at t≈10 s → +43.0 ppm at end  (drift=0.1 ppm  OK)
   10.0      1000    100.0    0.6994    -2.1 ppm   -28.3 dBFS
   60.0      6000    100.0    0.6983    -4.8 ppm   -28.4 dBFS
 
-Crystal drift: -2.1 ppm at t≈10 s → -4.8 ppm at end  (drift=2.7 ppm  OK)
+Crystal drift: -2.1 ppm at t~10 s -> -4.8 ppm at end  (drift=2.7 ppm  OK)
 ```
 
 **Record result:**
@@ -1181,7 +1181,7 @@ Crystal (steady-state): ___ ppm   Drift over 50 s: ___ ppm
 
 ---
 
-### Step 3 — Calibrate Carrier Detection Thresholds
+### Step 3 - Calibrate Carrier Detection Thresholds
 
 **Goal:** Determine the correct `carrier_onset_db` and `carrier_offset_db`
 values for your target frequency and local RF environment.
@@ -1200,7 +1200,7 @@ env/bin/python scripts/check_target.py \
     --freq 462.5625e6 --gain 30 --duration 30
 ```
 
-*RSPduo node — always specify device, channel, freq-offset, and rate:*
+*RSPduo node - always specify device, channel, freq-offset, and rate:*
 
 ```bash
 env/bin/python scripts/check_target.py \
@@ -1208,10 +1208,10 @@ env/bin/python scripts/check_target.py \
     --device "driver=sdrplay" --channel 1 --freq-offset 0 --rate 2000000
 ```
 
-- `--device "driver=sdrplay"` — selects the RSPduo instead of the first available device
-- `--channel 1` — Tuner 2 / Antenna C (the LMR receive port)
-- `--freq-offset 0` — RSPduo applies a hardware DC notch; no baseband offset needed
-- `--rate 2000000` — RSPduo dual-tuner mode requires an exact supported rate (2.0 MHz, not the RTL-SDR default 2.048 MHz)
+- `--device "driver=sdrplay"` - selects the RSPduo instead of the first available device
+- `--channel 1` - Tuner 2 / Antenna C (the LMR receive port)
+- `--freq-offset 0` - RSPduo applies a hardware DC notch; no baseband offset needed
+- `--rate 2000000` - RSPduo dual-tuner mode requires an exact supported rate (2.0 MHz, not the RTL-SDR default 2.048 MHz)
 
 The script reports received power in dBFS once per 500 ms and marks windows
 where a signal is detected.  At the end it recommends threshold values:
@@ -1228,9 +1228,9 @@ Recommended thresholds:
 ```
 
 **Pass criteria:**
-- Noise floor settles at **−30 to −60 dBFS** with no signal — if it is above
-  −6 dBFS the ADC is saturated; reduce gain (the script will warn you)
-- Observed SNR ≥ **10 dB** with the transmitter keyed
+- Noise floor settles at **-30 to -60 dBFS** with no signal - if it is above
+  -6 dBFS the ADC is saturated; reduce gain (the script will warn you)
+- Observed SNR >= **10 dB** with the transmitter keyed
 - At least one window marked `*** SIGNAL ***` per transmission
 
 **Update `node.yaml`:**
@@ -1250,7 +1250,7 @@ carrier.onset_db set to: _____   carrier.offset_db set to: _____
 
 ---
 
-### Step 4 — End-to-End Pipeline Test
+### Step 4 - End-to-End Pipeline Test
 
 **Goal:** Confirm that `TDOAMeasurement` objects are produced by the full
 pipeline before attempting the quantitative path-delay check.
@@ -1278,7 +1278,7 @@ The script prints each `TDOAMeasurement` as it arrives with columns:
 `sync_delta_ns`, `corr_peak`, `onset_power_db`.
 
 **Pass criteria (all modes):**
-- SyncEvents appear continuously at **≥ 10 events/s** (ideally ~100/s)
+- SyncEvents appear continuously at **>= 10 events/s** (ideally ~100/s)
 - At least one `TDOAMeasurement` printed while the target channel has a carrier
 - `corr_peak` values match Step 2 results (consistent pilot quality)
 - `onset_power_db` is above `carrier_onset_db` set in Step 3
@@ -1306,9 +1306,9 @@ env/bin/python scripts/verify_sync.py \
 ```
 
 This confirms FM pilot lock on the sync channel (Tuner 1).  Watch for:
-- `Rate/s` > 50/s — pilot lock confirmed (exact rate = 1000 / sync_period_ms;
-  with the default 7 ms period at 2 MHz / 8× decimation → ~143/s)
-- `Crystal` within ±10 ppm for RSPduo (TCXO)
+- `Rate/s` > 50/s - pilot lock confirmed (exact rate = 1000 / sync_period_ms;
+  with the default 7 ms period at 2 MHz / 8x decimation -> ~143/s)
+- `Crystal` within +/-10 ppm for RSPduo (TCXO)
 - `Crystal drift` < 10 ppm in summary line
 
 For the target channel, use `check_target.py` (Step 3 above).  A combined
@@ -1330,7 +1330,7 @@ config and watch the logs for `TDOAMeasurement` lines.
 
 #### two_sdr and single_sdr modes
 
-*[End-to-end test script for these modes TBD — use `main.py` with the full
+*[End-to-end test script for these modes TBD - use `main.py` with the full
 config and watch the logs for `TDOAMeasurement` lines.]*
 
 **Record result:**
@@ -1343,7 +1343,7 @@ onset_power_db: _____ dBFS
 
 ---
 
-### Step 5 — Co-Located Pair Test
+### Step 5 - Co-Located Pair Test
 
 **Goal:** Measure the actual TDOA timing error between two nodes.  Since both
 nodes are at the same location, the true TDOA is zero; any measured deviation
@@ -1351,7 +1351,7 @@ is pure noise in the timing pipeline.
 
 **Why this matters:** The co-located pair test is the only single-site check
 that directly measures what the TDOA system actually delivers.
-`TDOA_AB = sync_delta_A − sync_delta_B` for a co-located pair should be 0 ns;
+`TDOA_AB = sync_delta_A - sync_delta_B` for a co-located pair should be 0 ns;
 the standard deviation of that distribution tells you the timing noise floor,
 which sets the position accuracy limit for the whole network.  Onset and offset
 are measured separately because the rising and falling edges of a carrier have
@@ -1359,14 +1359,14 @@ different detection noise characteristics.
 
 **Physical setup:**
 
-- Two fully calibrated nodes (each through Steps 1–5), placed at the **same
+- Two fully calibrated nodes (each through Steps 1-5), placed at the **same
   physical location** and connected to the **same aggregation server**.
-- A transmitter at a different location — ideally > 1 km away so the signal
+- A transmitter at a different location - ideally > 1 km away so the signal
   does not arrive from the side-lobe of one node's antenna.
 - Let both nodes run for at least 5 minutes before capturing data to allow
   crystal stabilisation on each.
 
-**Simulation mode (no hardware — pre-deployment planning):**
+**Simulation mode (no hardware - pre-deployment planning):**
 
 ```bash
 python3 scripts/colocated_pair_test.py --simulate \
@@ -1407,10 +1407,10 @@ TDOA_AB (true value = 0 for co-located nodes):
 
 | Metric | Target |
 |--------|--------|
-| TDOA std dev (onset) | ≤ 3 000 ns (3 µs) |
-| TDOA std dev (offset) | ≤ 5 000 ns (5 µs) |
-| TDOA mean bias | < ±500 ns |
-| P95 |TDOA\| | < 6 000 ns (6 µs) |
+| TDOA std dev (onset) | <= 3 000 ns (3 usec) |
+| TDOA std dev (offset) | <= 5 000 ns (5 usec) |
+| TDOA mean bias | < +/-500 ns |
+| P95 |TDOA\| | < 6 000 ns (6 usec) |
 
 Offset jitter is typically higher than onset because the falling edge of a
 carrier is less sharp than the rising edge.
@@ -1421,14 +1421,14 @@ between the two co-located nodes.
 
 **Record result:**
 ```
-ONSET  — N: _____  std: _____ ns  mean: _____ ns  P95: _____ ns
-OFFSET — N: _____  std: _____ ns  mean: _____ ns  P95: _____ ns
-Pass? [ ] Yes  [ ] No — action: ________________________________
+ONSET  - N: _____  std: _____ ns  mean: _____ ns  P95: _____ ns
+OFFSET - N: _____  std: _____ ns  mean: _____ ns  P95: _____ ns
+Pass? [ ] Yes  [ ] No - action: ________________________________
 ```
 
 ---
 
-### Step 6 — Known-Location Verification
+### Step 6 - Known-Location Verification
 
 **Goal:** Confirm end-to-end TDOA accuracy with a test transmission from a
 GPS-surveyed location.
@@ -1440,7 +1440,7 @@ GPS-surveyed location.
 
 **Procedure:**
 
-1. Survey the transmission point with your GPS receiver.  Note lat/lon to ±1 m.
+1. Survey the transmission point with your GPS receiver.  Note lat/lon to +/-1 m.
 2. Key the handheld radio for 5 seconds.  Note the time.
 3. Retrieve the server's computed TDOA fix for that event.
 4. Compute fix error:
@@ -1452,15 +1452,15 @@ GPS-surveyed location.
 
 | Mode | Expected accuracy | Target error |
 |------|-----------------|--------------|
-| `freq_hop` (TCXO RTL-SDR) | 1–5 µs → 300 m – 1.5 km | < 1 km |
-| `freq_hop` (standard RTL-SDR) | 2–10 µs → 600 m – 3 km | < 2 km |
-| `rspduo` | ~1–2 µs → ~300–600 m | < 1 km |
-| `two_sdr` + GPS 1PPS | < 1 µs → ~300 m | < 500 m |
+| `freq_hop` (TCXO RTL-SDR) | 1-5 usec -> 300 m - 1.5 km | < 1 km |
+| `freq_hop` (standard RTL-SDR) | 2-10 usec -> 600 m - 3 km | < 2 km |
+| `rspduo` | ~1-2 usec -> ~300-600 m | < 1 km |
+| `two_sdr` + GPS 1PPS | < 1 usec -> ~300 m | < 500 m |
 
 If the error exceeds the target:
-1. Re-run Steps 2–3 to check pilot quality, crystal correction, and thresholds.
+1. Re-run Steps 2-3 to check pilot quality, crystal correction, and thresholds.
 2. Verify FCC coordinates for the sync station are correct.
-3. Inspect `calibration_offset_ns` in `node.yaml` — set it to compensate for
+3. Inspect `calibration_offset_ns` in `node.yaml` - set it to compensate for
    any measured systematic bias.
 
 **Record result:**
@@ -1472,12 +1472,12 @@ Error: _____ m
 
 ---
 
-### Step 7 — GPS 1PPS Injection Verification *(two_sdr mode only)*
+### Step 7 - GPS 1PPS Injection Verification *(two_sdr mode only)*
 
 Skip this step for `freq_hop` and `single_sdr` modes.
 
 **Goal:** Verify that the GPS 1PPS pulse is correctly detected in both SDR
-streams and that inter-SDR alignment is < 1 µs.
+streams and that inter-SDR alignment is < 1 usec.
 
 ```bash
 python3 scripts/verify_pps.py --duration 10
@@ -1485,7 +1485,7 @@ python3 scripts/verify_pps.py --duration 10
 
 **Pass criteria:**
 - PPS detected in both streams every second
-- Inter-SDR offset: **< 1 µs** (ideally < 500 ns)
+- Inter-SDR offset: **< 1 usec** (ideally < 500 ns)
 - Jitter (std-dev of offset across 10 s): **< 500 ns**
 
 ---
@@ -1500,33 +1500,33 @@ Node ID: _________________
 Location: ________________
 Hardware: SDR model, antenna, Pi model
 
-Step 1 — Tuner Settling (freq_hop only; skip for rspduo/two_sdr/single_sdr)
+Step 1 - Tuner Settling (freq_hop only; skip for rspduo/two_sdr/single_sdr)
   Settling to sync freq:   _____ samples (~___ ms)
   Settling to target freq: _____ samples (~___ ms)
   settling_samples in node.yaml: _____
 
-Step 2 — FM Pilot + Crystal Calibration
+Step 2 - FM Pilot + Crystal Calibration
   Station: _______________  Gain: ___ dB
-  Event rate: ___ / s  (target ≥ 95)   Mean corr_peak: ___  (target ≥ 0.5)
-  Crystal (steady): ___ ppm  (target ±100 ppm)   Drift over 50 s: ___ ppm  (target < 10)
+  Event rate: ___ / s  (target >= 95)   Mean corr_peak: ___  (target >= 0.5)
+  Crystal (steady): ___ ppm  (target +/-100 ppm)   Drift over 50 s: ___ ppm  (target < 10)
 
-Step 3 — Carrier Detection Thresholds
+Step 3 - Carrier Detection Thresholds
   Frequency: _____ MHz   Gain: ___ dB
   Noise floor: _____ dBFS   Peak: _____ dBFS   SNR: _____ dB
   carrier.onset_db: _____   carrier.offset_db: _____
 
-Step 4 — End-to-End Pipeline Test
+Step 4 - End-to-End Pipeline Test
   Script used: verify_freq_hop.py / verify_rspduo.py / main.py
   First measurement sync_delta_ns: _____ ns
   corr_peak: _____  onset_power_db: _____ dBFS
   Overflows (rspduo): _____
 
-Step 5 — Co-Located Pair Test
+Step 5 - Co-Located Pair Test
   ONSET  std: _____ ns  mean: _____ ns  P95: _____ ns
   OFFSET std: _____ ns  mean: _____ ns  P95: _____ ns
-  Pass? [ ] std(onset) ≤ 3 µs  [ ] std(offset) ≤ 5 µs
+  Pass? [ ] std(onset) <= 3 usec  [ ] std(offset) <= 5 usec
 
-Step 6 — Known-Location Verification
+Step 6 - Known-Location Verification
   True: _______, _______  Fix: _______, _______  Error: ___ m
   Pass? [ ] within target
 
@@ -1541,13 +1541,13 @@ Clock
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| ADC saturated (power > −6 dBFS) | Gain too high | Reduce `--gain` by 20 dB; re-run `check_target.py` (Step 3) |
+| ADC saturated (power > -6 dBFS) | Gain too high | Reduce `--gain` by 20 dB; re-run `check_target.py` (Step 3) |
 | Event rate < 50/s | FM pilot SNR too low | Move antenna, reduce gain to avoid clipping, try different station |
 | `corr_peak` < 0.3 | Station too weak or wrong frequency | Confirm station, check antenna |
-| `Crystal` column > ±200 ppm | Noisy crystal | Use TCXO RTL-SDR; keep `max_sync_age_ms` ≤ 50 ms |
+| `Crystal` column > +/-200 ppm | Noisy crystal | Use TCXO RTL-SDR; keep `max_sync_age_ms` <= 50 ms |
 | No measurements after carrier present | Onset threshold wrong | Run Step 3 (`check_target.py`) to calibrate thresholds |
 | Large path-delay residual | Wrong FCC coordinates or wrong node location | Verify GPS coords at deployment site |
-| Fix error > 2 km | Clock error or SDR drift | Run Steps 2–3; adjust `calibration_offset_ns` |
+| Fix error > 2 km | Clock error or SDR drift | Run Steps 2-3; adjust `calibration_offset_ns` |
 | Health shows `clock_source: unknown` | Chrony not running | `sudo systemctl start chrony` |
 
 ---
@@ -1563,7 +1563,7 @@ sudo mkdir -p /etc/beagle
 sudo cp config/node.yaml /etc/beagle/node.yaml
 sudo $EDITOR /etc/beagle/node.yaml
 
-# -- OR -- remote config (bootstrap) approach:
+# - OR - remote config (bootstrap) approach:
 sudo cp config/bootstrap.example.yaml /etc/beagle/bootstrap.yaml
 sudo $EDITOR /etc/beagle/bootstrap.yaml   # fill in server_url, node_id, node_secret
 
@@ -1619,4 +1619,4 @@ tests/             Unit and integration tests
 
 ---
 
-Copyright (c) 2026 Douglas P. Kingston III. MIT License — see [LICENSE](LICENSE).
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](LICENSE).

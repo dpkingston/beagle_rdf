@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Analyze carrier fade timing from DB offset event snippets.
 
@@ -216,14 +216,14 @@ def main() -> None:
 
     print()
     print("Power levels:")
-    print(f"  Plateau: mean {np.mean(plateaus):.1f} dBFS  (range {np.min(plateaus):.1f}–{np.max(plateaus):.1f})")
-    print(f"  Noise:   mean {np.mean(noises):.1f} dBFS   (range {np.min(noises):.1f}–{np.max(noises):.1f})")
-    print(f"  Margin plateau→noise: {np.mean(plateaus) - np.mean(noises):.1f} dB")
+    print(f"  Plateau: mean {np.mean(plateaus):.1f} dBFS  (range {np.min(plateaus):.1f}-{np.max(plateaus):.1f})")
+    print(f"  Noise:   mean {np.mean(noises):.1f} dBFS   (range {np.min(noises):.1f}-{np.max(noises):.1f})")
+    print(f"  Margin plateau->noise: {np.mean(plateaus) - np.mean(noises):.1f} dB")
 
     print()
     print("PA shutoff sharpness (peak |deriv| / RMS rest):")
     print(f"  Mean: {np.mean(sharpnesses):.1f}   P50: {np.median(sharpnesses):.1f}   Min: {np.min(sharpnesses):.1f}")
-    print(f"  Values ≥ 10 indicate a sharp, dominant power cutoff (ideal for xcorr).")
+    print(f"  Values >= 10 indicate a sharp, dominant power cutoff (ideal for xcorr).")
 
     # Ring buffer sizing recommendation
     p95_samples = np.percentile(cuts, 95) * args.sample_rate / 1000.0
@@ -231,10 +231,10 @@ def main() -> None:
     min_ring_windows = int(np.ceil(p95_samples / window)) + 5  # 5-window margin
     print()
     print("Ring buffer sizing recommendation:")
-    print(f"  PA cutoff is ≤ {np.percentile(cuts, 95):.1f} ms ({p95_samples:.0f} samples) from end of snippet at P95.")
+    print(f"  PA cutoff is <= {np.percentile(cuts, 95):.1f} ms ({p95_samples:.0f} samples) from end of snippet at P95.")
     print(f"  For old-style snippets (centered on threshold crossing) 'end of snippet'")
-    print(f"  ≈ detection time.  The ring must hold at least {p95_samples:.0f} samples.")
-    print(f"  Recommended ring_lookback_windows ≥ {min_ring_windows} "
+    print(f"  ~ detection time.  The ring must hold at least {p95_samples:.0f} samples.")
+    print(f"  Recommended ring_lookback_windows >= {min_ring_windows} "
           f"(= {min_ring_windows * window} samples = {min_ring_windows * window / args.sample_rate * 1000:.1f} ms)")
 
     # Threshold advice
@@ -243,7 +243,7 @@ def main() -> None:
     mean_plateau = np.mean(plateaus)
     mean_noise = np.mean(noises)
     suggested_offset_db = mean_plateau - 6.0  # 6 dB below plateau
-    print(f"  Current plateau ≈ {mean_plateau:.1f} dBFS, noise floor ≈ {mean_noise:.1f} dBFS")
+    print(f"  Current plateau ~ {mean_plateau:.1f} dBFS, noise floor ~ {mean_noise:.1f} dBFS")
     print(f"  Raising offset_db to {suggested_offset_db:.1f} dBFS (6 dB below plateau) would")
     print(f"  trigger detection much sooner after PA shutoff, reducing ring buffer requirements")
     print(f"  and keeping detection close to the actual power-cut event.")

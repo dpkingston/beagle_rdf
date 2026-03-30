@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 SQLite database layer for the aggregation server.
 
@@ -791,7 +791,7 @@ async def set_node_freq_group(
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (node_id, new_version, row["config_json"], changed_by, time.time(),
-         f"freq_group_id → {group_label}"),
+         f"freq_group_id -> {group_label}"),
     )
     await db.commit()
     return new_version
@@ -1060,7 +1060,7 @@ async def delete_user(db: aiosqlite.Connection, user_id: str) -> bool:
     return (cur.rowcount or 0) > 0
 
 
-# -- Sessions ---------------------------------------------------------------
+# - Sessions ---------------------------------------------------------------
 
 async def create_session(
     db: aiosqlite.Connection,

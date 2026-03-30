@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 # Beagle Node Bootstrap Configuration
 # =====================================
 # Copy to bootstrap.yaml (e.g. /etc/beagle/bootstrap.yaml) and fill in
@@ -14,7 +14,7 @@
 # URL of the aggregation server (no trailing slash).
 server_url: "https://tdoa.example.com"
 
-# Node identifier -- must match the node_id in the server's nodes table.
+# Node identifier - must match the node_id in the server's nodes table.
 # Created by: manage_nodes.py add <node_id> --lat <lat> --lon <lon>
 node_id: "your-node-id"
 

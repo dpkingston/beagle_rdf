@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for pipeline/carrier_detect.py."""
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def test_offset_detected_after_onset():
 
 
 # ---------------------------------------------------------------------------
-# Hysteresis -- no chatter between thresholds
+# Hysteresis - no chatter between thresholds
 # ---------------------------------------------------------------------------
 
 def test_hysteresis_no_chatter():
@@ -148,7 +148,7 @@ def test_hysteresis_no_chatter():
     det.process(iq_on, start_sample=0)
     assert det.state == "active"
 
-    # Signal at -30 dB -- between -20 (onset) and -40 (offset) thresholds
+    # Signal at -30 dB - between -20 (onset) and -40 (offset) thresholds
     iq_mid = _carrier(4096, power_db=-30.0)
     events = det.process(iq_mid, start_sample=512)
     offsets = [e for e in events if isinstance(e, CarrierOffset)]
@@ -187,7 +187,7 @@ def test_active_state_persists_across_buffers():
     det.process(iq_on, start_sample=0)
     assert det.state == "active"
 
-    # Second buffer -- still carrier, no new onset
+    # Second buffer - still carrier, no new onset
     events = det.process(iq_on, start_sample=4096)
     onsets = [e for e in events if isinstance(e, CarrierOnset)]
     assert onsets == []
@@ -209,7 +209,7 @@ def test_reset_returns_to_idle():
 
 
 # ---------------------------------------------------------------------------
-# min_hold_windows -- transient-spike suppression
+# min_hold_windows - transient-spike suppression
 # ---------------------------------------------------------------------------
 
 def test_min_hold_1_fires_on_single_window():
@@ -276,7 +276,7 @@ def test_min_hold_reset_on_gap():
     rng = np.random.default_rng(9)
     det = make_detector(window_samples=64, min_hold_windows=3)
     W = 64
-    # spike, drop, spike, drop -- each spike is only 1 window, never reaches 3
+    # spike, drop, spike, drop - each spike is only 1 window, never reaches 3
     chunk = np.concatenate([
         _carrier(W,   power_db=-10.0),
         _noise(W * 2, power_db=-60.0, rng=rng),
@@ -336,7 +336,7 @@ class TestCarrierDetectAfterDecimation:
 
     def test_carrier_power_preserved_through_decimation(self):
         """
-        A CW carrier's power level is preserved by decimation -- the decimator
+        A CW carrier's power level is preserved by decimation - the decimator
         is a low-pass filter, not an averager that reduces carrier amplitude.
         A carrier at -20 dBFS before decimation should measure ~-20 dBFS after.
         """
@@ -364,7 +364,7 @@ class TestCarrierDetectAfterDecimation:
         events = det.process(iq_dec, start_sample=0)
         onsets = [e for e in events if isinstance(e, CarrierOnset)]
         assert len(onsets) >= 1, (
-            f"No onset at -25 dBFS with threshold {ONSET} dBFS -- "
+            f"No onset at -25 dBFS with threshold {ONSET} dBFS - "
             "check carrier_onset_db in PipelineConfig"
         )
 
@@ -459,7 +459,7 @@ class TestCarrierDetectAfterDecimation:
 
 
 # ---------------------------------------------------------------------------
-# min_release_windows -- transient fade suppression
+# min_release_windows - transient fade suppression
 # ---------------------------------------------------------------------------
 
 
@@ -532,7 +532,7 @@ def test_min_release_counter_resets_on_recovery():
     rng = np.random.default_rng(13)
     det = make_detector(window_samples=64, min_release_windows=4)
     W = 64
-    # carrier -> 3×(1 fade + 1 carrier) -> sustained carrier (never reaches 4)
+    # carrier -> 3x(1 fade + 1 carrier) -> sustained carrier (never reaches 4)
     fade_recover = np.concatenate([
         _noise(W,   power_db=-60.0, rng=rng),   # 1 below threshold
         _carrier(W, power_db=-10.0),             # recovers
@@ -618,12 +618,12 @@ def test_onset_carries_noise_floor():
     onsets = [e for e in events if isinstance(e, CarrierOnset)]
     assert len(onsets) == 1
     # After 5000 * 0.01 = 50 time-constants of EMA the floor should be close
-    # to idle_power_db.  Allow ±5 dB tolerance.
+    # to idle_power_db.  Allow +/-5 dB tolerance.
     assert abs(onsets[0].noise_floor_db - idle_power_db) < 5.0
 
 
 def test_noise_floor_not_updated_during_active():
-    """noise_floor_db should not track carrier power — only idle power."""
+    """noise_floor_db should not track carrier power - only idle power."""
     rng = np.random.default_rng(7)
     det = make_detector()
     # Warm up at -50 dBFS.
@@ -654,7 +654,7 @@ class TestPrimeStateFreqHop:
 
     def test_prime_active_no_onset(self):
         """
-        Carrier already at full power when prime_state is called → no onset.
+        Carrier already at full power when prime_state is called -> no onset.
         """
         det = make_detector()
         iq_carrier = _carrier(4096, power_db=-10.0)
@@ -670,15 +670,15 @@ class TestPrimeStateFreqHop:
     def test_prime_hysteresis_zone_onset_allowed(self):
         """
         Carrier in the hysteresis zone (above offset_db, below onset_db) at
-        block start → state should be 'idle' (prime uses onset_db threshold).
+        block start -> state should be 'idle' (prime uses onset_db threshold).
 
         A signal in the hysteresis zone is not strong enough to be a genuine
-        carrier — it's more likely a PLL settling transient.  prime_state
+        carrier - it's more likely a PLL settling transient.  prime_state
         classifies it as idle, so if the signal later rises above onset_db,
         a genuine onset fires (after _min_idle_for_onset windows).
         """
         det = make_detector(onset_threshold_db=-20.0, offset_threshold_db=-40.0)
-        # Build IQ at -30 dBFS -- between offset (-40) and onset (-20) thresholds.
+        # Build IQ at -30 dBFS - between offset (-40) and onset (-20) thresholds.
         iq_hysteresis = _carrier(4096, power_db=-30.0)
         det.prime_state(iq_hysteresis)
         assert det.state == "idle", (
@@ -688,13 +688,13 @@ class TestPrimeStateFreqHop:
 
     def test_prime_idle_then_carrier_fires_onset(self):
         """
-        Carrier absent at block start (prime → idle), then carrier rises in
-        the block → onset fires normally.  The idle window before the carrier
+        Carrier absent at block start (prime -> idle), then carrier rises in
+        the block -> onset fires normally.  The idle window before the carrier
         is the evidence that this is a genuine onset (not a mid-tx arrival).
         """
         rng = np.random.default_rng(42)
         det = make_detector()
-        # prime on noise (below offset threshold → idle)
+        # prime on noise (below offset threshold -> idle)
         iq_noise = _noise(4096, power_db=-60.0, rng=rng)
         det.prime_state(iq_noise)
         assert det.state == "idle"
@@ -718,11 +718,11 @@ class TestPrimeStateFreqHop:
 
         This is the PLL-settling edge case: settling discarded the transient,
         but the carrier power hasn't ramped up to onset_threshold yet at the
-        first window check.  prime_state → idle, then process() sees full power
-        immediately → would be a block-start false onset.
+        first window check.  prime_state -> idle, then process() sees full power
+        immediately -> would be a block-start false onset.
         """
         det = make_detector()
-        # prime_state on noise (below threshold → idle), _idle_window_count=0
+        # prime_state on noise (below threshold -> idle), _idle_window_count=0
         rng = np.random.default_rng(0)
         det.prime_state(_noise(64, power_db=-60.0, rng=rng))
         assert det.state == "idle"
@@ -776,7 +776,7 @@ class TestPrimeStateFreqHop:
         events = det.process(iq, start_sample=0)
         onsets  = [e for e in events if isinstance(e, CarrierOnset)]
         offsets = [e for e in events if isinstance(e, CarrierOffset)]
-        # Block-start suppressed → no onset from that. Re-key → 1 onset.
+        # Block-start suppressed -> no onset from that. Re-key -> 1 onset.
         # Between block-start and re-key there is one offset.
         assert len(onsets)  == 1, "Re-key after block-start suppression must produce onset"
         assert len(offsets) >= 1, "Drop between block-start and re-key must produce offset"
@@ -814,7 +814,7 @@ class TestPrimeStateFreqHop:
         min_release = 4
         det = make_detector(min_hold_windows=1, min_release_windows=min_release)
 
-        # prime_state with carrier present → active, _idle_window_count=0
+        # prime_state with carrier present -> active, _idle_window_count=0
         det.prime_state(_carrier(W, power_db=-10.0))
         assert det.state == "active"
 
@@ -876,12 +876,12 @@ class TestMidTransmissionSuppression:
     """
     Tests for the two-layer freq_hop mid-transmission arrival defence:
 
-    Layer 1 — idle window counting: after prime_state(), at least
+    Layer 1 - idle window counting: after prime_state(), at least
     _min_idle_for_onset (default 2) below-threshold windows must be
     observed before an onset is emitted.  Catches carriers already
     present at block start AND single-window PLL settling artefacts.
 
-    Layer 2 — snippet transition validation: after prime_state(), events
+    Layer 2 - snippet transition validation: after prime_state(), events
     whose IQ snippets lack a genuine power transition (dynamic range
     < _min_transition_db) are dropped.  Catches cases where the ring
     fills with carrier due to high min_hold_windows.
@@ -917,7 +917,7 @@ class TestMidTransmissionSuppression:
     def test_two_idle_windows_sufficient(self):
         """
         Two idle windows after prime_state() satisfy the minimum for a
-        genuine noise→carrier transition.
+        genuine noise->carrier transition.
         """
         rng = np.random.default_rng(51)
         W = 64
@@ -949,7 +949,7 @@ class TestMidTransmissionSuppression:
         det.prime_state(_carrier(W, power_db=-10.0))
         assert det.state == "active"
 
-        # Carrier continues (no onset — already active), drops, re-keys.
+        # Carrier continues (no onset - already active), drops, re-keys.
         iq = np.concatenate([
             _carrier(W * 4, power_db=-10.0),          # carrier continues
             _noise(W * 4, power_db=-60.0, rng=rng),   # drop (4 idle windows)
@@ -975,7 +975,7 @@ class TestMidTransmissionSuppression:
         W = 64
         # snippet=2 windows, ring_capacity=6, min_hold=4.
         # After 2 idle + 4 carrier windows, ring has 6 windows.
-        # Snippet = last 2 windows = all carrier → dynamic range < 6 dB.
+        # Snippet = last 2 windows = all carrier -> dynamic range < 6 dB.
         det = make_detector(
             window_samples=W,
             snippet_samples=W * 2,   # 2-window snippet (minimum for validation)
@@ -1016,7 +1016,7 @@ class TestMidTransmissionSuppression:
         events = det.process(iq, start_sample=0)
         onsets = [e for e in events if isinstance(e, CarrierOnset)]
         assert len(onsets) == 1, (
-            "Onset with noise→carrier in snippet must pass validation"
+            "Onset with noise->carrier in snippet must pass validation"
         )
 
     def test_snippet_validation_not_armed_without_prime(self):
@@ -1054,7 +1054,7 @@ class TestMidTransmissionSuppression:
 
     def test_offset_with_transition_kept(self):
         """
-        A normal offset (carrier → noise in the snippet) passes
+        A normal offset (carrier -> noise in the snippet) passes
         the dynamic range check after prime_state.
         """
         rng = np.random.default_rng(56)
@@ -1070,7 +1070,7 @@ class TestMidTransmissionSuppression:
         events = det.process(iq, start_sample=0)
         offsets = [e for e in events if isinstance(e, CarrierOffset)]
         assert len(offsets) == 1, (
-            "Offset with carrier→noise transition must be kept"
+            "Offset with carrier->noise transition must be kept"
         )
 
     # --- Direct method tests ---
@@ -1079,7 +1079,7 @@ class TestMidTransmissionSuppression:
         """Direct test of _snippet_has_transition with crafted snippets."""
         det = make_detector(window_samples=64)
 
-        # All-carrier snippet: uniform power → no transition
+        # All-carrier snippet: uniform power -> no transition
         carrier_iq = _carrier(640, power_db=-10.0)
         scale = float(np.max(np.abs(carrier_iq))) + 1e-30
         normed = carrier_iq / scale
@@ -1090,7 +1090,7 @@ class TestMidTransmissionSuppression:
             "All-carrier snippet should fail transition check"
         )
 
-        # Noise→carrier snippet: clear transition
+        # Noise->carrier snippet: clear transition
         rng = np.random.default_rng(99)
         mixed = np.concatenate([_noise(320, -60.0, rng), _carrier(320, -10.0)])
         scale = float(np.max(np.abs(mixed))) + 1e-30
@@ -1099,10 +1099,10 @@ class TestMidTransmissionSuppression:
         int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
         int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
         assert det._snippet_has_transition(int8_ri.tobytes()), (
-            "Noise→carrier snippet should pass transition check"
+            "Noise->carrier snippet should pass transition check"
         )
 
-        # Very short → pass (can't validate)
+        # Very short -> pass (can't validate)
         assert det._snippet_has_transition(b"\x10\x20")
 
 
@@ -1135,17 +1135,17 @@ class TestBlockStartOffsetSuppression:
 
     def test_block_start_tail_suppressed(self):
         """
-        Carrier present at block start, drops in the first few windows → suppressed.
+        Carrier present at block start, drops in the first few windows -> suppressed.
 
         This is the primary case seen on node-discovery: the transmitter was still
-        keyed during the sync block and drops within 1–3 windows of the target
+        keyed during the sync block and drops within 1-3 windows of the target
         block.  With min_active_windows_for_offset=4, only 1 active window is
         seen, so the offset is suppressed.
         """
         rng = np.random.default_rng(10)
         det = self._det()
 
-        # prime_state with carrier → state=active, _primed_active=True, _active_window_count=0
+        # prime_state with carrier -> state=active, _primed_active=True, _active_window_count=0
         det.prime_state(_carrier(self.W, power_db=-10.0))
         assert det.state == "active"
 
@@ -1163,7 +1163,7 @@ class TestBlockStartOffsetSuppression:
 
     def test_block_start_long_carrier_emitted(self):
         """
-        Carrier present at block start, remains active for many windows → emitted.
+        Carrier present at block start, remains active for many windows -> emitted.
 
         A carrier that was transmitting at block start but stays up for 30 windows
         before dropping has meaningful timing information; it should not be suppressed.
@@ -1187,7 +1187,7 @@ class TestBlockStartOffsetSuppression:
 
     def test_exactly_at_threshold_emitted(self):
         """
-        Carrier active for exactly min_active_windows_for_offset windows → emitted.
+        Carrier active for exactly min_active_windows_for_offset windows -> emitted.
         """
         rng = np.random.default_rng(12)
         min_active = 4
@@ -1208,7 +1208,7 @@ class TestBlockStartOffsetSuppression:
 
     def test_one_below_threshold_suppressed(self):
         """
-        Carrier active for min_active_windows_for_offset - 1 windows → suppressed.
+        Carrier active for min_active_windows_for_offset - 1 windows -> suppressed.
         """
         rng = np.random.default_rng(13)
         min_active = 4
@@ -1238,11 +1238,11 @@ class TestBlockStartOffsetSuppression:
         rng = np.random.default_rng(14)
         det = self._det()
 
-        # prime_state with noise → state=idle, _primed_active=False
+        # prime_state with noise -> state=idle, _primed_active=False
         det.prime_state(_noise(self.W, power_db=-60.0, rng=rng))
         assert det.state == "idle"
 
-        # idle → carrier → noise
+        # idle -> carrier -> noise
         iq = np.concatenate([
             _noise(self.W * 4, power_db=-60.0, rng=rng),   # idle
             _carrier(self.W * 2, power_db=-10.0),           # onset then immediate drop
@@ -1256,11 +1256,11 @@ class TestBlockStartOffsetSuppression:
 
     def test_block_start_drop_then_rekey_offset_not_suppressed(self):
         """
-        Block-start tail suppressed, carrier re-keys later → re-key offset emitted.
+        Block-start tail suppressed, carrier re-keys later -> re-key offset emitted.
 
         After the block-start carrier tail is suppressed, the state goes idle.
         When the carrier re-keys (genuine onset, passes idle window count check),
-        its subsequent offset must not be suppressed — _primed_active is cleared
+        its subsequent offset must not be suppressed - _primed_active is cleared
         by the genuine onset.
         """
         rng = np.random.default_rng(15)
@@ -1371,7 +1371,7 @@ class TestUpdateThresholds:
         iq_carrier = _carrier(640, power_db=-10.0)
         det.process(iq_carrier, start_sample=0)
         assert det.state == "active"
-        # Update thresholds — state should remain active
+        # Update thresholds - state should remain active
         det.update_thresholds(onset_threshold_db=-15.0, offset_threshold_db=-25.0)
         assert det.state == "active"
 
@@ -1389,7 +1389,7 @@ class TestOffsetSampleIndexRefinement:
 
     _WINDOW = 64
     _MIN_RELEASE = 4
-    # Ring fills at snippet_windows*3; 1280-sample snippet / 64 = 20 windows → 60 ring slots.
+    # Ring fills at snippet_windows*3; 1280-sample snippet / 64 = 20 windows -> 60 ring slots.
     # Run 65 carrier windows so the ring is guaranteed full at offset detection.
     _N_ON = 65
 
@@ -1416,7 +1416,7 @@ class TestOffsetSampleIndexRefinement:
     def test_deferred_path_sample_index_near_shutoff(self):
         """
         With post_windows > 0 (deferred emission path), sample_index must be
-        within ±2 windows of the actual PA shutoff sample.
+        within +/-2 windows of the actual PA shutoff sample.
         """
         rng = np.random.default_rng(7)
         det = self._make_det(post_windows=5)
@@ -1428,13 +1428,13 @@ class TestOffsetSampleIndexRefinement:
         idx = offsets[0].sample_index
         assert abs(idx - shutoff) < 2 * self._WINDOW, (
             f"Deferred path: sample_index={idx} is {idx - shutoff:+d} samples "
-            f"from shutoff at {shutoff}; expected within ±{2 * self._WINDOW}"
+            f"from shutoff at {shutoff}; expected within +/-{2 * self._WINDOW}"
         )
 
     def test_immediate_path_sample_index_near_shutoff(self):
         """
         With post_windows=0 (immediate emission path), sample_index must be
-        within ±2 windows of the actual PA shutoff sample.
+        within +/-2 windows of the actual PA shutoff sample.
         """
         rng = np.random.default_rng(13)
         det = self._make_det(post_windows=0)
@@ -1446,7 +1446,7 @@ class TestOffsetSampleIndexRefinement:
         idx = offsets[0].sample_index
         assert abs(idx - shutoff) < 2 * self._WINDOW, (
             f"Immediate path: sample_index={idx} is {idx - shutoff:+d} samples "
-            f"from shutoff at {shutoff}; expected within ±{2 * self._WINDOW}"
+            f"from shutoff at {shutoff}; expected within +/-{2 * self._WINDOW}"
         )
 
     def test_deferred_path_better_than_old_window_centre(self):

@@ -1,6 +1,6 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-CarrierEvent -- the primary data unit produced by a Beagle node.
+CarrierEvent - the primary data unit produced by a Beagle node.
 
 One CarrierEvent is produced per carrier onset detection. The `sync_delta_ns`
 field is the precise TDOA measurement. The `onset_time_ns` is a rough absolute
@@ -40,7 +40,7 @@ class CarrierEvent(BaseModel):
 
     Each event represents either a carrier onset (rising edge) or offset
     (falling edge). The server must pair like event_types across nodes --
-    onset-with-onset and offset-with-offset -- to compute valid TDOA.
+    onset-with-onset and offset-with-offset - to compute valid TDOA.
 
     The server uses `sync_delta_ns` (together with the sync transmitter
     location) to compute TDOA between nodes. It uses `onset_time_ns` only
@@ -79,8 +79,8 @@ class CarrierEvent(BaseModel):
     event_type: Literal["onset", "offset"] = "onset"
     """
     Which carrier edge triggered this measurement.
-    'onset'  -- rising edge (carrier appeared).
-    'offset' -- falling edge (carrier disappeared).
+    'onset'  - rising edge (carrier appeared).
+    'offset' - falling edge (carrier disappeared).
     The server must pair onset-with-onset and offset-with-offset across nodes.
     """
 
@@ -115,10 +115,10 @@ class CarrierEvent(BaseModel):
     """
     Base64-encoded int8-interleaved IQ snippet captured at the carrier edge.
     Used by the aggregation server to cross-correlate matched event pairs for
-    µs-level TDOA.
+    usec-level TDOA.
 
     Encoding: bytes are interleaved real/imag int8, so for N complex samples
-    the field decodes to 2N bytes.  Scale is arbitrary (normalised to ±127);
+    the field decodes to 2N bytes.  Scale is arbitrary (normalised to +/-127);
     only relative timing is used by the cross-correlator.
     """
 

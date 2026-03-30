@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Co-located pair test: characterise timing jitter and fix accuracy when two
 nodes are placed at the same physical location.
@@ -27,7 +27,7 @@ Two operating modes
 
 Usage examples
 --------------
-  # Simulation -- compare two SDR types by expected sigma
+  # Simulation - compare two SDR types by expected sigma
   python3 scripts/colocated_pair_test.py --simulate \\
       --node-a-sigma-us 1.5 --node-b-sigma-us 2.5 \\
       --anchor-sigma-us 1.5 --n-trials 2000
@@ -193,13 +193,13 @@ def run_simulate(args: argparse.Namespace) -> None:
                                                 sync_tx_lat, sync_tx_lon)
 
     # Solver search centre: geometric mean of node positions (NOT the true
-    # transmitter -- using the true answer as the starting point would let
+    # transmitter - using the true answer as the starting point would let
     # the solver converge trivially without exercising the noisy cost surface).
     search_lat = sum(p[0] for p in geo.values()) / len(geo)
     search_lon = sum(p[1] for p in geo.values()) / len(geo)
 
     print("=" * 60)
-    print("Co-located Pair Test -- SIMULATION MODE")
+    print("Co-located Pair Test - SIMULATION MODE")
     print("=" * 60)
     print(f"Geometry:")
     print(f"  Co-located nodes A,B: ({geo['A'][0]:.4f}, {geo['A'][1]:.4f})")
@@ -210,10 +210,10 @@ def run_simulate(args: argparse.Namespace) -> None:
     baseline_AB = haversine_m(*geo["A"], *geo["C"])
     print(f"  A-to-C baseline:      {baseline_AB/1000:.1f} km")
     print(f"Per-node 1-sigma timing noise:")
-    print(f"  Node A: {sigma_a_ns:.0f} ns ({args.node_a_sigma_us:.2f} µs)")
-    print(f"  Node B: {sigma_b_ns:.0f} ns ({args.node_b_sigma_us:.2f} µs)")
-    print(f"  Anchors C,D: {sigma_anc_ns:.0f} ns ({args.anchor_sigma_us:.2f} µs)")
-    print(f"  Expected std(TDOA_AB) = sqrt(2) × sigma_A = "
+    print(f"  Node A: {sigma_a_ns:.0f} ns ({args.node_a_sigma_us:.2f} usec)")
+    print(f"  Node B: {sigma_b_ns:.0f} ns ({args.node_b_sigma_us:.2f} usec)")
+    print(f"  Anchors C,D: {sigma_anc_ns:.0f} ns ({args.anchor_sigma_us:.2f} usec)")
+    print(f"  Expected std(TDOA_AB) = sqrt(2) x sigma_A = "
           f"{math.sqrt(2)*sigma_a_ns:.0f} ns "
           f"(if sigma_A = sigma_B = {sigma_a_ns:.0f} ns)")
     print(f"Trials: {args.n_trials}")
@@ -267,7 +267,7 @@ def run_simulate(args: argparse.Namespace) -> None:
     _print_stat_block("TDOA_AB", tdoa_ab_ns, "ns")
     expected_std = math.sqrt(sigma_a_ns**2 + sigma_b_ns**2)
     actual_std = statistics.stdev(tdoa_ab_ns) if len(tdoa_ab_ns) > 1 else 0.0
-    print(f"    Expected std (√(σ_A²+σ_B²)): {expected_std:.1f} ns  "
+    print(f"    Expected std (sqrt(sigma_A^2+sigma_B^2)): {expected_std:.1f} ns  "
           f"Actual: {actual_std:.1f} ns")
 
     print()
@@ -290,7 +290,7 @@ def run_simulate(args: argparse.Namespace) -> None:
         if p95_tdoa_ns > 0:
             scale = p95_err_m / (p95_tdoa_ns / 1000.0)
             print(f"\n  Geometry scale factor (P95): "
-                  f"~{scale:.0f} m per µs of TDOA noise")
+                  f"~{scale:.0f} m per usec of TDOA noise")
 
     print()
 
@@ -423,7 +423,7 @@ def run_db_analysis(args: argparse.Namespace) -> None:
     window_ns = int(args.window_ms * 1_000_000)
 
     print("=" * 60)
-    print("Co-located Pair Test -- DB ANALYSIS MODE")
+    print("Co-located Pair Test - DB ANALYSIS MODE")
     print("=" * 60)
     print(f"DB:          {db_path}")
     print(f"Co-located:  {node_a} (A)  {node_b} (B)")
@@ -464,7 +464,7 @@ def run_db_analysis(args: argparse.Namespace) -> None:
 
     print()
 
-    # Analyse onset and offset independently — detection accuracy differs
+    # Analyse onset and offset independently - detection accuracy differs
     # between the rising and falling edges of a carrier.
     types_to_analyse = [args.event_type] if args.event_type else ["onset", "offset"]
     all_pairs_ab: list[tuple[dict[str, Any], dict[str, Any]]] = []
@@ -474,12 +474,12 @@ def run_db_analysis(args: argparse.Namespace) -> None:
         b_typed = [e for e in events_by_node[node_b] if e["event_type"] == ev_type]
         print(f"--- {ev_type.upper()} ---  {node_a}={len(a_typed)}  {node_b}={len(b_typed)}")
         if not a_typed or not b_typed:
-            print(f"  (no {ev_type} events for one or both nodes — skipping)")
+            print(f"  (no {ev_type} events for one or both nodes - skipping)")
             continue
         pairs = _match_events(a_typed, b_typed, window_ns)
         print(f"Matched pairs: {len(pairs)}")
         if not pairs:
-            print(f"  No matched pairs — try a larger --window-ms")
+            print(f"  No matched pairs - try a larger --window-ms")
             continue
         min_xcorr_snr: float = args.min_xcorr_snr
         tdoa_ab_ns: list[float] = []
@@ -557,7 +557,7 @@ def run_db_analysis(args: argparse.Namespace) -> None:
                     if n_periods != 0:
                         n_sync_disambig += 1
                 else:
-                    sync_method = "sync_delta (no onset→no disambig)"
+                    sync_method = "sync_delta (no onset->no disambig)"
                 path_corr_ns = path_delay_correction_ns(
                     ev_a["sync_tx_lat"], ev_a["sync_tx_lon"],
                     ev_a["node_lat"], ev_a["node_lon"],
@@ -597,7 +597,7 @@ def run_db_analysis(args: argparse.Namespace) -> None:
         if sync_tdoa_ab_ns:
             mean_ns = statistics.mean(sync_tdoa_ab_ns)
             adj = mean_ns / 2
-            print(f"  → Suggested pipeline_offset adjustment: "
+            print(f"  -> Suggested pipeline_offset adjustment: "
                   f"{node_a} {-adj:+.0f} ns  {node_b} {+adj:+.0f} ns")
 
         # Per-source quality breakdown (always shown when there are matched pairs)
@@ -734,14 +734,14 @@ def _analyze_snippet_envelope(
     Decode one IQ snippet and measure its power envelope transition.
 
     Returns a dict with:
-      pre_margin_w   – windows of noise before the transition begins
-      transition_w   – windows spanning the carrier rise (onset) or fall (offset)
-      post_margin_w  – windows of plateau after the transition completes
-      total_w        – total windows in the snippet
-      noise_db       – estimated noise floor (dBFS relative to peak)
-      plateau_db     – estimated plateau level (dBFS relative to peak)
-      clipped_pre    – True if the transition starts at window 0 (no pre context)
-      clipped_post   – True if the transition reaches window total_w-1 (no post context)
+      pre_margin_w   - windows of noise before the transition begins
+      transition_w   - windows spanning the carrier rise (onset) or fall (offset)
+      post_margin_w  - windows of plateau after the transition completes
+      total_w        - total windows in the snippet
+      noise_db       - estimated noise floor (dBFS relative to peak)
+      plateau_db     - estimated plateau level (dBFS relative to peak)
+      clipped_pre    - True if the transition starts at window 0 (no pre context)
+      clipped_post   - True if the transition reaches window total_w-1 (no post context)
 
     Returns None if the snippet is too short or ambiguous (no visible transition).
     """
@@ -752,7 +752,7 @@ def _analyze_snippet_envelope(
     if len(raw) < analysis_window * 2:
         return None
 
-    # Decode interleaved int8 IQ → complex float
+    # Decode interleaved int8 IQ -> complex float
     arr = np.frombuffer(raw, dtype=np.int8).astype(np.float32)
     n_samples = len(arr) // 2
     iq = arr[0::2] + 1j * arr[1::2]
@@ -774,7 +774,7 @@ def _analyze_snippet_envelope(
     plateau_db = float(np.median(sorted_pw[-fifth:]))
     dynamic_range = plateau_db - noise_db
     if dynamic_range < 3.0:
-        # No visible transition (flat snippet — all noise or all carrier)
+        # No visible transition (flat snippet - all noise or all carrier)
         return None
 
     # Define transition thresholds at 20% and 80% of the dynamic range
@@ -864,16 +864,16 @@ def run_snippet_analysis(args: argparse.Namespace) -> None:
     Analyse IQ snippet envelopes from a single node to determine whether
     snippet_samples and snippet_post_windows are set correctly.
 
-    For each event type × channel combination, reports:
+    For each event type x channel combination, reports:
       - How many windows of "silence" precede the transition (pre-margin)
       - How many windows span the carrier rise/fall (transition time)
       - How many windows of "plateau" follow the transition (post-margin)
 
-    Clipped pre: the snippet starts during the transition — the ring buffer is
+    Clipped pre: the snippet starts during the transition - the ring buffer is
     too short (pre-event context is missing).
 
     Clipped post: the snippet ends during the transition or immediately at the
-    plateau — snippet_post_windows is too small to capture the full transient.
+    plateau - snippet_post_windows is too small to capture the full transient.
 
     Recommended settings are printed at the end.
     """
@@ -897,7 +897,7 @@ def run_snippet_analysis(args: argparse.Namespace) -> None:
     n_with_snippets = sum(1 for e in events if e.get("iq_snippet_b64"))
     print(f"  Loaded {len(events)} events; {n_with_snippets} have IQ snippets.")
     if n_with_snippets == 0:
-        print("  No snippets to analyse — ensure the node is running a recent firmware "
+        print("  No snippets to analyse - ensure the node is running a recent firmware "
               "with iq_snippet_b64 reporting enabled.", file=sys.stderr)
         sys.exit(1)
     print()
@@ -948,7 +948,7 @@ def run_snippet_analysis(args: argparse.Namespace) -> None:
         w_ms = 1000.0 * analysis_window / sample_rate_hz
 
         print(f"  {label}  N={n}  ({n_flat} flat/skipped)")
-        print(f"    Snippet: {total_w:.0f} analysis windows × {w_ms:.2f} ms = "
+        print(f"    Snippet: {total_w:.0f} analysis windows x {w_ms:.2f} ms = "
               f"{total_w * w_ms:.1f} ms total")
         print(f"    Pre-margin:  median={pre_med:.1f}w ({pre_med * w_ms:.1f} ms)"
               + (f"  ** {n_clipped_pre}/{n} CLIPPED (ring too short)" if n_clipped_pre else ""))
@@ -957,7 +957,7 @@ def run_snippet_analysis(args: argparse.Namespace) -> None:
         print(f"    Post-margin: median={post_med:.1f}w ({post_med * w_ms:.1f} ms)"
               + (f"  ** {n_clipped_post}/{n} CLIPPED (need more post windows)" if n_clipped_post else ""))
 
-        # Recommendation: post_windows needed so median post_margin ≥ 3 analysis windows
+        # Recommendation: post_windows needed so median post_margin >= 3 analysis windows
         # Convert analysis windows back to detector windows (analysis_window / window_samples).
         # We don't know window_samples, so report in analysis windows and ms.
         want_post_ms = max(0.0, (3.0 - post_med) * w_ms)
@@ -965,19 +965,19 @@ def run_snippet_analysis(args: argparse.Namespace) -> None:
         detector_w_ms = 64.0 / sample_rate_hz * 1000.0
         recommended_post = max(0, math.ceil(want_post_ms / detector_w_ms))
         if n_clipped_post > n // 4:
-            # More than 25% of events are clipped post — concrete recommendation
+            # More than 25% of events are clipped post - concrete recommendation
             # Use P95 transition + 3 windows buffer, minus current snippet post portion.
             current_post_ms = post_med * w_ms
             need_ms = trans_p95 * w_ms + 3.0 * detector_w_ms - current_post_ms
             recommended_post = max(1, math.ceil(need_ms / detector_w_ms))
-            print(f"    → Recommend snippet_post_windows ≥ {recommended_post} "
+            print(f"    -> Recommend snippet_post_windows >= {recommended_post} "
                   f"({recommended_post * detector_w_ms:.1f} ms) to capture P95 transition")
         elif n_clipped_pre > n // 4:
-            print(f"    → Pre-clipping detected: consider increasing snippet_samples "
+            print(f"    -> Pre-clipping detected: consider increasing snippet_samples "
                   f"(current total={total_w * w_ms:.1f} ms; "
-                  f"pre-context needed ≈ {(3.0 + trans_p95) * w_ms:.1f} ms)")
+                  f"pre-context needed ~ {(3.0 + trans_p95) * w_ms:.1f} ms)")
         else:
-            print(f"    → Coverage looks adequate (median post-margin {post_med:.1f}w, "
+            print(f"    -> Coverage looks adequate (median post-margin {post_med:.1f}w, "
                   f"pre-margin {pre_med:.1f}w)")
 
         all_recommendations[label] = recommended_post
@@ -1033,15 +1033,15 @@ def _build_parser() -> argparse.ArgumentParser:
     sim = p.add_argument_group("Simulation options (--simulate)")
     sim.add_argument(
         "--node-a-sigma-us", type=float, default=1.5, metavar="US",
-        help="Per-node 1-sigma timing noise for node A in µs (default 1.5)",
+        help="Per-node 1-sigma timing noise for node A in usec (default 1.5)",
     )
     sim.add_argument(
         "--node-b-sigma-us", type=float, default=1.5, metavar="US",
-        help="Per-node 1-sigma timing noise for node B in µs (default 1.5)",
+        help="Per-node 1-sigma timing noise for node B in usec (default 1.5)",
     )
     sim.add_argument(
         "--anchor-sigma-us", type=float, default=1.5, metavar="US",
-        help="Per-node 1-sigma timing noise for anchor nodes in µs (default 1.5)",
+        help="Per-node 1-sigma timing noise for anchor nodes in usec (default 1.5)",
     )
     sim.add_argument(
         "--n-trials", type=int, default=1000, metavar="N",

@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for pipeline/sync_detector.py."""
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ class TestCrystalCalibrator:
 
 
 # ---------------------------------------------------------------------------
-# FMPilotSyncDetector -- event rate
+# FMPilotSyncDetector - event rate
 # ---------------------------------------------------------------------------
 
 class TestFMPilotSyncDetector:
@@ -262,7 +262,7 @@ class TestFMPilotSyncDetector:
         ev1 = det.process(audio1, start_sample=start1)
         assert len(ev1) == 1
 
-        # Second block starts right where the first ended -- no gap
+        # Second block starts right where the first ended - no gap
         start2 = start1 + period
         audio2 = _pilot_audio(period, RATE)
         ev2 = det.process(audio2, start_sample=start2)

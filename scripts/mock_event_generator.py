@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Beagle Mock Event Generator
 ============================
@@ -128,7 +128,7 @@ class ErrorModel:
         Independent noise on sync_delta_ns representing uncertainty in
         identifying the exact onset/offset sample.  Combined with
         pilot_timing_sigma_ns: total sync_delta sigma = sqrt(pilot^2 + edge^2).
-        Defaults calibrated so pair TDOA sigma ≈ 2 µs (colocated test).
+        Defaults calibrated so pair TDOA sigma ~ 2 usec (colocated test).
 
     ntp_sigma_ns : float
         1-sigma NTP clock error on onset_time_ns (nanoseconds).
@@ -236,8 +236,8 @@ def _make_synthetic_iq_snippet(
     can verify the event is genuine.
 
     Transition placement matches the real node's carrier detector:
-      - onset:  noise→carrier at ~1/4 of the snippet
-      - offset: carrier→noise at ~3/4 of the snippet
+      - onset:  noise->carrier at ~1/4 of the snippet
+      - offset: carrier->noise at ~3/4 of the snippet
 
     Encoded as interleaved int8 real/imag pairs.
     """
@@ -411,7 +411,7 @@ def synthesise_offset(
 
     for onset_ne in onset_events:
         node = onset_ne.node
-        # Geometry is identical -- target, sync_tx, and nodes are stationary.
+        # Geometry is identical - target, sync_tx, and nodes are stationary.
         d_target_m = onset_ne.d_target_m
         d_sync_m   = onset_ne.d_sync_m
 
@@ -421,7 +421,7 @@ def synthesise_offset(
         # The offset carrier edge arrives at the node at t_offset_ns + prop_target_ns.
         true_offset_time_ns = int(t_offset_ns + prop_target_ns)
         # sync_delta: time from FM sync event (500 ms before offset) to offset edge.
-        # Simplifies to 500_000_000 + (d_target - d_sync) / c -- same as onset.
+        # Simplifies to 500_000_000 + (d_target - d_sync) / c - same as onset.
         true_sync_delta_ns = int(
             (t_offset_ns + prop_target_ns) - (T_sync_ns + prop_sync_ns)
         )
@@ -514,7 +514,7 @@ def print_scenario_summary(scenario: ScenarioDef) -> None:
           f"{scenario.transmission_duration_sigma_s:.1f} s  (onset -> offset)")
     if scenario.rapid_keyup_interval_ms > 0:
         print(f"    Inter-TX gap:              {scenario.rapid_keyup_interval_ms:.0f} ms  "
-              f"(rapid key-up -- should produce separate T_sync buckets)")
+              f"(rapid key-up - should produce separate T_sync buckets)")
     else:
         print(f"    Inter-TX gap:              {scenario.inter_transmission_gap_mean_s:.1f} +/- "
               f"{scenario.inter_transmission_gap_sigma_s:.1f} s  (offset -> next onset)")
@@ -534,7 +534,7 @@ def print_transmission_header(
     phase = event_type.upper()
     print()
     _hr()
-    print(f"  TRANSMISSION {tx_num}/{total}  [{phase}]  --  {target.label}")
+    print(f"  TRANSMISSION {tx_num}/{total}  [{phase}]  -  {target.label}")
     print(f"    True position:  {target.latitude_deg:.6f}degN, {target.longitude_deg:.6f}degW")
     print(f"    Channel:        {target.channel_hz / 1e6:.3f} MHz")
     print(f"    Wall clock:     {ts}")
@@ -646,7 +646,7 @@ def send_events(
             mark = "OK  " if ok else "FAIL"
             print(f"    [{mark}] {ne.node.node_id:<20}  {status_str:<20}  ({elapsed_ms:.0f} ms)")
         except httpx.ConnectError:
-            print(f"    [FAIL] {ne.node.node_id:<20}  CONNECTION REFUSED -- is the server running at {server_url}?")
+            print(f"    [FAIL] {ne.node.node_id:<20}  CONNECTION REFUSED - is the server running at {server_url}?")
             all_ok = False
         except Exception as exc:
             print(f"    [FAIL] {ne.node.node_id:<20}  ERROR: {exc}")
@@ -740,7 +740,7 @@ def print_fix_result(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Beagle mock event generator -- synthesises PTT onset+offset events.",
+        description="Beagle mock event generator - synthesises PTT onset+offset events.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Error model presets (--pilot-sigma-us):
@@ -750,7 +750,7 @@ Error model presets (--pilot-sigma-us):
    0.1   Theoretical lower bound (GPS 1PPS + TCXO, high SNR)
 
 Carrier edge detection jitter (--edge-sigma-us):
-   1.0   Default (calibrated from colocated pair TDOA ≈ ±2 µs)
+   1.0   Default (calibrated from colocated pair TDOA ~ +/-2 usec)
    0.5   High-SNR carrier with sharp onset
 """,
     )
@@ -761,7 +761,7 @@ Carrier edge detection jitter (--edge-sigma-us):
     p.add_argument("--auth-token", default="",
                    help="Bearer token if server auth is enabled")
     p.add_argument("--delivery-buffer-s", type=float, default=10.0,
-                   help="Server delivery_buffer_s -- wait before polling for fix (default: 10.0)")
+                   help="Server delivery_buffer_s - wait before polling for fix (default: 10.0)")
     p.add_argument("--seed", type=int, default=None,
                    help="Random seed for reproducible noise (default: random)")
     p.add_argument("--no-offset", action="store_true",
@@ -896,7 +896,7 @@ def main() -> None:
                              onset_events, label="onset events")
 
             if not ok:
-                print("\n  [WARN] Some onset events failed -- skipping remainder of this TX.\n")
+                print("\n  [WARN] Some onset events failed - skipping remainder of this TX.\n")
                 continue
 
             if args.no_offset:
@@ -912,7 +912,7 @@ def main() -> None:
                 print_fix_result(onset_fix, target, "onset")
             else:
                 # -------------------------------------------------------
-                # Carrier in progress -- wait for duration_s
+                # Carrier in progress - wait for duration_s
                 # -------------------------------------------------------
                 print(f"\n  [CARRIER ON]  Holding for {duration_s:.1f} s ...")
                 # The server's delivery_buffer fires during this wait,
@@ -940,7 +940,7 @@ def main() -> None:
                 t_offset_ns = int(time.time_ns())
                 print()
                 _hr()
-                print(f"  TRANSMISSION {tx_num}/{total_tx}  [OFFSET]  --  {target.label}")
+                print(f"  TRANSMISSION {tx_num}/{total_tx}  [OFFSET]  -  {target.label}")
                 t_wall = t_offset_ns / 1e9
                 ts = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(t_wall))
                 print(f"    Offset time:    {ts}")

@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Unit tests for CarrierDetector._encode_offset_snippet.
 
@@ -126,7 +126,7 @@ class TestEncodeOffsetSnippetCentering:
         """
         Different offset_db thresholds cause detection to fire at different
         times after the PA shutoff.  The PA cutoff in the encoded snippet must
-        always appear near the 3/4 position (±10% tolerance) regardless.
+        always appear near the 3/4 position (+/-10% tolerance) regardless.
 
         Requires snippet_post_windows > 0 so the deferred emission path
         provides post-cutoff IQ for reliable centering.
@@ -174,11 +174,11 @@ class TestEncodeOffsetSnippetCentering:
         cutoff_pos = _find_cutoff_sample(snippet_iq)
         target = (snippet_samples * 3) // 4  # expected: cutoff at 3/4 from start
 
-        # Tolerance: ±10% of snippet_samples (= ±128 samples)
+        # Tolerance: +/-10% of snippet_samples (= +/-128 samples)
         tolerance = snippet_samples * 0.10
         assert abs(cutoff_pos - target) <= tolerance, (
             f"offset_db={offset_db}: PA cutoff at {cutoff_pos}, "
-            f"expected near {target} (±{tolerance:.0f})"
+            f"expected near {target} (+/-{tolerance:.0f})"
         )
 
     def test_two_nodes_different_thresholds_same_cutoff_position(self) -> None:
@@ -200,7 +200,7 @@ class TestEncodeOffsetSnippetCentering:
 
         pa_on = 4000
         pa_off = 10_000
-        fade = 640   # 10 ms exponential decay (exp(-5) ≈ 0.007 at end)
+        fade = 640   # 10 ms exponential decay (exp(-5) ~ 0.007 at end)
         total = 25_000
 
         # Same physical signal received by both nodes
@@ -228,9 +228,9 @@ class TestEncodeOffsetSnippetCentering:
             offsets = [e for e in events if isinstance(e, CarrierOffset)]
             return offsets[0] if offsets else None
 
-        # Node A: tight threshold — detects fade early (crosses -8 dBFS quickly)
+        # Node A: tight threshold - detects fade early (crosses -8 dBFS quickly)
         off_a = _run(sig, onset_db=-3.0, offset_db=-8.0)
-        # Node B: loose threshold — detects fade late (must decay to -25 dBFS)
+        # Node B: loose threshold - detects fade late (must decay to -25 dBFS)
         off_b = _run(sig, onset_db=-3.0, offset_db=-25.0)
 
         assert off_a is not None, "Node A did not emit CarrierOffset"
@@ -238,7 +238,7 @@ class TestEncodeOffsetSnippetCentering:
 
         # With derivative-peak refinement, sample_index IS the power-derivative peak
         # for both nodes.  Both see the same physical signal, so the same peak must
-        # be identified — they should agree within a few samples.
+        # be identified - they should agree within a few samples.
         assert abs(off_a.sample_index - off_b.sample_index) <= window, (
             f"Refined sample_index differs by "
             f"{abs(off_a.sample_index - off_b.sample_index)} samples: "
@@ -314,7 +314,7 @@ class TestRingLookbackConfig:
             offset_threshold_db=-20.0,
             window_samples=64,
             snippet_samples=640,
-            # ring_lookback_windows not specified → default = 3 × ceil(640/64) = 30
+            # ring_lookback_windows not specified -> default = 3 x ceil(640/64) = 30
         )
         expected = 3 * (640 // 64)  # = 30
         assert det._iq_ring.maxlen == expected

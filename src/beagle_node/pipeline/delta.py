@@ -1,6 +1,6 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-DeltaComputer -- converts raw sample indices into sync_delta_ns measurements.
+DeltaComputer - converts raw sample indices into sync_delta_ns measurements.
 
 This is the measurement core.  All TDOA precision depends on what happens here.
 
@@ -70,8 +70,8 @@ class TDOAMeasurement:
 
     sync_delta_ns is the primary value sent to the server.
     event_type indicates which carrier edge triggered this measurement:
-      "onset"  -- rising edge (carrier appeared)
-      "offset" -- falling edge (carrier disappeared)
+      "onset"  - rising edge (carrier appeared)
+      "offset" - falling edge (carrier disappeared)
     The server must pair like event_types across nodes.
     """
     sync_delta_ns: int                  # THE measurement
@@ -128,8 +128,8 @@ class DeltaComputer:
         # consistently weak so the user knows why the node went silent.
         #
         # Hysteresis prevents log spam when quality oscillates near the threshold:
-        #   _WARN_AFTER  -- warn only after this many consecutive bad events
-        #   _RECOVER_AFTER -- recover only after this many consecutive good events
+        #   _WARN_AFTER  - warn only after this many consecutive bad events
+        #   _RECOVER_AFTER - recover only after this many consecutive good events
         # At a 7 ms sync period, 5 events = 35 ms of sustained degradation before
         # the first warning, and 35 ms of sustained recovery before the info log.
         self._rejected_sync_count: int = 0   # consecutive bad events
@@ -158,7 +158,7 @@ class DeltaComputer:
             elif self._pilot_warned and self._rejected_sync_count % self._WARN_EVERY == 0:
                 logger.warning(
                     "FM pilot still weak: %d consecutive sync events rejected "
-                    "(corr_peak %.3f < %.3f) -- no measurements possible",
+                    "(corr_peak %.3f < %.3f) - no measurements possible",
                     self._rejected_sync_count, event.corr_peak, self._min_corr,
                 )
             else:
@@ -177,7 +177,7 @@ class DeltaComputer:
                 self._consecutive_good = 0
                 self._pilot_warned = False
         else:
-            # Never warned -- silently reset the bad count so brief dips don't
+            # Never warned - silently reset the bad count so brief dips don't
             # accumulate toward the warn threshold across unrelated good stretches.
             self._rejected_sync_count = 0
             self._consecutive_good = 0
@@ -223,8 +223,8 @@ class DeltaComputer:
         # pending events when no sync is available.
         #
         # The original code used only newest_sync, which fails when sync_events
-        # is empty (returns 0 → age condition 0−event > max_age is never true
-        # for positive sample indices → pending list grows forever).
+        # is empty (returns 0 -> age condition 0-event > max_age is never true
+        # for positive sample indices -> pending list grows forever).
         #
         # Fix: also consider the newest *carrier* sample.  If sync is dead but
         # carriers keep arriving, the carrier frontier advances and old pending

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Characterise system clock jitter using time.time_ns().
 
@@ -55,7 +55,7 @@ def main() -> int:
     t_next = time.time_ns()
     for _ in range(args.samples):
         t_next += interval_ns
-        # Busy-wait for the target time -- avoids sleep jitter
+        # Busy-wait for the target time - avoids sleep jitter
         while time.time_ns() < t_next:
             pass
         samples.append(time.time_ns())
@@ -85,13 +85,13 @@ def main() -> int:
     # Verdict                                                             #
     # ------------------------------------------------------------------ #
     if jitter < 10_000:
-        verdict = "EXCELLENT (<10 us) -- suitable for onset_time_ns timestamps"
+        verdict = "EXCELLENT (<10 us) - suitable for onset_time_ns timestamps"
     elif jitter < 100_000:
-        verdict = "GOOD (<100 us) -- NTP-class accuracy for event association"
+        verdict = "GOOD (<100 us) - NTP-class accuracy for event association"
     elif jitter < 1_000_000:
-        verdict = "FAIR (<1 ms) -- acceptable for event association, not for TDOA"
+        verdict = "FAIR (<1 ms) - acceptable for event association, not for TDOA"
     else:
-        verdict = "POOR (>1 ms) -- check system load / consider real-time kernel"
+        verdict = "POOR (>1 ms) - check system load / consider real-time kernel"
 
     print(f"\nJitter verdict: {verdict}")
 
@@ -118,7 +118,7 @@ def main() -> int:
             else:
                 print(f"chronyc returned {r.returncode}")
         except FileNotFoundError:
-            print("chronyc not found -- install chrony for GPS/NTP clock discipline")
+            print("chronyc not found - install chrony for GPS/NTP clock discipline")
         except subprocess.TimeoutExpired:
             print("chronyc timed out")
 

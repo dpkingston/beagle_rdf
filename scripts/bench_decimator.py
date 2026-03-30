@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Micro-benchmark for decimator alternatives.
 
@@ -7,16 +7,16 @@ Tests different approaches to FIR filtering + decimation to find the
 fastest option for the Beagle pipeline.
 
 Candidates:
-1. scipy.signal.lfilter (current — split real/imag float32)
+1. scipy.signal.lfilter (current - split real/imag float32)
 2. numpy.convolve (no state, but simpler)
-3. scipy.signal.sosfilt (SOS form — potentially faster for long filters)
+3. scipy.signal.sosfilt (SOS form - potentially faster for long filters)
 4. scipy.signal.upfirdn (was previous approach, replaced in commit 23bf09e)
 5. Direct FFT overlap-save (batch convolution)
 6. scipy.signal.fftconvolve
-7. Polyphase decimation (downsample-aware — filters only needed outputs)
+7. Polyphase decimation (downsample-aware - filters only needed outputs)
 
 Also tests the impact of:
-- Tap count reduction (127 → 63 → 31)
+- Tap count reduction (127 -> 63 -> 31)
 - Buffer size variation
 """
 
@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 
 def bench(func, n_iters: int, label: str, warmup: int = 3) -> float:
-    """Run func() n_iters times, return median µs/call."""
+    """Run func() n_iters times, return median usec/call."""
     for _ in range(warmup):
         func()
     times = []
@@ -45,7 +45,7 @@ def bench(func, n_iters: int, label: str, warmup: int = 3) -> float:
     times.sort()
     median = times[len(times) // 2]
     mean = sum(times) / len(times)
-    print(f"  {label:<45s}  median={1e6*median:8.0f} µs  mean={1e6*mean:8.0f} µs")
+    print(f"  {label:<45s}  median={1e6*median:8.0f} usec  mean={1e6*mean:8.0f} usec")
     return median
 
 
@@ -63,7 +63,7 @@ def main():
         (32, 25_000.0, "TARGET (32x, 127 taps)"),
     ]:
         print(f"\n{'='*70}")
-        print(f"  {label}:  {buffer_samples} samples → {buffer_samples // decimation}")
+        print(f"  {label}:  {buffer_samples} samples -> {buffer_samples // decimation}")
         print(f"{'='*70}")
 
         for num_taps in [127, 63, 31]:
@@ -88,7 +88,7 @@ def main():
 
             bench(run_lfilter_split, n_iters, f"lfilter split re/im (current)")
 
-            # 1b. lfilter split — avoid intermediate complex128
+            # 1b. lfilter split - avoid intermediate complex128
             def run_lfilter_split_direct():
                 nonlocal zi_re, zi_im
                 re_f, zi_re = lfilter(taps, 1.0, iq.real, zi=zi_re)
@@ -98,7 +98,7 @@ def main():
                 out.imag = im_f[:end:d]
                 return out
 
-            bench(run_lfilter_split_direct, n_iters, f"lfilter split — direct complex64")
+            bench(run_lfilter_split_direct, n_iters, f"lfilter split - direct complex64")
 
             # 2. upfirdn (previous approach)
             def run_upfirdn():
@@ -150,7 +150,7 @@ def main():
             bench(run_fft_ola, n_iters, f"FFT overlap-save (no state)")
 
             # 5. Polyphase: only compute output samples (skip d-1 of every d)
-            # This is what a proper decimating filter does — M times less work.
+            # This is what a proper decimating filter does - M times less work.
             # Build polyphase branches from the FIR taps.
             poly_len = (num_taps + d - 1) // d
             poly_taps = np.zeros((d, poly_len), dtype=np.float32)
@@ -177,7 +177,7 @@ def main():
                 out.imag = out_im
                 return out
 
-            bench(run_polyphase, n_iters, f"polyphase (d branches × convolve)")
+            bench(run_polyphase, n_iters, f"polyphase (d branches x convolve)")
 
     # --- Sync BPF tap reduction ---
     print(f"\n\n{'='*70}")
@@ -203,7 +203,7 @@ def main():
             out, _ = lfilter(taps, 1.0, audio, zi=zi)
             return out
 
-        bench(run_bpf, 500, f"BPF {ntaps} taps × {sync_window} samples")
+        bench(run_bpf, 500, f"BPF {ntaps} taps x {sync_window} samples")
 
     print()
 

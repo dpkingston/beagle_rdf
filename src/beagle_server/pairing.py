@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Event pairing and delivery-buffer logic.
 
@@ -86,7 +86,7 @@ class EventPairer:
         Grouping window for T_sync.  A new event joins an existing group if
         its T_sync is within ``correlation_window_s / 2`` of that group's
         anchor.  Default 0.2 s works for standard internet NTP (observed max
-        inter-node spread ~39 ms, giving a 2.5× safety margin).
+        inter-node spread ~39 ms, giving a 2.5x safety margin).
         Use 0.005 s for GPS-disciplined nodes.
     delivery_buffer_s :
         Seconds to wait after the first event in a group before calling
@@ -139,7 +139,7 @@ class EventPairer:
         grp = self._find_group(base_key, t_sync_ns, event["node_id"])
 
         if grp is None:
-            # No matching group -- create one anchored to this event's T_sync.
+            # No matching group - create one anchored to this event's T_sync.
             full_key = (*base_key, t_sync_ns)
             grp = _Group(key=full_key, t_sync_anchor_ns=t_sync_ns)
             self._groups[full_key] = grp
@@ -164,10 +164,10 @@ class EventPairer:
 
         The modular reduction ensures that nodes with different observation
         windows (e.g. freq_hop seeing sync pulses only during the sync block,
-        giving sync_delta 28–85 ms spanning multiple 7 ms sync periods) produce
+        giving sync_delta 28-85 ms spanning multiple 7 ms sync periods) produce
         the same T_sync as nodes with continuous observation (RSPduo, sync_delta
-        0–7 ms).  Without the reduction, freq_hop T_sync would reference a
-        different (older) pilot zero-crossing, offset by N × 7 ms.
+        0-7 ms).  Without the reduction, freq_hop T_sync would reference a
+        different (older) pilot zero-crossing, offset by N x 7 ms.
         """
         dist_m = haversine_m(
             event["sync_tx_lat"], event["sync_tx_lon"],
@@ -196,7 +196,7 @@ class EventPairer:
         Also tries pilot-period disambiguation: if the T_sync difference
         exceeds the direct-match window but is approximately an integer
         multiple of _T_SYNC_NS (7 ms FM pilot period), the event joins the
-        group — provided the incoming node is not already in the group.
+        group - provided the incoming node is not already in the group.
 
         The per-node guard is essential: because any time difference is within
         3.5 ms of *some* multiple of 7 ms, omitting the guard would cause
@@ -214,7 +214,7 @@ class EventPairer:
                 return grp
             # Pilot-period disambiguation for cross-node clock offsets.
             # RSPduo nodes whose HAS_TIME anchor was captured when NTP was
-            # N×7 ms ahead will produce T_sync values offset by N×7 ms
+            # Nx7 ms ahead will produce T_sync values offset by Nx7 ms
             # relative to freq_hop / GPS-disciplined nodes.
             # Only attempt when this node has no existing event in the group,
             # so that different transmissions from the same node are not merged.
@@ -249,13 +249,13 @@ class EventPairer:
         if len(node_ids) < self._min_nodes:
             logger.info(
                 "Group %s has only %d node(s) after delivery buffer "
-                "(need %d for a fix) -- skipping",
+                "(need %d for a fix) - skipping",
                 key, len(node_ids), self._min_nodes,
             )
             return
 
         logger.info(
-            "Group %s ready: %d events from %d nodes -- running fix",
+            "Group %s ready: %d events from %d nodes - running fix",
             key, len(events), len(node_ids),
         )
         try:

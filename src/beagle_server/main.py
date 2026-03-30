@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Beagle aggregation server entry point.
 
@@ -23,7 +23,7 @@ from beagle_server.config import ServerFullConfig, load_config
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="beagle-server",
-        description="Beagle aggregation server -- receives events, computes fixes.",
+        description="Beagle aggregation server - receives events, computes fixes.",
     )
     parser.add_argument(
         "--config",
@@ -76,7 +76,7 @@ def main(argv: list[str] | None = None) -> None:
     # Suppress high-frequency heartbeat endpoints from uvicorn's access log at
     # INFO level; still visible when --log-level DEBUG is passed.
     # Note: uvicorn's access handler has level=NOTSET so we cannot simply demote
-    # the record — we must suppress it outright at INFO and allow it only at DEBUG.
+    # the record - we must suppress it outright at INFO and allow it only at DEBUG.
     _show_debug_access = args.log_level.upper() == "DEBUG"
 
     class _HeartbeatAccessFilter(logging.Filter):

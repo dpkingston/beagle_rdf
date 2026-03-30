@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Measure received signal power at a target frequency to calibrate carrier
 detection thresholds.
@@ -20,7 +20,7 @@ steady-state level measured here (due to R820T gain settling after each hop).
 A midpoint formula fails at high SNR because it places the threshold too far
 into the dynamic range, above where the freq_hop pipeline can observe.
 
-No frequency hopping or FM sync is involved -- this is a pure receive test.
+No frequency hopping or FM sync is involved - this is a pure receive test.
 
 Offset tuning (--freq-offset)
 ------------------------------
@@ -39,8 +39,8 @@ RSPduo via SoapySDRPlay3 which applies hardware DC notch).
 RSPduo note
 -----------
 The RSPduo has two independent tuners on separate antenna ports:
-  Tuner 1 / Antenna A (channel 0) -- used for FM sync signal
-  Tuner 2 / Antenna C (channel 1) -- used for LMR target signal
+  Tuner 1 / Antenna A (channel 0) - used for FM sync signal
+  Tuner 2 / Antenna C (channel 1) - used for LMR target signal
 
 To measure the target channel through the correct antenna port (Antenna C),
 use --channel 1 with --device "driver=sdrplay".  The script selects the
@@ -57,7 +57,7 @@ Usage examples
 # RTL-SDR / freq_hop node (uses 200 kHz offset by default to avoid LO spike)
 python3 scripts/check_target.py --freq 462.5625e6 --gain 40
 
-# RSPduo -- read from Tuner 2 / Antenna C (the LMR target port)
+# RSPduo - read from Tuner 2 / Antenna C (the LMR target port)
 # Use --freq-offset 100000 (100 kHz) to move the signal off DC;
 # the RSPduo DC notch may not be active in independent-RX mode.
 python3 scripts/check_target.py --freq 462.5625e6 --gain 30 \\
@@ -212,8 +212,8 @@ def main() -> int:
 
         # Open in DT (Dual Tuner) mode.  The rspduo-dual-independent-tuners
         # branch of SoapySDRPlay3 adds independent per-channel tuning to
-        # mode=DT.  Use two single-channel streams -- same as RSPduoReceiver.
-        # Use string form for device args -- SoapySDR 0.8.1-5 (Debian 13)
+        # mode=DT.  Use two single-channel streams - same as RSPduoReceiver.
+        # Use string form for device args - SoapySDR 0.8.1-5 (Debian 13)
         # has a bug in Device.make() with dict kwargs (hash collision).
         device_parts = ["driver=sdrplay", "mode=DT"]
         for part in args.device.split(","):
@@ -229,12 +229,12 @@ def main() -> int:
         sdr.setSampleRate(SoapySDR.SOAPY_SDR_RX, 0, args.rate)
         sdr.setFrequency(SoapySDR.SOAPY_SDR_RX, 0, ch0_freq)
         sdr.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, False)
-        # gRdB is IF Gain Reduction: gRdB=59 → maximum attenuation → minimum IF gain.
+        # gRdB is IF Gain Reduction: gRdB=59 -> maximum attenuation -> minimum IF gain.
         # The unnamed setGain(0) clips to the IFGR range minimum (20), which is
         # near-maximum IF gain and saturates the shared TDM ADC.  Use named elements.
         sdr.setGain(SoapySDR.SOAPY_SDR_RX, 0, "IFGR", 59)  # max IF attenuation (gRdB=59)
         sdr.setGain(SoapySDR.SOAPY_SDR_RX, 0, "RFGR", 9)   # max LNA attenuation (state 9)
-        # Channel 1 = measurement channel.  Avoid unnamed setGain — its
+        # Channel 1 = measurement channel.  Avoid unnamed setGain - its
         # distribution across RFGR and IFGR is unreliable for RSPduo in
         # DT mode.  Compute IFGR directly: IFGR = 79 - gain (clipped to
         # [20, 59]) so that higher --gain values mean more IF sensitivity.
@@ -267,7 +267,7 @@ def main() -> int:
         # sdrplay_api_Init() picks up rxChannelB->rfNotchEnable=1 directly.
         # Calling writeSetting while streamActive=False sets the param in the
         # struct without sending sdrplay_api_Update; Init then applies it.
-        # ch0 (sync tuner) deliberately has no notch — it receives FM as its
+        # ch0 (sync tuner) deliberately has no notch - it receives FM as its
         # timing reference.
         sdr.writeSetting("rfnotch_ctrl_ch1", "true")
         sdr.activateStream(rx_unused)
@@ -276,7 +276,7 @@ def main() -> int:
         # The upstream driver's activateStream() re-applies Tuner B params,
         # but we re-apply here as a safety net.
         sdr.setFrequency(SoapySDR.SOAPY_SDR_RX, 1, tune_freq)
-        # Re-apply gains as a safety net — Init may reset ch1 gain to ch0 values.
+        # Re-apply gains as a safety net - Init may reset ch1 gain to ch0 values.
         sdr.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, False)
         sdr.setGain(SoapySDR.SOAPY_SDR_RX, 0, "IFGR", 59)
         sdr.setGain(SoapySDR.SOAPY_SDR_RX, 0, "RFGR", 9)
@@ -316,7 +316,7 @@ def main() -> int:
         print(
             f"  [WARNING] Requested sample rate {args.rate/1e6:.6g} MHz not accepted by device; "
             f"using actual rate {actual_rate/1e6:.6g} MHz for calculations.\n"
-            f"  (RSPduo supports: 0.0625, 0.125, 0.25, 0.5, 1, 2 MHz -- pass --rate 2000000)",
+            f"  (RSPduo supports: 0.0625, 0.125, 0.25, 0.5, 1, 2 MHz - pass --rate 2000000)",
             file=sys.stderr,
         )
 
@@ -427,7 +427,7 @@ def main() -> int:
 
     if noise_floor > -6.0:
         print()
-        print(f"WARNING: ADC is saturated -- noise floor is {noise_floor:.1f} dBFS (near full scale).")
+        print(f"WARNING: ADC is saturated - noise floor is {noise_floor:.1f} dBFS (near full scale).")
         print("  The gain is far too high; the ADC has no headroom to distinguish signal from noise.")
         print(f"  Reduce gain significantly: --gain {max(0, int(args.gain - 20))}")
         print("  Target noise floor: -40 to -60 dBFS with no signal present.")
@@ -465,7 +465,7 @@ def main() -> int:
 
     if actual_hyst < 4:
         print()
-        print(f"  NOTE: SNR is only {snr_db:.1f} dB -- hysteresis reduced to {actual_hyst:.0f} dB.")
+        print(f"  NOTE: SNR is only {snr_db:.1f} dB - hysteresis reduced to {actual_hyst:.0f} dB.")
         print(f"  Set min_release_windows: 4-6 in node.yaml to suppress chattering.")
     print()
     print("For verify_freq_hop.py / verify_rspduo.py:")

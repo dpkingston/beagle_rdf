@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Hyperbolic TDOA fix solver.
 
@@ -11,7 +11,7 @@ The objective is:
 
 where predicted_tdoa_ij = ( dist(P, node_i) - dist(P, node_j) ) / c.
 
-With 2 nodes (1 pair) the problem is under-determined -- the solver will find
+With 2 nodes (1 pair) the problem is under-determined - the solver will find
 a point on the hyperbola rather than a unique location, with a large residual
 signalling the degeneracy.  3+ nodes are needed for a reliable fix.
 """
@@ -255,7 +255,7 @@ def solve_fix(
         pair_resids = _pair_residuals_ns(node_events, pairs, fix_lat, fix_lon)
         node_ids_list = [e["node_id"] for e in node_events]
         resid_summary = "  ".join(
-            f"{node_ids_list[i]}↔{node_ids_list[j]}={r:.0f} ns"
+            f"{node_ids_list[i]}<->{node_ids_list[j]}={r:.0f} ns"
             for (i, j, _), r in sorted(zip(pairs, pair_resids), key=lambda x: -x[1])
         )
         logger.warning(
@@ -278,7 +278,7 @@ def solve_fix(
             )
         else:
             logger.warning(
-                "Cannot exclude %s — too few remaining nodes for a 2-D fix",
+                "Cannot exclude %s - too few remaining nodes for a 2-D fix",
                 outlier_id,
             )
 

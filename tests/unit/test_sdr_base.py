@@ -1,5 +1,5 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
-"""Unit tests for sdr/base.py -- SDRConfig and SDRReceiver interface."""
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
+"""Unit tests for sdr/base.py - SDRConfig and SDRReceiver interface."""
 
 from __future__ import annotations
 

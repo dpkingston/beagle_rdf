@@ -1,11 +1,11 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Continuous frequency-hopping SDR receiver using pyrtlsdr.
 
 Uses pyrtlsdr's synchronous `read_bytes(n)` API in a background thread to
 alternate a single RTL-SDR between two frequencies continuously:
 
-  sync block → switch to target → target block → switch to sync → repeat
+  sync block -> switch to target -> target block -> switch to sync -> repeat
 
 Why not do the frequency switch inside the async callback?
 ----------------------------------------------------------
@@ -17,7 +17,7 @@ calls directly into libusb with a different locking strategy; Python via
 pyrtlsdr cannot replicate that.
 
 Instead, we use pyrtlsdr's synchronous `read_bytes(n)`:
-  - `read_bytes(sync_bytes)` blocks until exactly `sync_block × 2` bytes
+  - `read_bytes(sync_bytes)` blocks until exactly `sync_block x 2` bytes
     have been read from the device, then returns.
   - At that point no async loop is running, so `sdr.center_freq = freq`
     (a synchronous control transfer) is completely safe.
@@ -26,12 +26,12 @@ Instead, we use pyrtlsdr's synchronous `read_bytes(n)`:
   - Repeat indefinitely.
 
 The Python overhead between a `read_bytes` return and the next `center_freq`
-assignment is sub-millisecond — negligible compared to the 24+ ms discarded
+assignment is sub-millisecond - negligible compared to the 24+ ms discarded
 by `settling_samples`.
 
 Settling
 --------
-The R820T PLL needs ~10–40 ms to lock after each hop.  The first
+The R820T PLL needs ~10-40 ms to lock after each hop.  The first
 `settling_samples` of every block are discarded in the consumer.
 Use `scripts/measure_settling.py` to calibrate the value.
 
@@ -127,7 +127,7 @@ class FreqHopReceiver(SDRReceiver):
         self._settling = int(settling_samples)
         self._device_serial = device_serial
 
-        # Runtime state — all None/unset until open()
+        # Runtime state - all None/unset until open()
         self._sdr: object | None = None
         self._stream_thread: threading.Thread | None = None
         self._stop_event: threading.Event = threading.Event()
@@ -271,7 +271,7 @@ class FreqHopReceiver(SDRReceiver):
         # cancel_read_async() is the API for the async callback mode; calling it
         # during a synchronous read sets librtlsdr's async_cancel flag, which
         # corrupts internal state and causes rtlsdr_close() to crash with
-        # "rtlsdr_demod_write_reg failed with -1" → segfault on some librtlsdr
+        # "rtlsdr_demod_write_reg failed with -1" -> segfault on some librtlsdr
         # versions.  Instead, we simply signal the stop event and let the
         # background thread finish its current read_bytes() call naturally
         # (at most one sync + one target block, ~64 ms at 2.048 MSPS).
@@ -296,7 +296,7 @@ class FreqHopReceiver(SDRReceiver):
         Blocks are placed on an internal queue by the background read loop.
         Each iq_buf has usable_samples(role) complex64 samples (settling
         transient already removed).  wall_ns is time.time_ns() captured
-        immediately after read_bytes() returned in the background thread —
+        immediately after read_bytes() returned in the background thread --
         use it directly as buf_wall_ns for onset_time_ns computation.
 
         Buffers whose age exceeds half a block duration are silently discarded
@@ -317,7 +317,7 @@ class FreqHopReceiver(SDRReceiver):
                 role, raw, wall_ns = self._queue.get(timeout=self._STALL_TIMEOUT_S)
             except queue.Empty:
                 logger.error(
-                    "FreqHop stalled — no data for %.0f s (USB error or device hang?); "
+                    "FreqHop stalled - no data for %.0f s (USB error or device hang?); "
                     "exiting stream",
                     self._STALL_TIMEOUT_S,
                 )
@@ -362,7 +362,7 @@ class FreqHopReceiver(SDRReceiver):
 
         read_bytes(n) blocks until n bytes arrive, then returns.  At that point
         no async loop is running, so sdr.center_freq assignment (a USB control
-        transfer) is safe — no LIBUSB_ERROR_BUSY re-entrancy issue.
+        transfer) is safe - no LIBUSB_ERROR_BUSY re-entrancy issue.
         """
         sdr = self._sdr
         if sdr is None:
@@ -384,7 +384,7 @@ class FreqHopReceiver(SDRReceiver):
             if self._stop_event.is_set():
                 return
 
-            # Switch to target frequency — safe here (outside async callback)
+            # Switch to target frequency - safe here (outside async callback)
             sdr.center_freq = int(self._config.center_frequency_hz)  # type: ignore[union-attr]
 
             # --- Target block ---

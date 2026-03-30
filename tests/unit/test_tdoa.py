@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for beagle_server/tdoa.py."""
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def _make_am_carrier(n_samples: int, rng: np.random.Generator, am_smooth: int = 
     """
     QPSK carrier with slowly-varying AM envelope.
 
-    Pure QPSK has constant instantaneous power (|s[n]|² = 1), making
+    Pure QPSK has constant instantaneous power (|s[n]|^2 = 1), making
     power-envelope xcorr insensitive to timing offsets.  The AM envelope
     gives the power envelope texture needed for xcorr to resolve offsets.
     """
@@ -128,12 +128,12 @@ def _make_plateau_iq(
     event_type: str = "onset",
 ) -> np.ndarray:
     """
-    Synthetic IQ snippet with noise → ramp → plateau (onset) structure.
+    Synthetic IQ snippet with noise -> ramp -> plateau (onset) structure.
 
     Uses a QPSK carrier (constant instantaneous power = 1) for reliable
     plateau detection at typical SNR values.
 
-    For event_type="offset": the envelope is reversed (plateau → ramp-down → noise).
+    For event_type="offset": the envelope is reversed (plateau -> ramp-down -> noise).
     """
     rng = np.random.default_rng(seed)
     snr_linear = 10.0 ** (snr_db / 10.0)
@@ -164,7 +164,7 @@ def _make_plateau_iq(
 
 def _make_plateau_pair_iq(
     n_samples: int = 1280,
-    onset_sample: int = 320,  # 1/4 of n_samples — matches real snippet encoder
+    onset_sample: int = 320,  # 1/4 of n_samples - matches real snippet encoder
     ramp_samples: int = 8,
     prop_delay_samples: int = 10,
     snr_db: float = 30.0,
@@ -190,7 +190,7 @@ def _make_plateau_pair_iq(
     # B's window covers [0:n_samples]; A's window covers [prop_delay:prop_delay+n_samples].
     # A's ring buffer started prop_delay_samples later in wall-clock time, so the
     # PA onset (at physical position onset_sample) appears at position
-    # onset_sample - prop_delay_samples in A's window — the TDOA is encoded in the
+    # onset_sample - prop_delay_samples in A's window - the TDOA is encoded in the
     # step function position, not just in the AM texture.
     total_len = n_samples + prop_delay_samples
     carrier_ext = _make_am_carrier(total_len, rng)
@@ -287,7 +287,7 @@ def _make_snippet_b64(n_samples: int = 640, lag_samples: int = 0, seed: int = 42
 def test_compute_tdoa_equidistant_nodes_same_delta():
     """
     Two nodes equidistant from sync_tx with identical snippets (xcorr lag = 0)
-    → TDOA ~= 0 (path correction ~= 0 for equidistant nodes).
+    -> TDOA ~= 0 (path correction ~= 0 for equidistant nodes).
     """
     iq = _make_plateau_iq()
     snip = _iq_to_b64(iq)
@@ -303,7 +303,7 @@ def test_compute_tdoa_equidistant_nodes_same_delta():
 def test_compute_tdoa_known_geometry():
     """
     sync_delta subtraction with known geometry gives correct TDOA.
-    sync_tx equidistant from both nodes → path correction ≈ 0.
+    sync_tx equidistant from both nodes -> path correction ~ 0.
     """
     fs = 64_000.0
     prop_delay = 10
@@ -316,7 +316,7 @@ def test_compute_tdoa_known_geometry():
     tdoa = compute_tdoa_s(ev_a, ev_b)
     expected_s = prop_delay / fs  # positive = A later
     assert tdoa is not None
-    assert abs(tdoa - expected_s) < 50e-6  # within 50 µs
+    assert abs(tdoa - expected_s) < 50e-6  # within 50 usec
 
 
 def test_compute_tdoa_antisymmetric():
@@ -332,7 +332,7 @@ def test_compute_tdoa_antisymmetric():
 def test_compute_tdoa_path_delay_applied():
     """
     Both nodes have same sync_delta (raw_ns=0); node_A far from sync_tx.
-    TDOA comes entirely from path-delay correction: +30km/c ≈ +100 µs.
+    TDOA comes entirely from path-delay correction: +30km/c ~ +100 usec.
     No IQ snippets: xcorr does not fire; result uses sync_delta fallback.
     """
     d_30km_deg = 30_000 / 111_195
@@ -345,7 +345,7 @@ def test_compute_tdoa_path_delay_applied():
 
 
 # ---------------------------------------------------------------------------
-# compute_tdoa_s -- xcorr primary path
+# compute_tdoa_s - xcorr primary path
 # ---------------------------------------------------------------------------
 
 def test_compute_tdoa_xcorr_preferred_over_sync_delta():
@@ -353,7 +353,7 @@ def test_compute_tdoa_xcorr_preferred_over_sync_delta():
     When IQ snippets are present and xcorr SNR is sufficient, the xcorr lag
     is returned rather than sync_delta.
 
-    Node pair with a known 10-sample propagation delay (~156 µs at 64 kHz).
+    Node pair with a known 10-sample propagation delay (~156 usec at 64 kHz).
     The sync_delta values are deliberately set to 0 for both nodes, so if
     sync_delta were used the result would be 0; xcorr must give the non-zero lag.
     """
@@ -368,19 +368,19 @@ def test_compute_tdoa_xcorr_preferred_over_sync_delta():
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
     assert abs(tdoa) > 1e-9, "Expected non-zero xcorr lag; sync_delta fallback may have fired"
-    assert abs(tdoa - expected_s) < 50e-6  # within 50 µs of true propagation delay
+    assert abs(tdoa - expected_s) < 50e-6  # within 50 usec of true propagation delay
 
 
 def test_compute_tdoa_xcorr_falls_back_on_low_snr():
     """
     When xcorr SNR is below min_xcorr_snr, the sync_delta fallback is used.
 
-    Both events carry a pure noise snippet (no carrier structure → very low
+    Both events carry a pure noise snippet (no carrier structure -> very low
     xcorr SNR) and different sync_delta values.  The result should equal the
     sync_delta difference, not the xcorr lag.
     """
     rng = np.random.default_rng(99)
-    # Pure white noise — no amplitude edge → power-envelope xcorr SNR ≈ 1
+    # Pure white noise - no amplitude edge -> power-envelope xcorr SNR ~ 1
     noise_a = (rng.standard_normal(1280) + 1j * rng.standard_normal(1280)).astype(np.complex64)
     noise_b = (rng.standard_normal(1280) + 1j * rng.standard_normal(1280)).astype(np.complex64)
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=5_000,
@@ -389,7 +389,7 @@ def test_compute_tdoa_xcorr_falls_back_on_low_snr():
                                      snippet_b64=_iq_to_b64(noise_b), node_id="node-b")
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.5)
     assert tdoa is not None
-    # sync_delta fallback: 5000 ns − 0 + path_correction ≈ 5 µs (nodes co-located)
+    # sync_delta fallback: 5000 ns - 0 + path_correction ~ 5 usec (nodes co-located)
     assert tdoa == pytest.approx(5_000 / 1e9, abs=1e-6)
 
 
@@ -399,7 +399,7 @@ def test_compute_tdoa_xcorr_geo_filter_rejects_implausible_lag():
 
     A strong carrier edge on snippet A but flat noise on snippet B produces a
     high-SNR xcorr peak at a large random lag (no true TDOA).  With a tight
-    max_xcorr_baseline_km (1 km → max TDOA ≈ 3.3 µs), the lag is rejected and
+    max_xcorr_baseline_km (1 km -> max TDOA ~ 3.3 usec), the lag is rejected and
     sync_delta is used instead.
     """
     rng = np.random.default_rng(42)
@@ -409,7 +409,7 @@ def test_compute_tdoa_xcorr_geo_filter_rejects_implausible_lag():
     carrier_a = (rng.standard_normal(n // 2) + 1j * rng.standard_normal(n // 2)).astype(np.complex64) * 100
     noise_a   = (rng.standard_normal(n // 2) + 1j * rng.standard_normal(n // 2)).astype(np.complex64)
     iq_a = np.concatenate([carrier_a, noise_a])
-    # snippet_b: pure noise — no PA edge, so xcorr SNR will be high but lag random
+    # snippet_b: pure noise - no PA edge, so xcorr SNR will be high but lag random
     iq_b = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64) * 50
 
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=7_000,
@@ -419,11 +419,11 @@ def test_compute_tdoa_xcorr_geo_filter_rejects_implausible_lag():
                                      snippet_b64=_iq_to_b64(iq_b), sample_rate_hz=fs,
                                      node_id="node-b", event_type="offset")
 
-    # Tight baseline: 1 km → max TDOA ≈ 3.3 µs.  Any genuine xcorr lag from
+    # Tight baseline: 1 km -> max TDOA ~ 3.3 usec.  Any genuine xcorr lag from
     # mismatched snippets will exceed this, so geo filter must reject it.
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3, max_xcorr_baseline_km=1.0)
     assert tdoa is not None
-    # Must have fallen back to sync_delta (7000 ns − 0, nodes co-located)
+    # Must have fallen back to sync_delta (7000 ns - 0, nodes co-located)
     assert tdoa == pytest.approx(7_000 / 1e9, abs=1e-6), (
         "Expected sync_delta fallback; geo filter may not have fired"
     )
@@ -433,11 +433,11 @@ def test_compute_tdoa_xcorr_geo_filter_accepts_plausible_lag():
     """
     xcorr lag within the geometric plausibility limit is accepted.
 
-    10-sample prop delay at 64 kHz ≈ 156 µs.  With max_xcorr_baseline_km=100
-    (max TDOA ≈ 333 µs), the lag is within bounds and xcorr result is used.
+    10-sample prop delay at 64 kHz ~ 156 usec.  With max_xcorr_baseline_km=100
+    (max TDOA ~ 333 usec), the lag is within bounds and xcorr result is used.
     """
     fs = 64_000.0
-    prop_delay = 10  # ≈ 156 µs
+    prop_delay = 10  # ~ 156 usec
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
                                      sample_rate_hz=fs, node_id="node-a")
@@ -446,12 +446,12 @@ def test_compute_tdoa_xcorr_geo_filter_accepts_plausible_lag():
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3, max_xcorr_baseline_km=100.0)
     assert tdoa is not None
     assert abs(tdoa) > 1e-9, "Expected non-zero xcorr lag; sync_delta fallback may have fired"
-    assert abs(tdoa - prop_delay / fs) < 50e-6  # within 50 µs of true delay
+    assert abs(tdoa - prop_delay / fs) < 50e-6  # within 50 usec of true delay
 
 
 def test_compute_tdoa_colocated_xcorr_near_zero():
     """
-    Co-located nodes receiving the same transmission produce xcorr TDOA ≈ 0.
+    Co-located nodes receiving the same transmission produce xcorr TDOA ~ 0.
     This mirrors the co-located calibration scenario and validates that xcorr
     does not introduce spurious bias.
     """
@@ -462,11 +462,11 @@ def test_compute_tdoa_colocated_xcorr_near_zero():
                                      node_id="node-b")
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
-    assert abs(tdoa) < 1e-4  # < 100 µs (one-sample at 64 kHz)
+    assert abs(tdoa) < 1e-4  # < 100 usec (one-sample at 64 kHz)
 
 
 # ---------------------------------------------------------------------------
-# compute_tdoa_s -- sync_delta subtraction
+# compute_tdoa_s - sync_delta subtraction
 # ---------------------------------------------------------------------------
 
 def test_compute_tdoa_sync_delta_difference():
@@ -479,7 +479,7 @@ def test_compute_tdoa_sync_delta_difference():
     ev_b = _make_event(47.6, -122.3, sync_delta_ns=500_000_000)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
-    assert tdoa == pytest.approx(5_000 / 1e9, abs=1e-12)  # 5 µs
+    assert tdoa == pytest.approx(5_000 / 1e9, abs=1e-12)  # 5 usec
 
 
 def test_compute_tdoa_returns_none_when_sync_delta_missing():
@@ -492,7 +492,7 @@ def test_compute_tdoa_returns_none_when_sync_delta_missing():
 
 
 # ---------------------------------------------------------------------------
-# compute_tdoa_s -- pilot sync event disambiguation
+# compute_tdoa_s - pilot sync event disambiguation
 # ---------------------------------------------------------------------------
 
 def _make_event_with_onset_time(node_lat, node_lon, sync_delta_ns, onset_time_ns,
@@ -516,9 +516,9 @@ _T_SYNC_NS = 7_000_000   # must match tdoa.py constant
 def test_pilot_disambiguation_no_adjustment_needed():
     """
     Both nodes used the same pilot pulse (raw_ns within T_sync/2 of onset_diff).
-    No adjustment should be applied; TDOA equals the raw 5 µs difference.
+    No adjustment should be applied; TDOA equals the raw 5 usec difference.
     """
-    # onset_time_ns identical → onset_diff = 0; raw_ns = 5_000 → n = 0
+    # onset_time_ns identical -> onset_diff = 0; raw_ns = 5_000 -> n = 0
     t0 = 1_700_000_000_000_000_000  # arbitrary epoch ns
     ev_a = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=5_005_000, onset_time_ns=t0 + 5_000)
     ev_b = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=5_000_000, onset_time_ns=t0)
@@ -530,13 +530,13 @@ def test_pilot_disambiguation_no_adjustment_needed():
 def test_pilot_disambiguation_corrects_one_period_offset():
     """
     Node B used the pilot pulse one T_sync later than node A.
-    raw_ns = true_TDOA − T_sync (≈ −6.995 ms); disambiguation adds +T_sync.
+    raw_ns = true_TDOA - T_sync (~ -6.995 ms); disambiguation adds +T_sync.
     """
-    true_tdoa_ns = 5_000  # 5 µs — the real propagation-delay difference
+    true_tdoa_ns = 5_000  # 5 usec - the real propagation-delay difference
     t0 = 1_700_000_000_000_000_000
     # Node A: sync_delta = 6_000_000; Node B: used a pilot T_sync later,
-    # so its sync_delta = 6_000_000 + true_tdoa − T_sync = 6_000_000 + 5_000 − 7_000_000
-    raw_ns = true_tdoa_ns - _T_SYNC_NS           # = −6_995_000 ns (without fix)
+    # so its sync_delta = 6_000_000 + true_tdoa - T_sync = 6_000_000 + 5_000 - 7_000_000
+    raw_ns = true_tdoa_ns - _T_SYNC_NS           # = -6_995_000 ns (without fix)
     sync_delta_a = 6_000_000
     sync_delta_b = sync_delta_a - raw_ns         # = 13_000_000 (> T_sync, but only after wrap)
     # Onset times: nearly equal for co-located nodes, difference = true_tdoa_ns
@@ -551,14 +551,14 @@ def test_pilot_disambiguation_corrects_one_period_offset():
 
 def test_pilot_disambiguation_works_without_onset_time():
     """
-    Geometric disambiguation resolves n from path geometry alone — onset_time_ns
-    is not required.  raw_ns = true_TDOA − T_sync is corrected to true_TDOA.
+    Geometric disambiguation resolves n from path geometry alone - onset_time_ns
+    is not required.  raw_ns = true_TDOA - T_sync is corrected to true_TDOA.
 
-    Rationale: |true_TDOA| ≤ dist(A,B)/c ≤ 100 km/c ≈ 333 µs << T_sync/2 = 3.5 ms,
+    Rationale: |true_TDOA| <= dist(A,B)/c <= 100 km/c ~ 333 usec << T_sync/2 = 3.5 ms,
     so round((raw_ns + correction) / T_sync) uniquely identifies n without any
     wall-clock comparison.
     """
-    true_tdoa_ns = 5_000  # 5 µs
+    true_tdoa_ns = 5_000  # 5 usec
     sync_delta_a = 6_000_000
     sync_delta_b = sync_delta_a - (true_tdoa_ns - _T_SYNC_NS)  # raw_ns = -6_995_000
     ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
@@ -571,7 +571,7 @@ def test_pilot_disambiguation_works_without_onset_time():
 
 def test_pilot_disambiguation_n_zero():
     """n=0: nodes locked to the same pilot cycle; raw_ns is already correct."""
-    true_tdoa_ns = 200_000   # 200 µs — within one pilot period
+    true_tdoa_ns = 200_000   # 200 usec - within one pilot period
     sync_delta_a = 3_000_000
     sync_delta_b = sync_delta_a - true_tdoa_ns  # raw_ns = +200_000
     ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
@@ -584,11 +584,11 @@ def test_pilot_disambiguation_n_zero():
 def test_pilot_disambiguation_n_plus_one():
     """
     n=+1: node A locked to a pilot cycle one T_sync *earlier* than node B.
-    raw_ns = true_TDOA + T_sync ≈ +7 ms; disambiguation subtracts T_sync.
+    raw_ns = true_TDOA + T_sync ~ +7 ms; disambiguation subtracts T_sync.
     """
-    true_tdoa_ns = 150_000   # 150 µs
+    true_tdoa_ns = 150_000   # 150 usec
     sync_delta_a = 2_000_000
-    sync_delta_b = sync_delta_a - (true_tdoa_ns + _T_SYNC_NS)  # raw = -6_850_000 → n=-1?
+    sync_delta_b = sync_delta_a - (true_tdoa_ns + _T_SYNC_NS)  # raw = -6_850_000 -> n=-1?
     # Construct n=+1 case: raw_ns = true_tdoa + T_sync
     raw_ns = true_tdoa_ns + _T_SYNC_NS        # = +7_150_000 ns
     sync_delta_a2 = 5_000_000
@@ -602,10 +602,10 @@ def test_pilot_disambiguation_n_plus_one():
 
 def test_pilot_disambiguation_n_minus_one():
     """
-    n=−1: node A locked to a pilot cycle one T_sync *later* than node B.
-    raw_ns = true_TDOA − T_sync ≈ −7 ms; disambiguation adds T_sync.
+    n=-1: node A locked to a pilot cycle one T_sync *later* than node B.
+    raw_ns = true_TDOA - T_sync ~ -7 ms; disambiguation adds T_sync.
     """
-    true_tdoa_ns = 150_000   # 150 µs
+    true_tdoa_ns = 150_000   # 150 usec
     raw_ns = true_tdoa_ns - _T_SYNC_NS        # = -6_850_000 ns
     sync_delta_a = 5_000_000
     sync_delta_b = sync_delta_a - raw_ns      # = 11_850_000
@@ -618,8 +618,8 @@ def test_pilot_disambiguation_n_minus_one():
 
 def test_pilot_disambiguation_large_tdoa_within_half_period():
     """
-    A true TDOA near ±T_sync/2 but still within it (n=0) is left unchanged.
-    raw_ns = −3_400_000 ns: |raw| < T_sync/2 = 3_500_000 → n=0, no adjustment.
+    A true TDOA near +/-T_sync/2 but still within it (n=0) is left unchanged.
+    raw_ns = -3_400_000 ns: |raw| < T_sync/2 = 3_500_000 -> n=0, no adjustment.
     """
     true_tdoa_ns = -3_400_000
     sync_delta_a = 1_000_000

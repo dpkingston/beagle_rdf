@@ -1,6 +1,6 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-Integration test for main.py -- runs the node in --mock mode.
+Integration test for main.py - runs the node in --mock mode.
 
 Uses a short mock duration and a mock HTTP server so no real SDR or
 network is needed.

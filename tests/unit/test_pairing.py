@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for beagle_server/pairing.py."""
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _null_cb():
 
 
 # ---------------------------------------------------------------------------
-# Base key bucketing (synchronous -- test _base_key directly)
+# Base key bucketing (synchronous - test _base_key directly)
 # ---------------------------------------------------------------------------
 
 def test_same_channel_same_bucket():
@@ -153,7 +153,7 @@ async def test_duplicate_event_id_not_double_counted():
     pairer = EventPairer(cb, delivery_buffer_s=0.01, min_nodes=2)
     # Node A reports 500 ms + 100 ns after its FM sync event, then amends to +200 ns.
     # Node B independently heard the same LMR onset at 500 ms + 0 ns.
-    # All three events have T_sync within ~200 ns of each other -- same group.
+    # All three events have T_sync within ~200 ns of each other - same group.
     await pairer.add_event(make_event("A", event_id="same-id", sync_delta_ns=500_000_100))
     await pairer.add_event(make_event("A", event_id="same-id", sync_delta_ns=500_000_200))  # amendment
     await pairer.add_event(make_event("B", event_id="b-id", sync_delta_ns=500_000_000))
@@ -204,7 +204,7 @@ async def test_rapid_keyups_produce_separate_groups():
     treated as separate events and produce two independent fix groups.
 
     With the T_sync grouping, the two transmissions have T_sync values 500 ms
-    apart -- well outside the 200 ms correlation window -- so they go into
+    apart - well outside the 200 ms correlation window - so they go into
     different buckets and fire separately.
     """
     received_groups: list[list] = []
@@ -221,7 +221,7 @@ async def test_rapid_keyups_produce_separate_groups():
     await pairer.add_event(make_event("B", event_id="t1-b",
                                      onset_time_ns=_NOW_NS, sync_delta_ns=500_000_000))
 
-    # Transmission 2: 500 ms later -- different T_sync, goes to a different bucket
+    # Transmission 2: 500 ms later - different T_sync, goes to a different bucket
     onset2 = _NOW_NS + 500_000_000  # 500 ms later
     await pairer.add_event(make_event("A", event_id="t2-a",
                                      onset_time_ns=onset2, sync_delta_ns=500_000_000))
@@ -239,13 +239,13 @@ async def test_rapid_keyups_produce_separate_groups():
 async def test_freq_hop_sync_delta_groups_with_rspduo():
     """
     A freq_hop node (sync_delta spanning multiple 7 ms sync periods) must
-    group with an RSPduo node (sync_delta 0–7 ms) for the same transmission.
+    group with an RSPduo node (sync_delta 0-7 ms) for the same transmission.
 
     freq_hop sync_delta = 32_600_000 ns (32.6 ms = 4 full periods + 4.6 ms)
     RSPduo  sync_delta =  4_600_000 ns (4.6 ms = within one period)
 
     After mod-7ms reduction both become ~4.6 ms, so T_sync values match.
-    Without the reduction, T_sync would differ by 28 ms (4 × 7 ms) and
+    Without the reduction, T_sync would differ by 28 ms (4 x 7 ms) and
     might or might not pair depending on the correlation window.
     """
     received_groups: list[list] = []
@@ -254,7 +254,7 @@ async def test_freq_hop_sync_delta_groups_with_rspduo():
         received_groups.append(events)
 
     # Use a tight window (20 ms half-window) to prove the mod reduction
-    # is working — without it, the 28 ms T_sync offset would exceed
+    # is working - without it, the 28 ms T_sync offset would exceed
     # the half-window and the events would land in separate groups.
     pairer = EventPairer(cb, delivery_buffer_s=0.01, correlation_window_s=0.04,
                          min_nodes=2)
@@ -280,20 +280,20 @@ async def test_freq_hop_sync_delta_groups_with_rspduo():
 async def test_cross_node_clock_offset_paired_via_pilot_disambiguation():
     """
     A freq_hop node (accurate NTP) and an RSPduo node whose HAS_TIME anchor
-    was captured when NTP was ~315 ms ahead (45 × 7 ms) must be grouped for
+    was captured when NTP was ~315 ms ahead (45 x 7 ms) must be grouped for
     the same transmission via pilot-period disambiguation.
 
-    After sync_delta mod-7ms reduction the T_sync values differ by ~315 ms —
-    outside the 250 ms half-window for direct matching — but are within 3.5 ms
-    of 45 × 7 ms, so disambiguation succeeds.
+    After sync_delta mod-7ms reduction the T_sync values differ by ~315 ms --
+    outside the 250 ms half-window for direct matching - but are within 3.5 ms
+    of 45 x 7 ms, so disambiguation succeeds.
 
-    freq_hop  sync_delta = 32_600_000 ns  →  reduced = 4_600_000 ns (4.6 ms)
-    RSPduo    sync_delta =  5_000_000 ns  →  reduced = 5_000_000 ns (5.0 ms)
-    RSPduo clock offset  = +315_000_000 ns  (= 45 × 7_000_000 ns exactly)
+    freq_hop  sync_delta = 32_600_000 ns  ->  reduced = 4_600_000 ns (4.6 ms)
+    RSPduo    sync_delta =  5_000_000 ns  ->  reduced = 5_000_000 ns (5.0 ms)
+    RSPduo clock offset  = +315_000_000 ns  (= 45 x 7_000_000 ns exactly)
 
     Expected T_sync delta = 315_000_000 - (5_000_000 - 4_600_000)
-                           = 314_600_000 ns  ≈ 314.6 ms
-    n = round(314.6 / 7) = 45,  residual = |314.6 - 315| = 0.4 ms  ✓
+                           = 314_600_000 ns  ~ 314.6 ms
+    n = round(314.6 / 7) = 45,  residual = |314.6 - 315| = 0.4 ms  OK
     """
     received_groups: list[list] = []
 
@@ -316,7 +316,7 @@ async def test_cross_node_clock_offset_paired_via_pilot_disambiguation():
 
     assert len(received_groups) == 1, (
         f"Expected 1 merged group (freq_hop + RSPduo with ~315 ms clock offset "
-        f"= 45×7ms, should pair via pilot disambiguation); got {len(received_groups)}"
+        f"= 45x7ms, should pair via pilot disambiguation); got {len(received_groups)}"
     )
     node_ids = {e["node_id"] for e in received_groups[0]}
     assert node_ids == {"rtlsdr-server", "rspduo-node"}
@@ -325,7 +325,7 @@ async def test_cross_node_clock_offset_paired_via_pilot_disambiguation():
 @pytest.mark.asyncio
 async def test_same_node_rapid_keyups_not_merged_by_disambiguation():
     """
-    Two transmissions 497 ms apart (≈ 71 × 7 ms) on the same node must NOT
+    Two transmissions 497 ms apart (~ 71 x 7 ms) on the same node must NOT
     be falsely merged by pilot-period disambiguation.
 
     Without the per-node guard, round(497/7) = 71, residual = 0 ms < half-window,
@@ -348,7 +348,7 @@ async def test_same_node_rapid_keyups_not_merged_by_disambiguation():
                                       onset_time_ns=_NOW_NS,
                                       sync_delta_ns=500_000_000))
 
-    # Transmission 2: 497 ms later — exactly 71 × 7 ms, so disambiguation
+    # Transmission 2: 497 ms later - exactly 71 x 7 ms, so disambiguation
     # residual = 0 ms, but same-node guard must block the merge.
     await pairer.add_event(make_event("A", event_id="t2-A",
                                       onset_time_ns=_NOW_NS + 497_000_000,
@@ -385,7 +385,7 @@ async def test_tsync_near_boundary_merged_into_one_group():
     async def cb(events):
         received_groups.append(events)
 
-    # Half-window = 100 ms.  T_sync spread = 80 ms → must merge.
+    # Half-window = 100 ms.  T_sync spread = 80 ms -> must merge.
     pairer = EventPairer(cb, delivery_buffer_s=0.01, correlation_window_s=0.2, min_nodes=2)
 
     # All make_event() calls use identical node/sync_tx positions, so

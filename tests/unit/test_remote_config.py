@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Unit tests for beagle_node.config.remote (BootstrapConfig, load_bootstrap,
 RemoteConfigFetcher) and the _verify_secret_hash helper in beagle_server.api.
@@ -354,7 +354,7 @@ def test_fetch_initial_config_writes_cache_on_success(httpx_mock, tmp_path: Path
 
 
 def test_fetch_initial_config_falls_back_to_cache(httpx_mock, tmp_path: Path) -> None:
-    """Server unreachable → falls back to a pre-existing cache file."""
+    """Server unreachable -> falls back to a pre-existing cache file."""
     cache_path = str(tmp_path / "config.json")
     # Pre-populate the cache
     bs = _make_bootstrap(config_cache_path=cache_path)
@@ -371,7 +371,7 @@ def test_fetch_initial_config_falls_back_to_cache(httpx_mock, tmp_path: Path) ->
 def test_fetch_initial_config_raises_when_no_server_no_cache(
     httpx_mock, tmp_path: Path
 ) -> None:
-    """Neither server nor cache → RuntimeError."""
+    """Neither server nor cache -> RuntimeError."""
     httpx_mock.add_exception(httpx.ConnectError("connection refused"))
     bs = _make_bootstrap(config_cache_path=str(tmp_path / "config.json"))
     with pytest.raises(RuntimeError, match="Cannot reach server"):

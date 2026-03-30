@@ -1,6 +1,6 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-SDR abstraction layer -- base classes.
+SDR abstraction layer - base classes.
 
 All hardware-specific code implements SDRReceiver. The rest of the codebase
 never imports SoapySDR or librtlsdr directly.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Export paired measurement fixtures from the aggregation server SQLite database.
 
@@ -182,7 +182,7 @@ def _parse_time(s: str) -> int:
         return int(float(s) * 1_000_000_000)
     except ValueError:
         pass
-    # ISO 8601 (no timezone → assume local; with Z or +hh:mm → use as given)
+    # ISO 8601 (no timezone -> assume local; with Z or +hh:mm -> use as given)
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
@@ -239,7 +239,7 @@ def main() -> None:
 
     window_desc = (
         f"{_fmt_ns(start_ns) if start_ns else 'epoch'}"
-        f"–{_fmt_ns(stop_ns) if stop_ns else 'now'}"
+        f"-{_fmt_ns(stop_ns) if stop_ns else 'now'}"
     )
 
     print(f"DB:          {args.db}")

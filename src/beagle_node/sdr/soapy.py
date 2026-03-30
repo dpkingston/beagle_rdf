@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 SoapySDR-based SDRReceiver implementation.
 
@@ -28,7 +28,7 @@ from beagle_node.sdr.base import SDRConfig, SDRReceiver
 
 logger = logging.getLogger(__name__)
 
-# Lazy import -- SoapySDR is a system library, not in pyproject.toml deps
+# Lazy import - SoapySDR is a system library, not in pyproject.toml deps
 try:
     import SoapySDR as _SoapySDR  # noqa: N813
     _SOAPY_AVAILABLE = True

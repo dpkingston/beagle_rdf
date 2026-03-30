@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 FM stereo pilot (19 kHz) sync event detector with crystal calibration.
 
@@ -9,7 +9,7 @@ FMPilotSyncDetector.process(audio, start_sample)
   2. Extract pilot via cross-correlation with complex exponential template.
   3. Sub-sample timing: use np.angle(corr) (pilot phase at window start) to
      locate the nearest 19 kHz zero-crossing within the window, replacing the
-     coarse window-centre estimate (±3.5 ms) with ~1–2 µs precision.
+     coarse window-centre estimate (+/-3.5 ms) with ~1-2 usec precision.
   4. Feed measured pilot phase into CrystalCalibrator.
   5. Emit SyncEvent with corr_peak and sample_rate_correction.
 
@@ -34,7 +34,7 @@ import numpy as np
 from scipy.signal import firwin, lfilter
 
 
-PILOT_FREQ_HZ = 19_000.0   # FM stereo pilot -- locked to station frequency standard
+PILOT_FREQ_HZ = 19_000.0   # FM stereo pilot - locked to station frequency standard
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,7 @@ class CrystalCalibrator:
         if self._prev_phase is not None:
             measured = pilot_phase_rad - self._prev_phase
             # Wrap to (-pi, +3pi) to handle one expected advance of ~380pi per 10 ms
-            # -- actually the advance is large; just take the raw difference
+            # - actually the advance is large; just take the raw difference
             correction = measured / self._expected_advance
             # Sanity-clamp: RTL-SDR crystals are < 200 ppm off, so correction
             # should be between 0.9999 and 1.0001
@@ -233,7 +233,7 @@ class FMPilotSyncDetector:
         else:
             expected_next = self._next_start_sample + self._buf_samples
             if start_sample > expected_next + self._period_samples:
-                # Gap detected -- discard stale buffer and reset filter state
+                # Gap detected - discard stale buffer and reset filter state
                 self._buf.clear()
                 self._buf_samples = 0
                 self._bpf_zi[:] = 0.0
@@ -320,21 +320,21 @@ class FMPilotSyncDetector:
 
         correction = self._calibrator.update(self._unwrapped_phase)
 
-        # Sub-sample timing: use the pilot phase at the window start (φ₀ = np.angle(corr))
+        # Sub-sample timing: use the pilot phase at the window start (phi_0 = np.angle(corr))
         # to locate the nearest 19 kHz zero-crossing, replacing the coarse window-centre
-        # estimate (±period/2 = ±3.5 ms) with ~1–2 µs precision.
+        # estimate (+/-period/2 = +/-3.5 ms) with ~1-2 usec precision.
         #
-        # The template is exp(j·2π·19000·k/rate) starting at k=0, so np.angle(corr) gives
+        # The template is exp(j*2pi*19000*k/rate) starting at k=0, so np.angle(corr) gives
         # the pilot phase at window_start_sample.  We propagate it to the window centre,
         # then solve for the nearest zero-crossing offset.
         import math as _math
         _phase_per_sample = 2.0 * _math.pi * PILOT_FREQ_HZ / self._rate
         _center = window_start_sample + self._period_samples // 2
         _phase_at_center = pilot_phase + _phase_per_sample * (self._period_samples // 2)
-        # Wrap to [-π, π]
+        # Wrap to [-pi, pi]
         _phase_at_center = (_phase_at_center + _math.pi) % (2.0 * _math.pi) - _math.pi
         # Offset (in samples) from centre to nearest zero-crossing
-        _pilot_period = self._rate / PILOT_FREQ_HZ          # ≈13.47 samples at 256 kHz
+        _pilot_period = self._rate / PILOT_FREQ_HZ          # ~13.47 samples at 256 kHz
         _half_period  = _pilot_period / 2.0
         _offset = -_phase_at_center / _phase_per_sample
         _offset = (_offset + _half_period) % _pilot_period - _half_period

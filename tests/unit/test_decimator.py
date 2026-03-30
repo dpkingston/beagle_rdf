@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """Unit tests for pipeline/decimator.py."""
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def test_output_length_exact_multiple():
 
 
 def test_output_length_non_multiple():
-    """Input length not a multiple of decimation -- extra samples consumed."""
+    """Input length not a multiple of decimation - extra samples consumed."""
     dec = Decimator(DECIM, INPUT_RATE, CUTOFF)
     iq = np.zeros(8195, dtype=np.complex64)   # 8195 // 8 = 1024
     out = dec.process(iq)

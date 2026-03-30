@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 RSPduo dual-tuner receiver using SoapySDR Dual Tuner (DT) mode.
 
@@ -33,8 +33,8 @@ RSPduoReceiver.open() opens the device directly with ``mode=DT``:
   dev = SoapySDR.Device('driver=sdrplay,mode=DT')
 
 The device exposes two channels with independent frequency and gain:
-  - Channel 0: Tuner 1 (sync channel  — FM broadcast)
-  - Channel 1: Tuner 2 (target channel — LMR)
+  - Channel 0: Tuner 1 (sync channel  - FM broadcast)
+  - Channel 1: Tuner 2 (target channel - LMR)
 
 Each channel has its own setSampleRate / setFrequency / setGain.
 SoapySDRPlay3 does not support a multi-channel [0, 1] setupStream on this
@@ -84,7 +84,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Lazy import -- SoapySDR is a system library, not in pyproject.toml deps
+# Lazy import - SoapySDR is a system library, not in pyproject.toml deps
 try:
     import SoapySDR as _SoapySDR  # noqa: N813
     _SOAPY_AVAILABLE = True
@@ -161,7 +161,7 @@ class RSPduoReceiver(SDRReceiver):
     # alternating-FIFO storm (sync and target swap roles on successive reinits)
     # inserts intermittent successes that keep resetting a consecutive counter
     # indefinitely.  Normal operation sees at most 1 timeout per ~12 minutes;
-    # a storm sees ~1 per second — the window easily distinguishes them.
+    # a storm sees ~1 per second - the window easily distinguishes them.
     # Exposed as class attributes so tests can override them.
     _TIMEOUT_WINDOW_SECS: float = 60.0    # rolling window length
     _TIMEOUT_WINDOW_MAX:  int   = 6       # max timeouts allowed in that window
@@ -355,13 +355,13 @@ class RSPduoReceiver(SDRReceiver):
         self._apply_gains(self._dev)
 
         self._is_open = True
-        logger.info("RSPduo open -- both tuners active (DT mode, independent tuning)")
+        logger.info("RSPduo open - both tuners active (DT mode, independent tuning)")
 
     def close(self) -> None:
         if not self._is_open:
             return
         # Signal the streaming loop to stop.  Do NOT deactivate/close streams
-        # here — readStream may be blocked in the C library on another thread,
+        # here - readStream may be blocked in the C library on another thread,
         # and closing the stream underneath it causes a use-after-free crash.
         # The streaming loop checks _is_open between reads and will call
         # _close_streams() after breaking out.
@@ -397,7 +397,7 @@ class RSPduoReceiver(SDRReceiver):
 
         Both buffers in each triple cover the same time window on the same
         shared ADC clock.  ``buf_wall_ns`` is the wall-clock time (``time.time_ns()``
-        epoch) at which the buffer pair was received from the driver FIFO — use it
+        epoch) at which the buffer pair was received from the driver FIFO - use it
         as the ``onset_time_ns`` reference rather than calling ``time.time_ns()``
         inside the callback, to avoid GIL scheduling latency.  If the driver sets
         ``SOAPY_SDR_HAS_TIME``, the hardware sample-counter timestamp is used
@@ -426,7 +426,7 @@ class RSPduoReceiver(SDRReceiver):
         #
         # When HAS_TIME is set, buf_wall_ns = timeNs (hardware timestamp of the
         # buffer's first sample). This timestamp is always accurate regardless
-        # of how many buffers are queued in the FIFO — a slow Pi may run 5+
+        # of how many buffers are queued in the FIFO - a slow Pi may run 5+
         # buffer periods behind real-time in steady state, but the timestamps
         # are still correct. The C driver flushes the FIFO on sdrplay_api
         # re-anchor, so post-reinit stale data never reaches here. Genuine
@@ -448,7 +448,7 @@ class RSPduoReceiver(SDRReceiver):
         # driver bug.  We detect this on the first bad buffer, compute a one-time
         # additive correction (corrected_ns = timeNs + _has_time_correction), and
         # re-sync it whenever the corrected value drifts > 5 s.  This preserves
-        # the TCXO counter's per-event relative accuracy (~µs) while keeping the
+        # the TCXO counter's per-event relative accuracy (~usec) while keeping the
         # absolute timestamp within NTP error of true wall-clock time.
         _has_time_correction: int | None = None  # None = not yet determined
         _has_time_warn_logged: bool = False
@@ -486,7 +486,7 @@ class RSPduoReceiver(SDRReceiver):
                 if not self._is_open:
                     break
 
-                # Time only the sync readStream — it is the blocking call.
+                # Time only the sync readStream - it is the blocking call.
                 # The target read always returns immediately because target data
                 # accumulates in the driver FIFO while the sync read waits.
                 _t0 = time.monotonic_ns()
@@ -498,13 +498,13 @@ class RSPduoReceiver(SDRReceiver):
 
                 # Wall-clock time at which this buffer pair was received from
                 # the driver FIFO.  If the driver provides a hardware timestamp
-                # (SOAPY_SDR_HAS_TIME), use it — it was captured by the C
+                # (SOAPY_SDR_HAS_TIME), use it - it was captured by the C
                 # callback thread at sample-arrival time, avoiding GIL latency
                 # and per-call NTP jitter.  Otherwise fall back to time.time_ns()
                 # recorded here (earlier than the callback, later than capture).
                 if sr_sync.flags & HAS_TIME:
                     # Use the driver's hardware timestamp when plausible.
-                    # Stale (past) timestamps are valid — the backlog drain
+                    # Stale (past) timestamps are valid - the backlog drain
                     # handles them.  A timestamp > 5 s in the future indicates
                     # a driver anchor bug; in that case apply a stored one-time
                     # correction so we still get TCXO relative accuracy rather
@@ -513,11 +513,11 @@ class RSPduoReceiver(SDRReceiver):
                     # repeated corruption), providing automatic re-sync.
                     _now = time.time_ns()
                     if sr_sync.timeNs <= _now + 5_000_000_000:
-                        # Plausible timestamp (present or past) — use directly.
+                        # Plausible timestamp (present or past) - use directly.
                         buf_wall_ns = sr_sync.timeNs
                         _has_time_correction = None   # driver healthy; reset
                     else:
-                        # Future timestamp — apply or (re-)compute correction.
+                        # Future timestamp - apply or (re-)compute correction.
                         if not _has_time_warn_logged:
                             logger.warning(
                                 "RSPduo HAS_TIME timestamp offset +%.3f s "
@@ -569,7 +569,7 @@ class RSPduoReceiver(SDRReceiver):
                 ):
                     logger.error(
                         "RSPduo HAS_TIME: implausible buf_wall_ns=%d "
-                        "(age %.0f s); driver produced bad timestamp — "
+                        "(age %.0f s); driver produced bad timestamp - "
                         "falling back to system clock and resetting correction",
                         buf_wall_ns,
                         (_now_check - buf_wall_ns) / 1e9,
@@ -600,7 +600,7 @@ class RSPduoReceiver(SDRReceiver):
                 # a fast readStream return signals a stale pre-filled FIFO slot.
                 # IMPORTANT: only classify as stale when sr_sync.ret > 0 (valid
                 # data returned).  A fast return with ret < 0 is a driver error
-                # (e.g. TIMEOUT from a broken stream after reopen) — it must fall
+                # (e.g. TIMEOUT from a broken stream after reopen) - it must fall
                 # through to the error handler below, not be silently drained.
                 # Without this guard, an instant-TIMEOUT loop after a reopen
                 # bypasses the error handler and spins at 100%+ CPU indefinitely.
@@ -715,7 +715,7 @@ class RSPduoReceiver(SDRReceiver):
                             if _restarts_without_recovery > self._MAX_RESTARTS_WITHOUT_RECOVERY:
                                 logger.error(
                                     "RSPduo readStream: %d consecutive reopens "
-                                    "with no successful buffers — sdrplay_api "
+                                    "with no successful buffers - sdrplay_api "
                                     "service may be down or broken after redeploy; "
                                     "exiting so systemd can restart the node",
                                     _restarts_without_recovery - 1,
@@ -755,7 +755,7 @@ class RSPduoReceiver(SDRReceiver):
                             continue
                         _timeout_log(
                             "RSPduo readStream timeout: sync=%d  target=%d "
-                            "(%d in %.0fs window) -- retrying",
+                            "(%d in %.0fs window) - retrying",
                             sr_sync.ret, sr_tgt.ret,
                             len(_timeout_times), self._TIMEOUT_WINDOW_SECS,
                         )
@@ -763,7 +763,7 @@ class RSPduoReceiver(SDRReceiver):
                     if sr_sync.ret == OVERFLOW or sr_tgt.ret == OVERFLOW:
                         self._overflow_count += 1
                         logger.warning(
-                            "RSPduo readStream overflow #%d: sync=%d  target=%d -- retrying",
+                            "RSPduo readStream overflow #%d: sync=%d  target=%d - retrying",
                             self._overflow_count, sr_sync.ret, sr_tgt.ret,
                         )
                         continue
@@ -816,7 +816,7 @@ class RSPduoReceiver(SDRReceiver):
             # SoapySDRPlay3's gain distribution, which can leave IFGR lower than
             # intended (more gain) when the unnamed setGain() is used.  For the
             # sync channel (ch0) this is critical: unnamed distribution resulted
-            # in IFGR≈25 (high IF gain) instead of the intended ≈59 (max attenuation),
+            # in IFGR~25 (high IF gain) instead of the intended ~59 (max attenuation),
             # risking TDM ADC saturation from the local FM station and corruption
             # of the interleaved ch1 (target) samples.
             ifgr = max(20, min(59, 79 - int(float(gain_db))))

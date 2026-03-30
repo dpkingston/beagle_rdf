@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Measure RTL-SDR tuner settling time after a frequency hop.
 
@@ -78,11 +78,11 @@ def _print_config_guidance(settling: int, sample_rate: float) -> None:
     print()
     print("Update config/node.yaml -> freq_hop section:")
     print(f"  freq_hop:")
-    print(f"    settling_samples: {S:<8}  # {S / sr * 1000:.0f} ms — discard per block after each hop")
+    print(f"    settling_samples: {S:<8}  # {S / sr * 1000:.0f} ms - discard per block after each hop")
     print()
     print("  samples_per_block must exceed settling_samples.  Usable = block_size - settling_samples")
     print("  (applied equally to sync and target).  NOTE: setting settling_samples > the current")
-    print("  samples_per_block will raise a ValueError at startup — increase both together.")
+    print("  samples_per_block will raise a ValueError at startup - increase both together.")
     print()
     print("  Symmetric mode (same block size for both sync and target channels):")
     print(f"  {'samples_per_block':<17}  {'block':>7}  {'usable/block':>12}  {'useful target':>13}  {'cycle':>8}")
@@ -92,7 +92,7 @@ def _print_config_guidance(settling: int, sample_rate: float) -> None:
         usable_ms = (blk - S) / sr * 1000
         cycle_ms = 2 * blk / sr * 1000
         useful_pct = (blk - S) / (2 * blk) * 100
-        tag = "  ← balanced" if factor == 2 else ""
+        tag = "  <- balanced" if factor == 2 else ""
         print(f"  {blk:<17,}  {blk/sr*1000:>5.0f} ms  {usable_ms:>10.0f} ms  {useful_pct:>12.0f}%  {cycle_ms:>6.0f} ms{tag}")
 
     # Asymmetric: sync = 2*S, target = 4*S
@@ -103,7 +103,7 @@ def _print_config_guidance(settling: int, sample_rate: float) -> None:
     cycle_ms = (sync_blk + tgt_blk) / sr * 1000
     tgt_useful_pct = (tgt_blk - S) / (sync_blk + tgt_blk) * 100
     print()
-    print("  Asymmetric mode (larger target block → more target coverage):")
+    print("  Asymmetric mode (larger target block -> more target coverage):")
     print(f"    samples_per_block:        {sync_blk:<8,}  "
           f"# sync   {sync_blk/sr*1000:.0f} ms/block, {sync_usable_ms:.0f} ms usable")
     print(f"    target_samples_per_block: {tgt_blk:<8,}  "
@@ -137,14 +137,14 @@ def main() -> int:
     actual_gain = sdr.getGain(SoapySDR.SOAPY_SDR_RX, 0)
 
     # SoapyRTLSDR buffer parameters (verified via sdr.getStreamArgsInfo()):
-    #   "asyncBuffs" -- USB async transfer buffer count for rtlsdr_read_async();
+    #   "asyncBuffs" - USB async transfer buffer count for rtlsdr_read_async();
     #                   default 15.  Printed as "Allocating N zero-copy buffers".
     #                   Setting this to 4 (matching the rtl_sdr_2freq binary)
     #                   causes stream stalls after frequency hops: the USB queue
     #                   runs dry during PLL re-acquisition.  Leave at default (15).
     #                   The binary estimate section compensates mathematically.
-    #   "buffers"    -- SoapyRTLSDR internal ring buffer count; default 15.
-    #   "bufflen"    -- bytes per buffer (multiple of 512 required).
+    #   "buffers"    - SoapyRTLSDR internal ring buffer count; default 15.
+    #   "bufflen"    - bytes per buffer (multiple of 512 required).
     #                   Note: "buflen" (no double-f) is silently ignored.
     stream_args: dict[str, str] = {}
     if args.buf_len > 0:
@@ -282,7 +282,7 @@ def main() -> int:
             "      R820T/2 IF amplifier saturates briefly when the PLL re-acquires the"
         )
         print(
-            "      target frequency — normal behaviour; the binary estimate below accounts for it."
+            "      target frequency - normal behaviour; the binary estimate below accounts for it."
         )
         print()
     if settling_sample is not None and post_settling_worst > args.tolerance_db:
@@ -291,7 +291,7 @@ def main() -> int:
             f" {args.tolerance_db:.0f} dB tolerance after the SETTLED marker."
         )
         print(
-            "      Expected: FM broadcast power varies ±3–5 dB with audio content."
+            "      Expected: FM broadcast power varies +/-3-5 dB with audio content."
         )
         print(
             "      The SETTLED marker shows the first window in tolerance; the binary"
@@ -358,7 +358,7 @@ def main() -> int:
         else:
             _print_config_guidance(recommended, args.rate)
     else:
-        print("Could not determine settling point -- signal may not have stabilised.")
+        print("Could not determine settling point - signal may not have stabilised.")
         print(f"Try increasing --capture (e.g. --capture {args.capture * 2}) or check antenna/gain.")
 
     return 0

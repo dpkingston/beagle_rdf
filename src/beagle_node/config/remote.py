@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
 Remote config fetcher for Beagle nodes.
 
@@ -299,7 +299,7 @@ class RemoteConfigFetcher:
         self._stop_event.wait(random.uniform(0, min(wait_s, 5)))
 
         while not self._stop_event.is_set():
-            # Add ±10% jitter to the long-poll wait so nodes desynchronize
+            # Add +/-10% jitter to the long-poll wait so nodes desynchronize
             jittered_wait = int(wait_s * random.uniform(0.9, 1.1))
             try:
                 new_config = self._fetch_poll(jittered_wait)
@@ -323,7 +323,7 @@ class RemoteConfigFetcher:
                     on_update(new_config)
                 except Exception as exc:
                     logger.error("Config update callback raised: %s", exc)
-            # else: 304 / no change — loop immediately for next long-poll
+            # else: 304 / no change - loop immediately for next long-poll
 
     def _save_cache(self, config: NodeConfig) -> None:
         """Write the config to the on-disk cache file."""

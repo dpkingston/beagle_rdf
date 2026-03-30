@@ -1,6 +1,6 @@
-# Copyright (c) 2026 Douglas P. Kingston III. MIT License — see LICENSE.
+# Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-NodePipeline -- wires all signal processing stages together.
+NodePipeline - wires all signal processing stages together.
 
 Data flow (freq_hop / same_sdr mode)
 -------------------------------------
@@ -83,9 +83,9 @@ class PipelineConfig:
     # min_release_windows after the signal first crosses offset_db; if the fade
     # is gradual the shutoff may be many windows back.  Setting this well above
     # snippet_samples / window_samples guarantees the shutoff is captured for
-    # any realistic fade.  Default: 3 × snippet windows (at 62.5 kHz with
-    # snippet=1280 and window=64: 3 × 20 = 60 windows = ~61 ms lookback).
-    # None → use 3× the snippet window count (same as the default).
+    # any realistic fade.  Default: 3 x snippet windows (at 62.5 kHz with
+    # snippet=1280 and window=64: 3 x 20 = 60 windows = ~61 ms lookback).
+    # None -> use 3x the snippet window count (same as the default).
     carrier_ring_lookback_windows: int | None = None
     # Minimum above-threshold windows since prime_state() before a CarrierOffset
     # is allowed.  0 = disabled (default, backward-compatible).  Set to 4+ in
@@ -93,7 +93,7 @@ class PipelineConfig:
     carrier_min_active_windows_for_offset: int = 0
 
     # Delta computer
-    max_sync_age_samples: int = 20_480  # ~80 ms at 256 kHz (8× sync period)
+    max_sync_age_samples: int = 20_480  # ~80 ms at 256 kHz (8x sync period)
     min_corr_peak: float = 0.1
 
     # PPS (two_sdr mode only)

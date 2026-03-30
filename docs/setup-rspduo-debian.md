@@ -28,7 +28,7 @@ separately from the C++ library and are not pulled in by the other packages.
 ## 2. SDRplay API (binary installer from sdrplay.com)
 
 Go to **https://www.sdrplay.com/downloads/** and download the Linux API
-installer.  A single `.run` file supports x86-64, aarch64, and armhf — the
+installer.  A single `.run` file supports x86-64, aarch64, and armhf - the
 installer auto-detects the host architecture.
 
 > **Important:** The installer prompts interactively for license acceptance and
@@ -36,7 +36,7 @@ installer auto-detects the host architecture.
 > terminal session (local console, `screen`/`tmux`, or `ssh -t`):
 
 ```bash
-# Download and run — requires an interactive terminal
+# Download and run - requires an interactive terminal
 chmod +x SDRplay_RSP_API-Linux-3.x.x.run
 sudo ./SDRplay_RSP_API-Linux-3.x.x.run
 # Press RETURN to page through the license, then y to accept.
@@ -56,7 +56,7 @@ sudo systemctl status sdrplay   # confirm: active (running)
 The upstream `pothosware/SoapySDRPlay3` `master` branch does not support
 independent per-channel tuning in Dual Tuner mode.  The
 `rspduo-dual-independent-tuners` branch adds this capability to the existing
-`mode=DT` entry — both tuners start mirrored, and the driver lazily splits
+`mode=DT` entry - both tuners start mirrored, and the driver lazily splits
 them into independent operation when a parameter is set on channel 1.
 However event with this change they still don't support hardware timestamps
 which are available from the rspduo, so we have a fork in github.com
@@ -93,7 +93,7 @@ SoapySDRUtil --find="driver=sdrplay"
 ```
 
 For an RSPduo not currently in use by another process, this shows **four
-entries** — one per operating mode:
+entries** - one per operating mode:
 
 ```
 Found device 0
@@ -123,7 +123,7 @@ Found device 3
 
 All four entries refer to the same physical device.  `RSPduoReceiver` opens
 **mode=DT** (Dual Tuner) directly.  The `rspduo-dual-independent-tuners`
-branch adds independent per-channel tuning to this mode — the driver
+branch adds independent per-channel tuning to this mode - the driver
 lazily splits both tuners when a parameter is set on channel 1.
 
 If the `mode=DT` entry is missing, the sdrplay service may not be running
@@ -133,7 +133,7 @@ or the SoapySDRPlay3 plugin is not installed.  Rebuild from source (step 3).
 
 ## 5. Time synchronisation
 
-See [Nodes and servers — time synchronisation](../README.md#nodes-and-servers--time-synchronisation)
+See [Nodes and servers - time synchronisation](../README.md#nodes-and-servers--time-synchronisation)
 in the main README.  This step is important for RSPduo setups.
 
 ---
@@ -181,11 +181,11 @@ them into independent operation the first time a parameter is set on
 channel 1.
 
 ```python
-# Use string form — SoapySDR 0.8.1-5 (Debian 13) has a Device.make()
+# Use string form - SoapySDR 0.8.1-5 (Debian 13) has a Device.make()
 # bug with dict kwargs.  String form works on all versions.
 dev = SoapySDR.Device('driver=sdrplay,mode=DT')
-# Channel 0 = Tuner 1 (sync/FM)   — Antenna port A
-# Channel 1 = Tuner 2 (target/LMR) — Antenna port C
+# Channel 0 = Tuner 1 (sync/FM)   - Antenna port A
+# Channel 1 = Tuner 2 (target/LMR) - Antenna port C
 dev.setFrequency(RX, 0, sync_freq)
 dev.setFrequency(RX, 1, target_freq)   # triggers lazy split to independent tuners
 sync_stream   = dev.setupStream(RX, CF32, [0])
@@ -233,7 +233,7 @@ The SDRplay API library enforces **one selected device per
 `sdrplay_api_Open()` handle**.  SoapySDRPlay3 uses a singleton for the API
 handle.  Both a "Master" device open and a "Slave" device open share the
 same handle, so `sdrplay_api_SelectDevice()` for the Slave returns
-`sdrplay_api_Fail` immediately inside the library — the request never
+`sdrplay_api_Fail` immediately inside the library - the request never
 reaches the service.
 
 Use DT mode (single device object, two streams) instead of Master/Slave.
@@ -263,14 +263,14 @@ Running for 30 s  (Ctrl-C to stop early)
   30.0      4221    142.7    0.7035      -4.5 ppm    -33.8 dBFS
 
 Total: 4221 sync events in 31.1 s (135.8/s)
-Crystal drift: -5.2 ppm at t≈10 s → -6.1 ppm at end  (drift=0.9 ppm  OK)
+Crystal drift: -5.2 ppm at t~10 s -> -6.1 ppm at end  (drift=0.9 ppm  OK)
 OK: Pilot detection looks good
 ```
 
 - **Rate ~143/s** at `sync_period_ms: 7.0` (one SyncEvent per 7 ms)
-- **CorPeak > 0.65** — FM pilot lock confirmed; drop below 0.4 indicates antenna or LNA issue
-- **Crystal < ±50 ppm** — normal for RSPduo TCXO
-- **Power -10 to -40 dBFS** — adjust `sync_lna_state` if outside this range:
+- **CorPeak > 0.65** - FM pilot lock confirmed; drop below 0.4 indicates antenna or LNA issue
+- **Crystal < +/-50 ppm** - normal for RSPduo TCXO
+- **Power -10 to -40 dBFS** - adjust `sync_lna_state` if outside this range:
   - Too high (> -10 dBFS): increase `sync_lna_state` (more attenuation)
   - Too low (< -40 dBFS): decrease `sync_lna_state` (less attenuation)
 
@@ -322,7 +322,7 @@ names your driver version uses.
 
 **`sync_lna_state` starting points:**
 - Outdoor directional or discone antenna: start at 6, adjust based on FM power
-- Indoor mag-mount or short whip: start at 3–4
+- Indoor mag-mount or short whip: start at 3-4
 - State 9 = maximum attenuation; state 0 = minimum attenuation (most gain)
 
 ---
@@ -330,7 +330,7 @@ names your driver version uses.
 ## 11. `pipeline_offset_ns` calibration
 
 `pipeline_offset_ns` corrects a systematic bias in the **sync_delta** timing
-path — it is subtracted from `sync_delta_ns` before each event is submitted.
+path - it is subtracted from `sync_delta_ns` before each event is submitted.
 
 **Important:** the xcorr primary TDOA path (~80% of pairs) is completely
 independent of `pipeline_offset_ns`.  Cross-correlation measures the physical
@@ -340,7 +340,7 @@ only affects the sync_delta fallback path (~20% of pairs, used when xcorr SNR
 is too low or snippets are absent).
 
 **RSPduo** (`rspduo` mode): the dominant hardware effect is the TDM ADC
-interleave — ch1 (target) lags ch0 (sync) by ~250 ns (0.5 ADC samples at 2
+interleave - ch1 (target) lags ch0 (sync) by ~250 ns (0.5 ADC samples at 2
 MSPS).  Since all RSPduo nodes have the same bias, it cancels in the
 TDOA subtraction for RSPduo-vs-RSPduo pairs.  Leave `pipeline_offset_ns: 0`
 for all-RSPduo deployments; the residual 250 ns contributes ~75 m of position
@@ -348,7 +348,7 @@ error on the fallback path, negligible compared to NTP uncertainty.
 
 **RTL-SDR freq_hop**: because sync and target blocks are captured sequentially,
 `sync_delta_ns` includes a structural inter-block delay (settling + frequency-
-switch time, typically 20–40 ms) that RSPduo nodes do not have.  This causes
+switch time, typically 20-40 ms) that RSPduo nodes do not have.  This causes
 a large systematic error in the sync_delta fallback path when pairing a
 freq_hop node against an RSPduo node.  Calibrate `pipeline_offset_ns` in the
 `freq_hop` config block using a co-located RSPduo reference node.
@@ -362,12 +362,12 @@ freq_hop node against an RSPduo node.  Calibrate `pipeline_offset_ns` in the
 4. Set `pipeline_offset_ns` in the `freq_hop` block to that value (positive = freq_hop
    node sync_delta is later than reference by that amount).
 
-**To calibrate an RSPduo node empirically (sub-µs accuracy, optional):**
+**To calibrate an RSPduo node empirically (sub-usec accuracy, optional):**
 1. Co-locate the new node with a calibrated reference RSPduo node.
 2. Run `scripts/colocated_pair_test.py --db --node-a <new> --node-b <ref> --since 20`.
 3. Note the mean **sync_delta TDOA_AB** for onset events; xcorr TDOA is unaffected by
    `pipeline_offset_ns` and should already be near 0 for co-located RSPduo nodes.
-4. Set `pipeline_offset_ns` to that value only if > ±1 µs (otherwise leave at 0).
+4. Set `pipeline_offset_ns` to that value only if > +/-1 usec (otherwise leave at 0).
 
 See `docs/test-results/colocated-pair-log.md` for example calibration results.
 
@@ -384,7 +384,7 @@ See `docs/test-results/colocated-pair-log.md` for example calibration results.
 | sync_rate = 0 in verify_sync.py | Wrong sync frequency or antenna disconnected | Check `sync_signal` in node.yaml; check Antenna A connection |
 | target channel noise floor only (-60 dBFS, no signal bump) | Ch1 frequency not applied | Ensure using `rspduo-dual-independent-tuners` branch |
 | overflow errors | USB bandwidth insufficient | Use a USB 3.0 port; reduce `buffer_size` to 32768 |
-| `sdrplay_api_Fail` opening second device | Attempted Master/Slave mode | Use DT mode (single device, two streams) — see section 8 |
+| `sdrplay_api_Fail` opening second device | Attempted Master/Slave mode | Use DT mode (single device, two streams) - see section 8 |
 | Only Single Tuner mode available | Firmware / API version mismatch | Check API version matches sdrplay service version |
 | `Device::make() no match` or `Hash collision` on Debian 13 | SoapySDR 0.8.1-5 bug with dict kwargs in `Device.make()` | Use string-form device args (`'driver=sdrplay,mode=DT'`); Beagle already does this |
 | `ModuleNotFoundError: No module named 'SoapySDR'` in venv | System `python3-soapysdr` not visible to venv | Install `python3-soapysdr` and add `.pth` file (step 5) |
@@ -392,4 +392,4 @@ See `docs/test-results/colocated-pair-log.md` for example calibration results.
 
 ---
 
-Copyright (c) 2026 Douglas P. Kingston III. MIT License — see [LICENSE](../LICENSE).
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](../LICENSE).
