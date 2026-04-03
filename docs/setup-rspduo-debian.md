@@ -145,7 +145,7 @@ mkdir -p ~/src && cd ~/src
 git clone https://github.com/dpkingston/beagle_rdf.git
 cd beagle_rdf
 python3 -m venv env
-env/bin/pip install -e ".[server]"
+env/bin/pip install -e .
 ```
 
 ### Expose system SoapySDR bindings to the venv
