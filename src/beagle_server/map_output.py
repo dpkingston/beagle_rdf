@@ -961,7 +961,7 @@ function makeResetHandler(btnId, url, origLabel) {
                     btn.textContent = origLabel;
                     btn.style.background = '';
                 }
-            }, 3000);
+            }, 10000);
             return;
         }
         armed = false;
@@ -1399,12 +1399,14 @@ window._tdoaDelete = function (btn, nodeId) {
     if (btn.getAttribute('data-armed') !== '1') {
         btn.setAttribute('data-armed', '1');
         btn.textContent = 'Sure?';
+        _nodeEditing = true;
         setTimeout(function () {
             if (btn.getAttribute('data-armed') === '1') {
                 btn.setAttribute('data-armed', '0');
                 btn.textContent = 'Delete';
+                _nodeEditing = false;
             }
-        }, 3000);
+        }, 10000);
         return;
     }
     btn.setAttribute('data-armed', '0');
@@ -1414,10 +1416,11 @@ window._tdoaDelete = function (btn, nodeId) {
         headers: _hdr()
     })
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function ()  { loadNodes(); })
+    .then(function ()  { _nodeEditing = false; loadNodes(); })
     .catch(function (e) {
         console.error('[Beagle] delete error:', e);
         btn.disabled = false;
+        _nodeEditing = false;
     });
 };
 
@@ -1622,12 +1625,14 @@ window._tdoaRegenSecret = function (btn, nodeId) {
     if (btn.getAttribute('data-armed') !== '1') {
         btn.setAttribute('data-armed', '1');
         btn.textContent = 'Sure?';
+        _nodeEditing = true;
         setTimeout(function () {
             if (btn.getAttribute('data-armed') === '1') {
                 btn.setAttribute('data-armed', '0');
                 btn.textContent = 'Regen Secret';
+                _nodeEditing = false;
             }
-        }, 3000);
+        }, 10000);
         return;
     }
     btn.setAttribute('data-armed', '0');
@@ -1643,12 +1648,14 @@ window._tdoaRegenSecret = function (btn, nodeId) {
     .then(function (data) {
         btn.disabled = false;
         btn.textContent = 'Regen Secret';
+        _nodeEditing = false;
         _showSecretModal(data.node_id, data.secret);
     })
     .catch(function (e) {
         console.error('[Beagle] regen-secret error:', e);
         btn.disabled = false;
         btn.textContent = 'Regen Secret';
+        _nodeEditing = false;
     });
 };
 
@@ -2004,12 +2011,14 @@ window._tdoaDeleteGroup = function (btn, groupId) {
     if (btn.getAttribute('data-armed') !== '1') {
         btn.setAttribute('data-armed', '1');
         btn.textContent = 'Sure?';
+        _groupEditing = true;
         setTimeout(function () {
             if (btn.getAttribute('data-armed') === '1') {
                 btn.setAttribute('data-armed', '0');
                 btn.textContent = 'Delete Group';
+                _groupEditing = false;
             }
-        }, 3000);
+        }, 10000);
         return;
     }
     btn.setAttribute('data-armed', '0');
@@ -2019,10 +2028,11 @@ window._tdoaDeleteGroup = function (btn, groupId) {
         headers: _hdr()
     })
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function () { _selectedGroupId = null; loadGroups(); loadNodes(); })
+    .then(function () { _selectedGroupId = null; _groupEditing = false; loadGroups(); loadNodes(); })
     .catch(function (e) {
         console.error('[Beagle] delete group error:', e);
         btn.disabled = false;
+        _groupEditing = false;
     });
 };
 
@@ -2285,12 +2295,14 @@ window._tdoaDeleteUser = function (btn, userId) {
     if (btn.getAttribute('data-armed') !== '1') {
         btn.setAttribute('data-armed', '1');
         btn.textContent = 'Sure?';
+        _usersEditing = true;
         setTimeout(function () {
             if (btn.getAttribute('data-armed') === '1') {
                 btn.setAttribute('data-armed', '0');
                 btn.textContent = 'Delete';
+                _usersEditing = false;
             }
-        }, 3000);
+        }, 10000);
         return;
     }
     btn.setAttribute('data-armed', '0');
@@ -2300,8 +2312,8 @@ window._tdoaDeleteUser = function (btn, userId) {
         headers: _hdr()
     })
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function () { loadUsers(); })
-    .catch(function (e) { console.error('[Beagle] delete user error:', e); btn.disabled = false; });
+    .then(function () { _usersEditing = false; loadUsers(); })
+    .catch(function (e) { console.error('[Beagle] delete user error:', e); btn.disabled = false; _usersEditing = false; });
 };
 
 /* Disable 2FA for a user (admin recovery, armed confirmation) */
@@ -2309,12 +2321,14 @@ window._tdoaDisable2fa = function (btn, userId) {
     if (btn.getAttribute('data-armed') !== '1') {
         btn.setAttribute('data-armed', '1');
         btn.textContent = 'Sure?';
+        _usersEditing = true;
         setTimeout(function () {
             if (btn.getAttribute('data-armed') === '1') {
                 btn.setAttribute('data-armed', '0');
                 btn.textContent = 'Disable 2FA';
+                _usersEditing = false;
             }
-        }, 3000);
+        }, 10000);
         return;
     }
     btn.setAttribute('data-armed', '0');
@@ -2325,8 +2339,8 @@ window._tdoaDisable2fa = function (btn, userId) {
         body: JSON.stringify({ user_id: userId })
     })
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function () { loadUsers(); })
-    .catch(function (e) { console.error('[Beagle] disable 2fa error:', e); btn.disabled = false; });
+    .then(function () { _usersEditing = false; loadUsers(); })
+    .catch(function (e) { console.error('[Beagle] disable 2fa error:', e); btn.disabled = false; _usersEditing = false; });
 };
 
 /* Create user form */
