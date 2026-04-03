@@ -828,7 +828,7 @@ long-term migration item and the hardware timestamps completed item above.
 
 Per-user accounts with role-based access control for the server API.
 
-**Implemented (`auth_mode = userdb`):**
+**Implemented (`user_auth = userdb`):**
 - `POST /auth/register` - open for first user (bootstrap); admin-only thereafter
 - `POST /auth/login` -> opaque session token (`secrets.token_urlsafe(32)`) stored in `user_sessions`
 - `POST /auth/logout` - immediately invalidates token
@@ -839,7 +839,7 @@ Per-user accounts with role-based access control for the server API.
 - Roles: `admin` (full access) and `viewer` (read-only endpoints)
 - Password storage: PBKDF2-HMAC-SHA256, 260 000 iterations, 16-byte random salt (OWASP 2023)
 - Session lifetime: 24 h default, configurable via `server.session_lifetime_hours`
-- Four auth modes: `none`, `token`, `nodedb`, `userdb` (controlled by `server.auth_mode`)
+- Two independent auth settings: `server.node_auth` (none|token|nodedb) and `server.user_auth` (none|token|userdb) (configured in `server.node_auth` and `server.user_auth`)
 - Users and sessions stored in `tdoa_registry.db` (permanent; survives operational DB wipe)
 - All endpoints covered by integration tests in `tests/integration/test_auth.py` (34 tests)
 - Administration documented in `ADMIN.md`
@@ -1009,7 +1009,7 @@ as user passwords). An admin generates the secret and provisions the bootstrap f
 out-of-band (e.g. via Ansible, printed QR, or the admin web UI).
 
 Backward compatibility: the existing single shared `server.auth_token` continues to
-work when `server.auth_mode = token`. Per-node auth activates under `auth_mode = nodedb`
+work when `server.node_auth = token`. Per-node auth activates under `node_auth = nodedb`
 (or `userdb` once that item is done).
 
 ---
@@ -1247,8 +1247,8 @@ auth system is implemented with bcrypt, existing hashes are migrated on first lo
 #### Compatibility and Migration
 
 - Nodes running the old code (no registration support) continue to work unchanged
-  as long as `server.auth_mode = token` and the shared token is set.
-- New nodes start with `auth_mode = nodedb`; the two modes can coexist during rollout.
+  as long as `server.node_auth = token` and the shared token is set.
+- New nodes start with `node_auth = nodedb`; the two modes can coexist during rollout.
 - The server must never serve a config to an unauthenticated or unknown node.
 - Bootstrap file (`bootstrap.yaml`) stays minimal; never embed full SDR config there.
 

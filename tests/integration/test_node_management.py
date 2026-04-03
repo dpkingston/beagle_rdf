@@ -61,13 +61,13 @@ def _sha256_hash(plaintext: str) -> str:
 # Fixtures
 # ---------------------------------------------------------------------------
 
-def _make_config(db_path: str, registry_path: str, auth_mode: str = "nodedb") -> ServerFullConfig:
+def _make_config(db_path: str, registry_path: str, node_auth: str = "nodedb") -> ServerFullConfig:
     return ServerFullConfig(
         server=ServerConfig(
             host="127.0.0.1",
             port=8765,
             auth_token=_ADMIN_TOKEN,
-            auth_mode=auth_mode,
+            node_auth=node_auth,
         ),
         database=DatabaseConfig(path=db_path, registry_path=registry_path),
         pairing=PairingConfig(

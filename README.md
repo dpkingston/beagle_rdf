@@ -385,7 +385,8 @@ The only fields you must change before first use:
 | `solver.search_center_lat` | 47.7 | Latitude of the centre of your deployment area |
 | `solver.search_center_lon` | -122.3 | Longitude of the centre of your deployment area |
 | `server.auth_token` | (empty) | A secret string, or leave empty during development |
-| `server.auth_mode` | `token` | `token` = shared Bearer token (default); `nodedb` = per-node secrets (see [Node Management](#node-management)) |
+| `server.node_auth` | `token` | How nodes authenticate event POSTs: `none`, `token` (default), `nodedb` (per-node secrets) |
+| `server.user_auth` | `token` | How humans access the UI: `none`, `token` (default), `userdb` (per-user accounts) |
 
 All other defaults are reasonable for a first run.
 
@@ -413,7 +414,7 @@ INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
 
 ### 4 - Create the first admin user (userdb mode)
 
-If you set `server.auth_mode: userdb` in your config, register the first admin
+If you set `server.user_auth: userdb` in your config, register the first admin
 account while the server is running.  You can do this from the browser or the
 command line.
 
@@ -432,8 +433,8 @@ curl -s -X POST http://localhost:8765/auth/register \
 Once the first user is created, all further registrations require an admin
 session token.  See [ADMIN.md](ADMIN.md) for full user management documentation.
 
-> **Skip this step** if using `auth_mode: token` or `auth_mode: nodedb` - those
-> modes use the shared `auth_token` instead of per-user accounts.
+> **Skip this step** if using `user_auth: token` or `user_auth: none` - those
+> modes use the shared `auth_token` or no authentication instead of per-user accounts.
 
 ### 5 - Verify it is running
 
@@ -540,7 +541,7 @@ control in the bottom-right corner of the map.
 
 #### Signing in (userdb mode)
 
-When the server runs with `auth_mode: userdb`, the map page shows a login
+When the server runs with `user_auth: userdb`, the map page shows a login
 overlay.  Enter your username and password to sign in.  Your session is stored
 in the browser tab and cleared when you close it.
 
@@ -766,20 +767,19 @@ channels, and assigning or unassigning member nodes - all without CLI access.
 
 ### Server config for nodedb mode
 
-Add `auth_mode: nodedb` to `server.yaml` to activate per-node authentication:
+Set `node_auth: nodedb` in `server.yaml` to activate per-node authentication:
 
 ```yaml
 server:
-  auth_mode: nodedb
-  auth_token: "admin-token"   # still used for admin API endpoints
+  node_auth: nodedb           # per-node secrets for event POSTs
+  user_auth: token            # or userdb for per-user UI login
+  auth_token: "admin-token"   # used by user_auth: token and admin endpoints
 ```
 
 In `nodedb` mode:
-- Nodes authenticate with their individual secret on every API call.
+- Nodes authenticate with their individual secret on every event POST.
 - Disabled nodes' events are rejected at ingest time (HTTP 403).
-- The shared `auth_token` is still checked on admin endpoints (`GET /api/v1/nodes`, `PATCH /api/v1/nodes/{id}`, etc.).
-- Nodes running the old `--config` path continue to work as long as
-  `auth_mode: token` is set - the two modes can coexist during rollout.
+- The `user_auth` setting controls UI/admin access independently.
 
 ---
 

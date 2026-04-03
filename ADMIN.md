@@ -17,26 +17,33 @@
 
 ---
 
-## Authentication Modes
+## Authentication
 
-The server supports four authentication modes, controlled by `server.auth_mode` in `config/server.yaml`:
+Authentication is configured with two independent settings in `config/server.yaml`:
 
-| Mode      | Description                                                          |
-|-----------|----------------------------------------------------------------------|
-| `none`    | No authentication. All endpoints accessible. Development/LAN use only. |
-| `token`   | Single shared Bearer token (`server.auth_token`). All nodes use the same secret. |
-| `nodedb`  | Per-node secrets stored in the database. Nodes authenticate individually. |
-| `userdb`  | Per-user accounts with roles. Web/API users authenticate with username+password. |
+| Setting | Controls | Allowed values |
+|---------|----------|---------------|
+| `server.node_auth` | How nodes authenticate event POSTs | `none`, `token` (default), `nodedb` |
+| `server.user_auth` | How humans access the map UI and admin API | `none`, `token` (default), `userdb` |
 
-Modes are independent of each other. A production deployment typically uses `nodedb` (for
-node authentication) combined with `userdb` (for human users). Currently the server supports
-one active mode at a time.
+These are fully independent. A production deployment typically uses `node_auth: nodedb`
+(per-node secrets for events) combined with `user_auth: userdb` (per-user logins for the UI).
+
+**node_auth values:**
+- `none` -- event POSTs are accepted without authentication
+- `token` -- nodes must include the shared `auth_token` as a Bearer token
+- `nodedb` -- each node authenticates with its own secret (see `scripts/manage_nodes.py`)
+
+**user_auth values:**
+- `none` -- no authentication; all UI and admin endpoints are open
+- `token` -- the shared `auth_token` is required for admin endpoints
+- `userdb` -- per-user accounts with roles, sessions, optional 2FA and Google OAuth
 
 ---
 
 ## Web UI Login
 
-In `userdb` mode, the map page (`GET /map`) displays a login overlay automatically.
+When `user_auth: userdb`, the map page (`GET /map`) displays a login overlay automatically.
 Users enter their username and password to obtain a session token, which is stored
 in `sessionStorage` (cleared when the browser tab is closed).
 
@@ -47,7 +54,7 @@ in `sessionStorage` (cleared when the browser tab is closed).
 - **Session expiry:** If a session expires mid-use, any API call triggers a 401 response
   and the login overlay reappears automatically.
 
-In `token` or `none` auth modes, no login overlay is shown - the map works as before.
+When `user_auth` is `token` or `none`, no login overlay is shown.
 
 ---
 
@@ -262,7 +269,7 @@ Add the credentials to `config/server.yaml`:
 
 ```yaml
 server:
-  auth_mode: "userdb"
+  user_auth: "userdb"
   google_client_id: "123456789-abcdefg.apps.googleusercontent.com"
   google_client_secret: "GOCSPX-xxxxxxxxxx"
 ```
@@ -790,14 +797,14 @@ server:
   host: "0.0.0.0"
   port: 8765
 
-  # Authentication mode: none | token | nodedb | userdb
-  auth_mode: "userdb"
+  # Node authentication: none | token | nodedb
+  node_auth: "nodedb"
 
-  # Shared Bearer token (used in token/nodedb modes; ignored in userdb mode)
+  # User authentication: none | token | userdb
+  user_auth: "userdb"
+
+  # Shared Bearer token (used when node_auth or user_auth is "token")
   auth_token: ""
-
-  # Whether POST /api/v1/events requires auth in token mode
-  require_event_auth: false
 
   # Session lifetime for userdb mode (hours)
   session_lifetime_hours: 24.0

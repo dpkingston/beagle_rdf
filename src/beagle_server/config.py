@@ -18,36 +18,32 @@ class ServerConfig(BaseModel):
     port: int = 8765
     auth_token: str = ""
     """Bearer token required on write endpoints. Empty string disables token auth."""
-    auth_mode: Literal["none", "token", "nodedb", "userdb"] = "token"
+    node_auth: Literal["none", "token", "nodedb"] = "token"
     """
-    Authentication mode:
-      none   - no authentication required (open server)
-      token  - single shared Bearer token (current default; uses auth_token)
+    How nodes authenticate when POSTing events:
+      none   - no authentication required on event POSTs
+      token  - shared Bearer token (uses auth_token)
       nodedb - per-node secrets stored in the nodes table (see manage_nodes.py)
-      userdb - per-user accounts with roles stored in the users table.
-                Admin users are required for management endpoints; viewer users
-                can access read-only endpoints.  Use POST /auth/register to
-                create the first admin account (open only while no users exist).
 
-    In nodedb and userdb modes, the shared auth_token is still checked for
-    node-facing endpoints and legacy integrations.
+    Independent of user_auth.  For example, node_auth: nodedb + user_auth: userdb
+    gives per-node secrets for events and per-user logins for the UI.
+    """
+    user_auth: Literal["none", "token", "userdb"] = "token"
+    """
+    How humans authenticate for the map UI and admin API:
+      none   - no authentication required (open server)
+      token  - shared Bearer token (uses auth_token)
+      userdb - per-user accounts with roles stored in the users table.
+               Admin users are required for management endpoints; viewer users
+               can access read-only endpoints.  Use POST /auth/register to
+               create the first admin account (open only while no users exist).
+
+    Independent of node_auth.
     """
     session_lifetime_hours: float = 24.0
     """
     How long a user session token remains valid after creation (userdb mode).
     Tokens are invalidated on logout regardless of expiry.
-    """
-    require_event_auth: bool = True
-    """
-    When True (default): event POSTs enforce the configured auth_token (token mode)
-    or node secret (nodedb mode).  Has no effect when auth_token is empty.
-
-    When False: event POSTs are accepted without authentication even if auth_token
-    is set.  Useful during initial setup when nodes may not yet have the token
-    configured, or in mixed deployments with unauthenticated nodes.
-
-    Admin/management endpoints always enforce auth_token regardless of this flag.
-    This setting can be toggled at runtime via PATCH /api/v1/settings.
     """
     node_rate_limit_events: int = 10
     """Maximum number of events accepted from a single node within the sliding

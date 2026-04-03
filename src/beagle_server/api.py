@@ -113,7 +113,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     app.state.pairer = None           # set in lifespan
     app.state.db = None               # set in lifespan
     app.state.sse_subscribers: dict[int, asyncio.Queue[str]] = {}
-    app.state.require_event_auth: bool = config.server.require_event_auth
+    # node_auth and user_auth are read directly from config; no runtime state needed
     app.state.heartbeats: dict[str, dict[str, Any]] = {}  # node_id -> heartbeat info
     app.state.known_nodes: dict[str, dict[str, Any]] = {}  # node_id -> cached registry row
     app.state.map_geojson_cache: dict[float, dict] = {}   # max_age_s -> GeoJSON; cleared on new fix
@@ -237,12 +237,12 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     # -------------------------------------------------------------------
     def _check_auth(request: Request) -> None:
         """
-        Verify the shared admin Bearer token (used by management endpoints in
-        token/nodedb modes).  In userdb mode, callers should use
-        ``require_admin`` from ``auth_module`` instead.
+        Verify the shared Bearer token.  Used by management endpoints when
+        user_auth is 'token', and by event ingest when node_auth is 'token'.
+        In userdb mode, callers should use ``require_admin`` instead.
         """
         cfg: ServerFullConfig = request.app.state.config
-        if cfg.server.auth_mode == "userdb":
+        if cfg.server.user_auth == "userdb":
             # Caller is responsible for using require_admin; this path is only
             # reached for endpoints that have not been updated to use it yet.
             return
@@ -856,11 +856,11 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     ) -> dict[str, str]:
         cfg: ServerFullConfig = request.app.state.config
         client_ip = request.client.host if request.client else None
-        if cfg.server.auth_mode == "nodedb":
+        if cfg.server.node_auth == "nodedb":
             node = await _check_node_auth(request, registry_db)
             await db_module.update_node_seen(registry_db, node["node_id"], client_ip)
         else:
-            if request.app.state.require_event_auth:
+            if cfg.server.node_auth == "token":
                 _check_auth(request)
             # Use cached node row to avoid DB round-trip on every event.
             # Cache is invalidated when enable/disable changes via PATCH.
@@ -1173,7 +1173,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 server_label=request.headers.get("host", ""),
                 heatmap_cells=heatmap_cells,
                 auth_token=cfg.server.auth_token,
-                auth_mode=cfg.server.auth_mode,
+                user_auth=cfg.server.user_auth,
                 google_oauth_enabled=bool(
                     config.server.google_client_id and config.server.google_client_secret
                 ),
@@ -1696,9 +1696,11 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     # -------------------------------------------------------------------
     @app.get("/api/v1/settings")
     async def get_settings(request: Request) -> dict[str, Any]:
-        """Return runtime-mutable server settings."""
+        """Return server auth settings (read-only)."""
+        cfg: ServerFullConfig = request.app.state.config
         return {
-            "require_event_auth": request.app.state.require_event_auth,
+            "node_auth": cfg.server.node_auth,
+            "user_auth": cfg.server.user_auth,
         }
 
     @app.patch("/api/v1/settings")
@@ -1706,13 +1708,12 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         request: Request,
         registry_db: aiosqlite.Connection = Depends(get_registry_db),
     ) -> dict[str, Any]:
-        """Update runtime-mutable server settings. Auth-gated if token is set."""
+        """Reserved for future runtime-mutable settings. Auth-gated."""
         await auth_module.require_admin(request, registry_db)
-        body: dict[str, Any] = await request.json()
-        if "require_event_auth" in body:
-            request.app.state.require_event_auth = bool(body["require_event_auth"])
+        cfg: ServerFullConfig = request.app.state.config
         return {
-            "require_event_auth": request.app.state.require_event_auth,
+            "node_auth": cfg.server.node_auth,
+            "user_auth": cfg.server.user_auth,
         }
 
     # -------------------------------------------------------------------

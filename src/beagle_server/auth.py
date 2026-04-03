@@ -188,7 +188,7 @@ async def require_admin(
     from beagle_server.config import ServerFullConfig
     cfg: ServerFullConfig = request.app.state.config
 
-    if cfg.server.auth_mode == "userdb":
+    if cfg.server.user_auth == "userdb":
         user = await get_current_user(request, database)
         if user["role"] != "admin":
             raise HTTPException(
@@ -197,10 +197,10 @@ async def require_admin(
             )
         return user
 
-    if cfg.server.auth_mode == "none":
+    if cfg.server.user_auth == "none":
         return {"user_id": "system", "username": "system", "role": "admin"}
 
-    # token / nodedb modes: fall back to shared auth_token
+    # token mode: check shared auth_token
     token = cfg.server.auth_token
     if token:
         header = request.headers.get("Authorization", "")
@@ -225,7 +225,7 @@ async def require_viewer(
     from beagle_server.config import ServerFullConfig
     cfg: ServerFullConfig = request.app.state.config
 
-    if cfg.server.auth_mode == "userdb":
+    if cfg.server.user_auth == "userdb":
         return await get_current_user(request, database)
 
     return {"user_id": "system", "username": "system", "role": "admin"}

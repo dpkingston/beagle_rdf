@@ -2,7 +2,7 @@
 """
 Integration tests for the /auth/* endpoints in userdb auth mode.
 
-All tests use an in-memory SQLite DB and a config with auth_mode="userdb".
+All tests use an in-memory SQLite DB and a config with user_auth="userdb".
 """
 
 from __future__ import annotations
@@ -31,7 +31,8 @@ def _userdb_config() -> ServerFullConfig:
             host="127.0.0.1",
             port=8765,
             auth_token="",
-            auth_mode="userdb",
+            node_auth="none",
+            user_auth="userdb",
             session_lifetime_hours=24.0,
         ),
         database=DatabaseConfig(path=":memory:", registry_path=":memory:"),
@@ -718,7 +719,8 @@ def _oauth_config() -> "ServerFullConfig":
             host="127.0.0.1",
             port=8765,
             auth_token="",
-            auth_mode="userdb",
+            node_auth="none",
+            user_auth="userdb",
             session_lifetime_hours=24.0,
             google_client_id="test-client-id",
             google_client_secret="test-client-secret",

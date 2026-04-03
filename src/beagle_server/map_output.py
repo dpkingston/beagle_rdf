@@ -469,13 +469,6 @@ _PANEL_HTML = """
     </div>
   </div>
   <div id="tdoa-tab-nodes" style="display:none">
-    <div id="tdoa-event-auth-row" style="padding:4px 10px 5px;border-bottom:1px solid rgba(255,255,255,.08)">
-      <div class="tp-row">
-        <span class="tp-key">Event auth</span>
-        <span id="tdoa-event-auth-val" style="font-size:10px">&#8230;</span>
-      </div>
-      <button class="tdoa-btn-sm" id="tdoa-event-auth-btn" style="margin-top:4px;width:100%">&#8230;</button>
-    </div>
     <div id="tdoa-node-bulk">
       <button class="tdoa-btn-sm ton" id="tdoa-enable-all-btn">Enable All</button>
       <button class="tdoa-btn-sm toff" id="tdoa-disable-all-btn">Disable All</button>
@@ -1048,7 +1041,7 @@ function _fetch(url, opts) {
     opts = opts || {};
     if (!opts.headers) opts.headers = _hdr();
     return fetch(url, opts).then(function (r) {
-        if (r.status === 401 && TDOA.authMode === 'userdb') {
+        if (r.status === 401 && TDOA.userAuth === 'userdb') {
             _showLogin('Session expired - please log in again.');
             return Promise.reject(new Error('Unauthorized'));
         }
@@ -1089,13 +1082,13 @@ function _setUserInfo(user) {
     if (logoutBtn) logoutBtn.style.display = user ? '' : 'none';
     /* Show Users tab only for admin in userdb mode */
     if (usersTab) {
-        usersTab.style.display = (TDOA.authMode === 'userdb' && user && user.role === 'admin') ? '' : 'none';
+        usersTab.style.display = (TDOA.userAuth === 'userdb' && user && user.role === 'admin') ? '' : 'none';
     }
 }
 
 /* Check for existing session on page load (userdb mode only) */
 function _checkAuth() {
-    if (TDOA.authMode !== 'userdb') return;
+    if (TDOA.userAuth !== 'userdb') return;
 
     /* Show Google login button if configured */
     if (TDOA.googleOAuthEnabled) {
@@ -1432,51 +1425,6 @@ function loadNodes() {
         .catch(function (e) { console.error('[Beagle] loadNodes error:', e); });
 }
 
-/* Event-auth settings row */
-function loadEventAuthSetting() {
-    _fetch('/api/v1/settings')
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function (data) { _renderEventAuth(data.require_event_auth); })
-        .catch(function (e) { console.error('[Beagle] settings load error:', e); });
-}
-function _renderEventAuth(required) {
-    var val = document.getElementById('tdoa-event-auth-val');
-    var btn = document.getElementById('tdoa-event-auth-btn');
-    if (!val || !btn) return;
-    if (required) {
-        val.textContent = 'required';
-        val.style.color = '#e67e22';
-        btn.textContent = 'Open to unauthenticated events';
-        btn.className = 'tdoa-btn-sm ton';
-    } else {
-        val.textContent = 'open (no auth)';
-        val.style.color = '#2ecc71';
-        btn.textContent = 'Require authentication';
-        btn.className = 'tdoa-btn-sm toff';
-    }
-    btn.disabled = false;
-    btn._authRequired = required;
-}
-(function () {
-    var btn = document.getElementById('tdoa-event-auth-btn');
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-        var newVal = !btn._authRequired;
-        btn.disabled = true;
-        _fetch('/api/v1/settings', {
-            method: 'PATCH',
-            headers: _hdrJson(),
-            body: JSON.stringify({ require_event_auth: newVal })
-        })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function (data) { _renderEventAuth(data.require_event_auth); })
-        .catch(function (e) {
-            console.error('[Beagle] settings patch error:', e);
-            btn.disabled = false;
-        });
-    });
-})();
-
 /* Tab switching */
 var _groupTabActive = false;
 var _usersTabActive = false;
@@ -1509,7 +1457,6 @@ var _usersTabActive = false;
     nodesTabBtn.addEventListener('click', function () {
         switchTab('nodes');
         loadNodes();
-        loadEventAuthSetting();
     });
     groupsTabBtn.addEventListener('click', function () {
         switchTab('groups');
@@ -2245,7 +2192,7 @@ function renderUsers(users) {
     list.innerHTML = html;
     /* Show change-own-password area if userdb */
     var chpwArea = document.getElementById('tdoa-user-chpw-area');
-    if (chpwArea && TDOA.authMode === 'userdb') chpwArea.style.display = '';
+    if (chpwArea && TDOA.userAuth === 'userdb') chpwArea.style.display = '';
 }
 
 /* Change user role */
@@ -2438,7 +2385,7 @@ def _render_control_panel(
     map_id: str = "",
     heat_layer_id: str = "",
     auth_token: str = "",
-    auth_mode: str = "token",
+    user_auth: str = "token",
     google_oauth_enabled: bool = False,
 ) -> str:
     """
@@ -2456,7 +2403,7 @@ def _render_control_panel(
         "mapId": map_id,
         "heatLayerId": heat_layer_id,
         "authToken": auth_token,
-        "authMode": auth_mode,
+        "userAuth": user_auth,
         "googleOAuthEnabled": google_oauth_enabled,
     })
     # Escape </ to prevent accidental </script> tag termination inside the data block.
@@ -2829,7 +2776,7 @@ def build_map(
     server_label: str = "",
     heatmap_cells: list[list[float]] | None = None,
     auth_token: str = "",
-    auth_mode: str = "token",
+    user_auth: str = "token",
     google_oauth_enabled: bool = False,
 ) -> str:
     """
@@ -2908,7 +2855,7 @@ def build_map(
         map_id=m.get_name(),
         heat_layer_id=heat_layer_id,
         auth_token=auth_token,
-        auth_mode=auth_mode,
+        user_auth=user_auth,
         google_oauth_enabled=google_oauth_enabled,
     )
     m.get_root().header.add_child(_BrancaElement("<title>Beagle</title>\n" + _FAVICON_HTML))

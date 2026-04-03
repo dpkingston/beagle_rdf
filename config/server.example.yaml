@@ -6,8 +6,16 @@
 server:
   host: "0.0.0.0"
   port: 8765
-  auth_token: ""           # Empty = no auth required.
+  auth_token: ""           # Shared Bearer token. Empty = no token auth.
                            # Set a secret string, or leave empty and use TDOA_SERVER_AUTH_TOKEN env var.
+  # node_auth: "token"     # How nodes authenticate event POSTs:
+                           #   none   - no authentication on event POSTs
+                           #   token  - shared Bearer token (default; uses auth_token above)
+                           #   nodedb - per-node secrets (see scripts/manage_nodes.py)
+  # user_auth: "token"     # How humans authenticate for the map UI and admin API:
+                           #   none   - open access (no login required)
+                           #   token  - shared Bearer token (default; uses auth_token above)
+                           #   userdb - per-user accounts with login, 2FA, optional Google OAuth
   node_rate_limit_events: 10   # Max events per node within the sliding window. 0 = disable.
   node_rate_limit_window_s: 20 # Sliding window duration (seconds) for per-node rate limit.
 
