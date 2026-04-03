@@ -1,7 +1,8 @@
 # RSPduo Setup on Debian Linux
 
 Primary tested platform: **Raspberry Pi 5, Debian 13 (trixie), 64-bit**.  The
-same steps work on Debian 12/13 amd64 (e.g. a server node).
+same steps work on Debian 12/13 amd64 (e.g. a server node). This may be similarly
+applicable for other Linux systems.
 
 The SDRplay SoapySDR plugin (`SoapySDRPlay3`) is not in the standard Debian
 apt repos.  Installation requires four steps: SoapySDR base from apt, the
@@ -167,80 +168,7 @@ env/bin/python -c "import SoapySDR; print(SoapySDR.__file__)"
 
 ---
 
-## 7. How DT mode with independent tuning works
-
-```
-SoapySDRUtil --probe="driver=sdrplay,mode=DT"
-```
-
-`RSPduoReceiver` opens the device in Dual Tuner mode with **two separate
-single-channel streams** on the same SoapySDR device object.  The
-`rspduo-dual-independent-tuners` branch adds a lazy-split mechanism:
-both tuners start mirrored (same frequency/gain), and the driver splits
-them into independent operation the first time a parameter is set on
-channel 1.
-
-```python
-# Use string form - SoapySDR 0.8.1-5 (Debian 13) has a Device.make()
-# bug with dict kwargs.  String form works on all versions.
-dev = SoapySDR.Device('driver=sdrplay,mode=DT')
-# Channel 0 = Tuner 1 (sync/FM)   - Antenna port A
-# Channel 1 = Tuner 2 (target/LMR) - Antenna port C
-dev.setFrequency(RX, 0, sync_freq)
-dev.setFrequency(RX, 1, target_freq)   # triggers lazy split to independent tuners
-sync_stream   = dev.setupStream(RX, CF32, [0])
-target_stream = dev.setupStream(RX, CF32, [1])
-dev.activateStream(sync_stream)
-dev.activateStream(target_stream)
-# Safety net: re-apply ch1 frequency after both streams are active.
-# The driver's activateStream() handles this internally, but we re-apply
-# in case the post-Init fixup doesn't cover all cases.
-dev.setFrequency(RX, 1, target_freq)
-```
-
-**Why two streams instead of one?** SoapySDRPlay3 does not support a
-multi-channel `setupStream(RX, CF32, [0, 1])` call in DT mode.  Each
-channel gets its own independent stream handle.
-
----
-
-## 8. API notes: Init and Tuner B parameters
-
-### Background
-
-`sdrplay_api_Init()` fires during the **first** `activateStream()` call
-(the sync stream, ch0).  In older SoapySDRPlay3 builds, Init would
-program Rf_B = Rf_A regardless of what was set on ch1 beforehand.
-
-The `rspduo-dual-independent-tuners` branch handles this internally:
-`activateStream()` detects any Tuner B parameters that differ from the
-Init defaults and re-applies them via `sdrplay_api_Update()`.  Our code
-also re-applies ch1 frequency and gains after both `activateStream()`
-calls as a safety net.
-
-### Gain reset at Init
-
-At Init time `_streams[1]` may be `NULL`, so Tuner B gain updates issued
-before `activateStream(target)` may not be acknowledged.  Init may reset
-ch1 gain to match ch0 gain.
-
-Re-apply gains for both channels after both `activateStream` calls.
-`RSPduoReceiver._apply_gains()` handles this.
-
-### Why Master/Slave mode does not work as an alternative
-
-The SDRplay API library enforces **one selected device per
-`sdrplay_api_Open()` handle**.  SoapySDRPlay3 uses a singleton for the API
-handle.  Both a "Master" device open and a "Slave" device open share the
-same handle, so `sdrplay_api_SelectDevice()` for the Slave returns
-`sdrplay_api_Fail` immediately inside the library - the request never
-reaches the service.
-
-Use DT mode (single device object, two streams) instead of Master/Slave.
-
----
-
-## 9. End-to-end test
+## 7. End-to-end test
 
 ### Verify FM sync detection
 
@@ -288,7 +216,7 @@ Key your radio a few times during the run.  The script reports recommended
 
 ---
 
-## 10. node.yaml configuration
+## 8. node.yaml configuration
 
 ```yaml
 sdr_mode: "rspduo"
@@ -327,7 +255,7 @@ names your driver version uses.
 
 ---
 
-## 11. `pipeline_offset_ns` calibration
+## 9. `pipeline_offset_ns` calibration
 
 `pipeline_offset_ns` corrects a systematic bias in the **sync_delta** timing
 path - it is subtracted from `sync_delta_ns` before each event is submitted.
@@ -389,6 +317,62 @@ See `docs/test-results/colocated-pair-log.md` for example calibration results.
 | `Device::make() no match` or `Hash collision` on Debian 13 | SoapySDR 0.8.1-5 bug with dict kwargs in `Device.make()` | Use string-form device args (`'driver=sdrplay,mode=DT'`); Beagle already does this |
 | `ModuleNotFoundError: No module named 'SoapySDR'` in venv | System `python3-soapysdr` not visible to venv | Install `python3-soapysdr` and add `.pth` file (step 5) |
 | SDRplay installer hangs waiting for input over SSH | `more` pager needs a tty | Run installer in an interactive session: `ssh -t user@host`, or `screen`/`tmux` |
+
+---
+
+## Operational Notes
+
+### DT mode with independent tuning
+
+`RSPduoReceiver` opens the device in Dual Tuner (DT) mode with **two separate
+single-channel streams** on the same SoapySDR device object.  The
+`rspduo-dual-independent-tuners` branch adds a lazy-split mechanism:
+both tuners start mirrored (same frequency/gain), and the driver splits
+them into independent operation the first time a parameter is set on
+channel 1.
+
+```python
+# Use string form - SoapySDR 0.8.1-5 (Debian 13) has a Device.make()
+# bug with dict kwargs.  String form works on all versions.
+dev = SoapySDR.Device('driver=sdrplay,mode=DT')
+# Channel 0 = Tuner 1 (sync/FM)   - Antenna port A
+# Channel 1 = Tuner 2 (target/LMR) - Antenna port C
+dev.setFrequency(RX, 0, sync_freq)
+dev.setFrequency(RX, 1, target_freq)   # triggers lazy split to independent tuners
+sync_stream   = dev.setupStream(RX, CF32, [0])
+target_stream = dev.setupStream(RX, CF32, [1])
+dev.activateStream(sync_stream)
+dev.activateStream(target_stream)
+# Safety net: re-apply ch1 frequency after both streams are active.
+dev.setFrequency(RX, 1, target_freq)
+```
+
+**Why two streams instead of one?** SoapySDRPlay3 does not support a
+multi-channel `setupStream(RX, CF32, [0, 1])` call in DT mode.  Each
+channel gets its own independent stream handle.
+
+### API notes: Init and Tuner B parameters
+
+`sdrplay_api_Init()` fires during the **first** `activateStream()` call
+(the sync stream, ch0).  In older SoapySDRPlay3 builds, Init would
+program Rf_B = Rf_A regardless of what was set on ch1 beforehand.
+
+The `rspduo-dual-independent-tuners` branch handles this internally:
+`activateStream()` detects any Tuner B parameters that differ from the
+Init defaults and re-applies them via `sdrplay_api_Update()`.  Our code
+also re-applies ch1 frequency and gains after both `activateStream()`
+calls as a safety net.
+
+**Gain reset at Init:** At Init time `_streams[1]` may be `NULL`, so
+Tuner B gain updates issued before `activateStream(target)` may not be
+acknowledged.  Re-apply gains for both channels after both
+`activateStream` calls.  `RSPduoReceiver._apply_gains()` handles this.
+
+**Why Master/Slave mode does not work:** The SDRplay API library enforces
+one selected device per `sdrplay_api_Open()` handle.  SoapySDRPlay3 uses
+a singleton for the API handle, so `sdrplay_api_SelectDevice()` for the
+Slave returns `sdrplay_api_Fail` immediately.  Use DT mode (single device
+object, two streams) instead.
 
 ---
 
