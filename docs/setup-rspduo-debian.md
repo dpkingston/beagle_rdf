@@ -173,7 +173,7 @@ env/bin/python -c "import SoapySDR; print(SoapySDR.__file__)"
 ### Verify FM sync detection
 
 ```bash
-cd ~/src/Beagle
+cd ~/src/beagle_rdf
 env/bin/python scripts/verify_sync.py \
     --config config/node.rspduo.local.yaml --duration 30
 ```
