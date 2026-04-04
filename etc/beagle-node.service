@@ -9,11 +9,11 @@ After=time-sync.target
 
 [Service]
 Type=simple
-User=tdoa
-Group=tdoa
+User=beagle
+Group=beagle
 
 # Adjust path if installed via pip in a venv
-ExecStart=/home/tdoa/Beagle/env/bin/python -m beagle_node --config /etc/beagle/node.yaml
+ExecStart=/home/beagle/beagle_rdf/env/bin/python -m beagle_node --config /etc/beagle/node.yaml
 
 # Restart on any failure; wait 5 s between attempts.
 # Exit code 75 (EX_TEMPFAIL) = config changed, automatic restart requested.

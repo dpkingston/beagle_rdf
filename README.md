@@ -1568,12 +1568,12 @@ sudo cp config/bootstrap.example.yaml /etc/beagle/bootstrap.yaml
 sudo $EDITOR /etc/beagle/bootstrap.yaml   # fill in server_url, node_id, node_secret
 
 # Create service user
-sudo useradd -r -s /usr/sbin/nologin tdoa
-sudo usermod -aG plugdev tdoa   # USB SDR access
+sudo useradd -r -s /usr/sbin/nologin beagle
+sudo usermod -aG plugdev beagle   # USB SDR access
 
 # Create config cache directory (used by bootstrap mode to survive reboots)
 sudo mkdir -p /var/cache/beagle
-sudo chown tdoa:tdoa /var/cache/beagle
+sudo chown beagle:beagle /var/cache/beagle
 
 # Enable and start
 sudo systemctl daemon-reload

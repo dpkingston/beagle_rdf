@@ -434,7 +434,7 @@ by default and non-root users cannot create it.  Set it up once per node host:
 
 ```bash
 sudo mkdir -p /var/cache/beagle
-sudo chown tdoa:tdoa /var/cache/beagle   # or whichever user runs the node
+sudo chown beagle:beagle /var/cache/beagle   # or whichever user runs the node
 ```
 
 If you run the node as a regular user without creating this directory, the node

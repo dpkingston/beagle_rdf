@@ -7,11 +7,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=tdoa
-Group=tdoa
+User=beagle
+Group=beagle
 
 # Adjust path if installed via pip in a venv
-ExecStart=/home/tdoa/Beagle/env/bin/beagle-server --config /etc/beagle/server.yaml
+ExecStart=/home/beagle/beagle_rdf/env/bin/beagle-server --config /etc/beagle/server.yaml
 
 # Restart on any failure; wait 5 s between attempts.
 Restart=on-failure
