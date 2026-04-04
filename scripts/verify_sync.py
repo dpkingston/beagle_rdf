@@ -11,12 +11,12 @@ confirm that the 19 kHz pilot is being reliably extracted.
 
 Primary usage (recommended) - uses the actual node receiver + pipeline config:
 --------------------------------------------------------------------
-python3 scripts/verify_sync.py --config tmp/node.rspduo.local.yaml --duration 30
-python3 scripts/verify_sync.py --config tmp/node.rtl-sdr.yaml --duration 30
+python3 scripts/verify_sync.py --config config/node.yaml --duration 30
 
-Simple usage - bare RTL-SDR only, no config file needed:
+Simple usage - bare SoapySDR device, no config file needed:
 --------------------------------------------------------------------
-python3 scripts/verify_sync.py --freq 99.9e6 --gain 0 --duration 30
+python3 scripts/verify_sync.py --device "driver=rtlsdr" --freq 99.9e6 --gain 30 --duration 30
+python3 scripts/verify_sync.py --device "driver=sdrplay" --freq 94.9e6 --gain auto --duration 30
 
 The --config path uses create_receiver() and the same pipeline parameters as
 the node, so any discrepancy between this script and the live node is eliminated.
@@ -58,8 +58,8 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--freq",     type=float, default=99.9e6, metavar="HZ",
                    help="FM station frequency (default 99.9e6 = KISW); --device mode only")
-    p.add_argument("--gain",     type=float, default=0.0, metavar="DB",
-                   help="Receiver gain in dB (default 0); --device mode only")
+    p.add_argument("--gain",     default="0", metavar="DB",
+                   help="Receiver gain in dB, or 'auto' for AGC (default 0); --device mode only")
     p.add_argument("--rate",     type=float, default=2_048_000.0, metavar="SPS",
                    help="Sample rate (default 2.048e6); --device mode only")
     p.add_argument("--duration", type=float, default=30.0, metavar="SEC",
@@ -81,10 +81,11 @@ def _make_pipeline(sdr_rate: float, period_ms: float) -> tuple:
     return dec, dem, det, sync_rate
 
 
-def _print_header(freq_hz: float, gain: float, sdr_rate: float, sync_rate: float,
+def _print_header(freq_hz: float, gain, sdr_rate: float, sync_rate: float,
                   duration: float, mode: str = "") -> None:
     mode_str = f"  [{mode}]" if mode else ""
-    print(f"Tuned to {freq_hz/1e6:.1f} MHz  gain={gain:.0f} dB  "
+    gain_str = str(gain) if isinstance(gain, str) else f"{gain:.0f} dB"
+    print(f"Tuned to {freq_hz/1e6:.1f} MHz  gain={gain_str}  "
           f"rate={sdr_rate/1e6:.3f} MSps{mode_str}")
     print(f"Pipeline: {SYNC_DEC}* decimation -> {sync_rate/1e3:.0f} kHz "
           f"-> FM demod -> 19 kHz pilot detector")
@@ -256,14 +257,20 @@ def run_simple(args: argparse.Namespace) -> int:
     sdr = SoapySDR.Device(devs[0])
     sdr.setSampleRate(SoapySDR.SOAPY_SDR_RX, 0, args.rate)
     sdr.setFrequency(SoapySDR.SOAPY_SDR_RX, 0, args.freq)
-    sdr.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, False)
-    sdr.setGain(SoapySDR.SOAPY_SDR_RX, 0, args.gain)
+    if str(args.gain).lower() == "auto":
+        sdr.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, True)   # AGC
+        gain_display = "auto"
+    else:
+        gain_val = float(args.gain)
+        sdr.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, False)
+        sdr.setGain(SoapySDR.SOAPY_SDR_RX, 0, gain_val)
+        gain_display = f"{gain_val:.0f} dB"
 
     rx = sdr.setupStream(SoapySDR.SOAPY_SDR_RX, SoapySDR.SOAPY_SDR_CF32, [0])
     sdr.activateStream(rx)
 
     dec, dem, det, sync_rate = _make_pipeline(args.rate, PERIOD_MS)
-    _print_header(args.freq, args.gain, args.rate, sync_rate, args.duration)
+    _print_header(args.freq, gain_display, args.rate, sync_rate, args.duration)
 
     buf_size = 131_072
     buf = np.zeros(buf_size, dtype=np.complex64)

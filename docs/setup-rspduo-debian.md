@@ -174,8 +174,13 @@ env/bin/python -c "import SoapySDR; print(SoapySDR.__file__)"
 
 ```bash
 cd ~/src/beagle_rdf
+# Using the node config (recommended -- uses the same receiver and settings as production):
 env/bin/python scripts/verify_sync.py \
-    --config config/node.rspduo.local.yaml --duration 30
+    --config config/node.yaml --duration 30
+
+# Or without a config file (quick check with a specific frequency and gain):
+env/bin/python scripts/verify_sync.py \
+    --device "driver=sdrplay" --freq 94.9e6 --gain auto --duration 30
 ```
 
 Expected output (Pi 5, outdoor discone, sync_period_ms=7.0, sync_lna_state=6):
