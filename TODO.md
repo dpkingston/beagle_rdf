@@ -3,52 +3,121 @@
 ## Contents
 
 **Outstanding**
-- [Project Name Change](#project-name-change)
-- [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
 - [Onset xcorr: investigate alternative detection methods](#onset-xcorr-investigate-alternative-detection-methods)
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
+- [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
 
 **Completed**
-- [[x] Node: Python GC pauses causing RSPduo FIFO overflows](#-node-python-gc-pauses-causing-rspduo-fifo-overflows)
-- [[x] Server: map rendering efficiency (O(n^2) node pairs per poll)](#-server-map-rendering-efficiency-on^2-node-pairs-per-poll)
-- [[x] Server: suppress HeatMap `max_val` UserWarning](#-server-suppress-heatmap-max_val-userwarning)
-- [[x] Node: onset_time_ns unit mismatch fix (3x drift)](#-node-onset_time_ns-unit-mismatch-fix-3-drift)
-- [[x] Node: RSPduo TCXO hardware timestamps (Part A)](#-node-rspduo-tcxo-hardware-timestamps-part-a)
-- [[x] Node: pipeline_offset_ns calibration (node-mapleleaf / node-greenlake)](#-node-pipeline_offset_ns-calibration-node-mapleleaf--node-greenlake)
-- [[x] Node: GC pause monitoring (gc.callbacks)](#-node-gc-pause-monitoring-gccallbacks)
-- [[x] Server: --log-level CLI flag](#-server---log-level-cli-flag)
-- [[x] Server: heartbeat access log lines demoted to DEBUG](#-server-heartbeat-access-log-lines-demoted-to-debug)
-- [[x] Server: min_nodes=2 to enable 2-node LOP fixes](#-server-min_nodes2-to-enable-2-node-lop-fixes)
-- [[x] Server: LOP baseline-too-short log demoted to DEBUG](#-server-lop-baseline-too-short-log-demoted-to-debug)
-- [[x] Web UI: User Management, Login, 2FA, Google OAuth](#-web-ui-user-management-login-2fa-google-oauth)
-- [[x] Code Cleanup: items from code review](#-code-cleanup-items-from-code-review)
-- [[x] Node CPU usage: decimator + sync BPF optimisation](#-node-cpu-usage-decimator--sync-bpf-optimisation)
-- [[x] Database Maintenance: automated pruning script](#-database-maintenance-automated-pruning-script)
-- [[x] Web UI: Group Management from GUI](#-web-ui-group-management-from-gui)
-- [[x] Web UI: Node Management from GUI](#-web-ui-node-management-from-gui)
-- [[x] Web UI: Node Frequency Groups](#-web-ui-node-frequency-groups)
-- [[x] Web UI: Per-Node Enable/Disable Control](#-web-ui-per-node-enabledisable-control)
-- [[x] Web UI: 2-Node Line-of-Position Display](#-web-ui-2-node-line-of-position-display)
-- [[x] Freq-hop: mid-transmission arrival suppression](#-freq-hop-mid-transmission-arrival-suppression)
-- [[x] User Registration and Authentication](#-user-registration-and-authentication)
-- [[x] Node SNR reporting: noise floor tracking + GET /api/v1/nodes/snr](#-node-snr-reporting-noise-floor-tracking--get-apiv1nodessnr)
-- [[x] SoapySDRPlay3: RSPduo DT-IR support via pothosware fork](#-soapysdrplay3-rspduo-dt-ir-support-via-pothosware-fork)
-- [[x] Hide Fixes (non-destructive reset)](#-hide-fixes-non-destructive-reset)
-- [[x] Fixed Time Window Display (start-time to end-time)](#-fixed-time-window-display-start-time-to-end-time)
-- [[x] Fix Popup: Human-Readable Timestamp on Hover](#-fix-popup-human-readable-timestamp-on-hover)
-- [[x] Remote Node Registration and Config Management](#-remote-node-registration-and-config-management)
-- [[x] Mock Generator - PTT Onset/Offset Pattern](#-mock-generator----ptt-onsetoffset-pattern)
-- [[x] Heat Map Mode](#heat-map-mode-)
-- [[x] Web Page Control - Reset Fix History](#web-page-control----reset-fix-history-)
-- [[x] Live Map Updates via SSE](#live-map-updates-via-sse-)
-- [[x] Web Page Control - Dynamic Aging Window](#web-page-control----dynamic-aging-window-)
-- [[x] Map Control Panel](#map-control-panel-)
-- [[x] Fix Layer Ordering + Hyperbola Generator](#fix-layer-ordering--hyperbola-generator-)
+- [✓ Web UI: User Management, Login, 2FA, Google OAuth](#web-ui-user-management-login-2fa-google-oauth)
+- [✓ Code Cleanup: items from code review](#code-cleanup-items-from-code-review)
+- [✓ Database Maintenance: automated pruning script](#database-maintenance-automated-pruning-script)
+- [✓ Node CPU usage: decimator + sync BPF optimisation](#node-cpu-usage-decimator-sync-bpf-optimisation)
+- [✓ Web UI: 2-Node Line-of-Position Display](#web-ui-2-node-line-of-position-display)
+- [✓ Web UI: Per-Node Enable/Disable Control](#web-ui-per-node-enabledisable-control)
+- [✓ Web UI: Group Management from GUI](#web-ui-group-management-from-gui)
+- [✓ Web UI: Node Management from GUI](#web-ui-node-management-from-gui)
+- [✓ Web UI: Node Frequency Groups](#web-ui-node-frequency-groups)
+- [✓ Project Name Change](#project-name-change)
+- [✓ Node: Python GC pauses causing RSPduo FIFO overflows](#node-python-gc-pauses-causing-rspduo-fifo-overflows)
+- [✓ Server: map rendering efficiency (O(n^2) node pairs per poll)](#server-map-rendering-efficiency-on2-node-pairs-per-poll)
+- [✓ Server: suppress HeatMap `max_val` UserWarning](#server-suppress-heatmap-max_val-userwarning)
+- [✓ Node: onset_time_ns unit mismatch fix (3x drift)](#node-onset_time_ns-unit-mismatch-fix-3x-drift)
+- [✓ Node: RSPduo TCXO hardware timestamps (Part A)](#node-rspduo-tcxo-hardware-timestamps-part-a)
+- [✓ Node: pipeline_offset_ns calibration (node-mapleleaf / node-greenlake)](#node-pipeline_offset_ns-calibration-node-mapleleaf-node-greenlake)
+- [✓ Node: GC pause monitoring (gc.callbacks)](#node-gc-pause-monitoring-gccallbacks)
+- [✓ Server: --log-level CLI flag](#server-log-level-cli-flag)
+- [✓ Server: heartbeat access log lines demoted to DEBUG](#server-heartbeat-access-log-lines-demoted-to-debug)
+- [✓ Server: min_nodes=2 to enable 2-node LOP fixes](#server-min_nodes2-to-enable-2-node-lop-fixes)
+- [✓ Server: LOP baseline-too-short log demoted to DEBUG](#server-lop-baseline-too-short-log-demoted-to-debug)
+- [✓ Freq-hop: mid-transmission arrival suppression](#freq-hop-mid-transmission-arrival-suppression)
+- [✓ Node SNR reporting: noise floor tracking + GET /api/v1/nodes/snr](#node-snr-reporting-noise-floor-tracking-get-apiv1nodessnr)
+- [✓ SoapySDRPlay3: RSPduo DT-IR support via pothosware fork](#soapysdrplay3-rspduo-dt-ir-support-via-pothosware-fork)
+- [✓ User Registration and Authentication](#user-registration-and-authentication)
+- [✓ Hide Fixes (non-destructive reset)](#hide-fixes-non-destructive-reset)
+- [✓ Fixed Time Window Display (start-time to end-time)](#fixed-time-window-display-start-time-to-end-time)
+- [✓ Fix Popup: Human-Readable Timestamp on Hover](#fix-popup-human-readable-timestamp-on-hover)
+- [✓ Remote Node Registration and Config Management](#remote-node-registration-and-config-management)
+- [✓ Mock Generator - PTT Onset/Offset Pattern](#mock-generator-ptt-onsetoffset-pattern)
+- [✓ Heat Map Mode](#heat-map-mode)
+- [✓ Web Page Control - Reset Fix History](#web-page-control-reset-fix-history)
+- [✓ Live Map Updates via SSE](#live-map-updates-via-sse)
+- [✓ Web Page Control - Dynamic Aging Window](#web-page-control-dynamic-aging-window)
+- [✓ Map Control Panel](#map-control-panel)
+- [✓ Fix Layer Ordering + Hyperbola Generator](#fix-layer-ordering-hyperbola-generator)
 
 ---
 
+### Onset xcorr: investigate alternative detection methods
 
-### [x] Web UI: User Management, Login, 2FA, Google OAuth
+Onset xcorr between nodes succeeds only ~20-30% of the time, while offset
+xcorr succeeds ~85%. The root cause is that PA turn-on transitions are
+broader and noisier than the sharp PA shutoff, producing wide/ambiguous
+xcorr peaks that fail the lag or SNR gate.
+
+Offset xcorr provides +/-7 usec TDOA accuracy when it works, so offset-only
+fixes are viable. But onset detection would double the fix rate.
+
+**Ideas to explore (post-deployment):**
+- Alternative onset snippet anchoring (e.g. matched filter for known PA
+  ramp profiles, or energy-onset detection instead of derivative-peak)
+- Frequency-domain xcorr with phase weighting (GCC-PHAT) which may be
+  more robust to amplitude ramp differences between nodes
+- Onset-from-offset: use the offset TDOA to predict what the onset TDOA
+  should be for the same transmission (same transmitter position)
+- Longer onset snippets or adaptive snippet length based on transition
+  sharpness
+- Hardware-specific snippet processing: the RTL-SDR raw IQ shows a 5-10 dB
+  power ramp at the start of each target block (R820T gain settling beyond
+  the PLL settling period); this distorts onset snippets for weaker signals
+
+**Current state (2026-03-26):** Offset xcorr is the reliable path.
+node-discovery (RTL-SDR freq_hop) participates in ~50% of groups (limited by
+70% target duty cycle). When offset xcorr succeeds for all 3 nodes, the
+3-node fix residual is 5-8 usec. The server falls back to sync_delta
+(+/-3.5 ms) when xcorr fails, which makes that node an outlier.
+
+---
+
+### Refresh real-data test fixtures
+
+`tests/fixtures/real_event_pairs.json` contains 92 event pairs captured on
+2026-03-23 from node-mapleleaf/node-greenlake. The snippet format is stale: onset
+snippets were captured before the derivative-peak anchoring change
+(2026-03-25, commit `a69a2f7`) which places the steepest rise at 25% of
+the snippet. The old data has transitions at arbitrary positions.
+
+**Action:** Collect a fresh set of event pairs from a live run with the
+current codebase, including pairs from all three node types (node-mapleleaf,
+node-greenlake, node-discovery) to cover both RSPduo and RTL-SDR snippet formats.
+Delete the stale `real_event_pairs_20260323.json` (identical copy of the
+tracked file).
+
+Also consider updating `scripts/test_derivative_xcorr.py` to use the
+refreshed fixture data.
+
+---
+
+### SoapySDR: long-term migration to direct SDRplay API
+
+The `tdoa-hw-timestamps` branch in `dpkingston/SoapySDRPlay3` (permanent fork
+of `pothosware/SoapySDRPlay3`) provides the TCXO hardware timestamps we need.
+The pothosware maintainer has indicated they are unlikely to accept the
+timestamp changes upstream.
+
+**Short term:** Continue using the fork. Rebase `tdoa-hw-timestamps` onto
+upstream `rspduo-dual-independent-tuners` (or main, once it merges) as needed.
+
+**Long term:** Replace `rspduo.py`'s SoapySDR calls with direct SDRplay API
+calls via `ctypes` or a small C extension. The SoapySDR abstraction layer
+provides no benefit for the RSPduo dual-tuner path - `rspduo.py` is already
+device-specific. Direct API access gives full control over `firstSampleNum`
+timestamps without maintaining a C++ fork.
+
+---
+
+## Completed
+
+### ✓ Web UI: User Management, Login, 2FA, Google OAuth
 
 Full browser-based authentication and user management for the web UI.
 
@@ -87,8 +156,9 @@ Full browser-based authentication and user management for the web UI.
 Files: `map_output.py`, `api.py`, `db.py`, `auth.py`, `config.py`, `pyproject.toml`
 Tests: 15 new tests in `test_auth.py` (543 total, all passing)
 
+---
 
-### [x] Code Cleanup: items from code review
+### ✓ Code Cleanup: items from code review
 
 All five items from the 2026-03-12 code review have been addressed:
 
@@ -112,7 +182,7 @@ All five items from the 2026-03-12 code review have been addressed:
 
 ---
 
-### [x] Database Maintenance: automated pruning script
+### ✓ Database Maintenance: automated pruning script
 
 Implemented as `scripts/db_maintenance.py` - a cron-friendly script that:
 - Prunes events and fixes older than a configurable retention window (default 14 days)
@@ -132,9 +202,7 @@ See ADMIN.md "Automated maintenance" section for cron setup.
 
 ---
 
----
-
-### [x] Node CPU usage: decimator + sync BPF optimisation
+### ✓ Node CPU usage: decimator + sync BPF optimisation
 
 **Observed (RSPduo hardware):** `python` consuming ~2/3 of one CPU core,
 `sdrplay_api` consuming ~1/3.  Total: ~1 full core just to run the node pipeline.
@@ -178,7 +246,7 @@ leaving substantial headroom for Raspberry Pi 5 deployment.
 
 ---
 
-### [x] Web UI: 2-Node Line-of-Position Display
+### ✓ Web UI: 2-Node Line-of-Position Display
 
 When only 2 nodes have valid xcorr readings for a transmission, the solver
 currently skips the fix entirely (a unique 2-D position requires >= 3 nodes).
@@ -239,7 +307,7 @@ outlier.
 
 ---
 
-### [x] Web UI: Per-Node Enable/Disable Control
+### ✓ Web UI: Per-Node Enable/Disable Control
 
 Add a panel in the server web UI that lets an operator see all known nodes and
 toggle whether each one contributes events to fix computation, without needing
@@ -296,7 +364,7 @@ interim CLI alternative.
 
 ---
 
-### [x] Web UI: Group Management from GUI
+### ✓ Web UI: Group Management from GUI
 
 Full group lifecycle management from the Groups tab - no CLI needed.
 
@@ -311,7 +379,7 @@ Full group lifecycle management from the Groups tab - no CLI needed.
 
 ---
 
-### [x] Web UI: Node Management from GUI
+### ✓ Web UI: Node Management from GUI
 
 Full node lifecycle management from the Nodes tab - no CLI needed.
 
@@ -329,7 +397,7 @@ Full node lifecycle management from the Nodes tab - no CLI needed.
 
 ---
 
-### [x] Web UI: Node Frequency Groups
+### ✓ Web UI: Node Frequency Groups
 
 Allow nodes to be assigned to named **frequency groups**, where all nodes in a
 group share the same sync signal and target channel list.  Groups are mutually
@@ -469,57 +537,7 @@ python scripts/manage_nodes.py --db ... group-remove south-cluster
 
 ---
 
-### Onset xcorr: investigate alternative detection methods
-
-Onset xcorr between nodes succeeds only ~20-30% of the time, while offset
-xcorr succeeds ~85%. The root cause is that PA turn-on transitions are
-broader and noisier than the sharp PA shutoff, producing wide/ambiguous
-xcorr peaks that fail the lag or SNR gate.
-
-Offset xcorr provides +/-7 usec TDOA accuracy when it works, so offset-only
-fixes are viable. But onset detection would double the fix rate.
-
-**Ideas to explore (post-deployment):**
-- Alternative onset snippet anchoring (e.g. matched filter for known PA
-  ramp profiles, or energy-onset detection instead of derivative-peak)
-- Frequency-domain xcorr with phase weighting (GCC-PHAT) which may be
-  more robust to amplitude ramp differences between nodes
-- Onset-from-offset: use the offset TDOA to predict what the onset TDOA
-  should be for the same transmission (same transmitter position)
-- Longer onset snippets or adaptive snippet length based on transition
-  sharpness
-- Hardware-specific snippet processing: the RTL-SDR raw IQ shows a 5-10 dB
-  power ramp at the start of each target block (R820T gain settling beyond
-  the PLL settling period); this distorts onset snippets for weaker signals
-
-**Current state (2026-03-26):** Offset xcorr is the reliable path.
-node-discovery (RTL-SDR freq_hop) participates in ~50% of groups (limited by
-70% target duty cycle). When offset xcorr succeeds for all 3 nodes, the
-3-node fix residual is 5-8 usec. The server falls back to sync_delta
-(+/-3.5 ms) when xcorr fails, which makes that node an outlier.
-
----
-
-### Refresh real-data test fixtures
-
-`tests/fixtures/real_event_pairs.json` contains 92 event pairs captured on
-2026-03-23 from node-mapleleaf/node-greenlake. The snippet format is stale: onset
-snippets were captured before the derivative-peak anchoring change
-(2026-03-25, commit `a69a2f7`) which places the steepest rise at 25% of
-the snippet. The old data has transitions at arbitrary positions.
-
-**Action:** Collect a fresh set of event pairs from a live run with the
-current codebase, including pairs from all three node types (node-mapleleaf,
-node-greenlake, node-discovery) to cover both RSPduo and RTL-SDR snippet formats.
-Delete the stale `real_event_pairs_20260323.json` (identical copy of the
-tracked file).
-
-Also consider updating `scripts/test_derivative_xcorr.py` to use the
-refreshed fixture data.
-
----
-
-### Project Name Change
+### ✓ Project Name Change
 
 Rename the project from `beagle_node` / `Beagle` to a new single-word name (TBD).
 This is a comprehensive rename affecting package names, imports, documentation,
@@ -621,31 +639,7 @@ branches are open.
 
 ---
 
----
-
-### SoapySDR: long-term migration to direct SDRplay API
-
-The `tdoa-hw-timestamps` branch in `dpkingston/SoapySDRPlay3` (permanent fork
-of `pothosware/SoapySDRPlay3`) provides the TCXO hardware timestamps we need.
-The pothosware maintainer has indicated they are unlikely to accept the
-timestamp changes upstream.
-
-**Short term:** Continue using the fork. Rebase `tdoa-hw-timestamps` onto
-upstream `rspduo-dual-independent-tuners` (or main, once it merges) as needed.
-
-**Long term:** Replace `rspduo.py`'s SoapySDR calls with direct SDRplay API
-calls via `ctypes` or a small C extension. The SoapySDR abstraction layer
-provides no benefit for the RSPduo dual-tuner path - `rspduo.py` is already
-device-specific. Direct API access gives full control over `firstSampleNum`
-timestamps without maintaining a C++ fork.
-
----
-
----
-
-## Completed
-
-### [x] Node: Python GC pauses causing RSPduo FIFO overflows
+### ✓ Node: Python GC pauses causing RSPduo FIFO overflows
 
 Periodic buffer backlog events occurred on both nodes every ~20-30 minutes.
 Root cause was a memory leak causing the gen-2 heap to grow to ~890 MB, triggering
@@ -658,7 +652,7 @@ grows unboundedly. Monitoring hook remains in place as an early-warning system.
 
 ---
 
-### [x] Server: map rendering efficiency (O(n^2) node pairs per poll)
+### ✓ Server: map rendering efficiency (O(n^2) node pairs per poll)
 
 `_collect_hyperbola_features()` in `map_output.py` iterates C(n,2) node pairs
 for every fix on every `/map/data` poll. With many fixes this will not scale.
@@ -671,7 +665,7 @@ clicks (different `max_age_s`) get their own cache slot, also invalidated on nex
 
 ---
 
-### [x] Server: suppress HeatMap `max_val` UserWarning
+### ✓ Server: suppress HeatMap `max_val` UserWarning
 
 Folium deprecated the `max_val` parameter to `HeatMap`; passing it produced a
 `UserWarning` on every map render.
@@ -681,7 +675,7 @@ Folium deprecated the `max_val` parameter to `HeatMap`; passing it produced a
 
 ---
 
-### [x] Node: onset_time_ns unit mismatch fix (3x drift)
+### ✓ Node: onset_time_ns unit mismatch fix (3x drift)
 
 `onset_time_ns` was growing ~3x faster than wall clock because `m.target_sample`
 (in sync-decimated space, 256 kHz) was incorrectly treated as target-decimated
@@ -699,7 +693,7 @@ and LOP fixes appeared immediately after deployment.
 
 ---
 
-### [x] Node: RSPduo TCXO hardware timestamps (Part A)
+### ✓ Node: RSPduo TCXO hardware timestamps (Part A)
 
 Replaced per-buffer `time.time_ns()` calls (~400 usec NTP jitter) with TCXO-derived
 timestamps anchored once at the first SDRplay callback.
@@ -720,7 +714,7 @@ Long-term plan: direct SDRplay API (see outstanding item).
 
 ---
 
-### [x] Node: pipeline_offset_ns calibration (node-mapleleaf / node-greenlake)
+### ✓ Node: pipeline_offset_ns calibration (node-mapleleaf / node-greenlake)
 
 Calibrated using colocated_pair_test.py xcorr analysis (N=12 onset pairs,
 SNR 1.8-2.2). Measured +86 usec mean TDOA_AB; split 50/50:
@@ -729,7 +723,7 @@ SNR 1.8-2.2). Measured +86 usec mean TDOA_AB; split 50/50:
 
 ---
 
-### [x] Node: GC pause monitoring (gc.callbacks)
+### ✓ Node: GC pause monitoring (gc.callbacks)
 
 Added `gc.callbacks` hook in `main.py` that logs any GC cycle lasting >50 ms
 at WARNING level, to diagnose whether Python gen-2 collections are causing the
@@ -738,7 +732,7 @@ will be applied after startup to eliminate gen-2 pauses on the stable heap.
 
 ---
 
-### [x] Server: --log-level CLI flag
+### ✓ Server: --log-level CLI flag
 
 Added `--log-level DEBUG|INFO|WARNING|ERROR` to `beagle-server` CLI.  Previously
 uvicorn ran at INFO internally while the app logger had no CLI control, causing
@@ -746,7 +740,7 @@ DEBUG messages to appear on the console. The flag now controls both layers.
 
 ---
 
-### [x] Server: heartbeat access log lines demoted to DEBUG
+### ✓ Server: heartbeat access log lines demoted to DEBUG
 
 `_HeartbeatAccessFilter` on `uvicorn.access` logger suppresses
 `POST /api/v1/heartbeat` access log lines at INFO (returns `False` from filter
@@ -754,7 +748,7 @@ to drop the record outright). At `--log-level DEBUG` they pass through unchanged
 
 ---
 
-### [x] Server: min_nodes=2 to enable 2-node LOP fixes
+### ✓ Server: min_nodes=2 to enable 2-node LOP fixes
 
 Server config `min_nodes` changed from 3 to 2. With only two RSPduo nodes
 deployed, 2-node groups now proceed directly to the LOP solver rather than
@@ -762,7 +756,7 @@ requiring outlier rejection from a larger group.
 
 ---
 
-### [x] Server: LOP baseline-too-short log demoted to DEBUG
+### ✓ Server: LOP baseline-too-short log demoted to DEBUG
 
 `_collect_hyperbola_features()` fires once per node pair per fix per map poll.
 For co-located nodes (all pairs fail the baseline check) this produced repeated
@@ -770,7 +764,7 @@ INFO log noise. Demoted to DEBUG.
 
 ---
 
-### [x] Freq-hop: mid-transmission arrival suppression
+### ✓ Freq-hop: mid-transmission arrival suppression
 
 Suppresses false onset events that fire when the RTL-SDR freq_hop node returns
 to the target channel and finds a carrier already transmitting.  These events
@@ -803,7 +797,7 @@ Tests: `TestMidTransmissionSuppression` in `tests/unit/test_carrier_detect.py`
 
 ---
 
-### [x] Node SNR reporting: noise floor tracking + GET /api/v1/nodes/snr
+### ✓ Node SNR reporting: noise floor tracking + GET /api/v1/nodes/snr
 
 Each node tracks a rolling noise floor estimate (dB) and computes onset/offset
 detection thresholds relative to it.  Values are included in the heartbeat
@@ -811,7 +805,7 @@ payload and exposed via `GET /api/v1/nodes` and the map UI node tooltips.
 
 ---
 
-### [x] SoapySDRPlay3: RSPduo DT-IR support via pothosware fork
+### ✓ SoapySDRPlay3: RSPduo DT-IR support via pothosware fork
 
 RSPduo dual-tuner independent-receiver (DT-IR) support was first developed as
 a local fork with custom patches, then superseded when pothosware merged
@@ -824,7 +818,7 @@ long-term migration item and the hardware timestamps completed item above.
 
 ---
 
-### [x] User Registration and Authentication
+### ✓ User Registration and Authentication
 
 Per-user accounts with role-based access control for the server API.
 
@@ -848,7 +842,7 @@ Per-user accounts with role-based access control for the server API.
 
 ---
 
-### [x] Hide Fixes (non-destructive reset)
+### ✓ Hide Fixes (non-destructive reset)
 
 Replace the destructive "Reset Fix History" (DELETE) with a non-destructive
 "Hide Fixes" mechanism. Hide state is **per browser session** (localStorage)
@@ -885,7 +879,7 @@ a personal view preference, not persistent server state.
 
 ---
 
-### [x] Fixed Time Window Display (start-time to end-time)
+### ✓ Fixed Time Window Display (start-time to end-time)
 
 Allow the map to display fixes within an **absolute** time window rather than
 only a rolling age from now. Complements the existing age-preset buttons.
@@ -917,7 +911,7 @@ fixed window - the effective lower bound is `max(hiddenBefore, fromS)`.
 
 ---
 
-### [x] Fix Popup: Human-Readable Timestamp on Hover
+### ✓ Fix Popup: Human-Readable Timestamp on Hover
 
 When the user mouses over (or clicks) a fix marker on the map, show the
 time of the fix in a human-readable form alongside the existing fields.
@@ -948,7 +942,7 @@ operationally.
 
 ---
 
-### [x] Remote Node Registration and Config Management
+### ✓ Remote Node Registration and Config Management
 
 Allow nodes to register with the server and receive their operating configuration
 over the network, rather than requiring a local `node.yaml` on every box.
@@ -1254,7 +1248,7 @@ auth system is implemented with bcrypt, existing hashes are migrated on first lo
 
 ---
 
-### [x] Mock Generator - PTT Onset/Offset Pattern
+### ✓ Mock Generator - PTT Onset/Offset Pattern
 
 `synthesise_onset()` + `synthesise_offset()`: each transmission follows
 onset -> [N s hold] -> offset -> [M s gap] -> next onset.
@@ -1264,7 +1258,9 @@ Both onset and offset fixes are polled and printed separately.
 New CLI: `--no-offset`, `--duration-mean-s`, `--gap-mean-s`.
 Scenario YAML: `transmission_duration_mean/sigma_s`, `inter_transmission_gap_mean/sigma_s`.
 
-### Heat Map Mode [x]
+---
+
+### ✓ Heat Map Mode
 
 Persistent Gaussian-weighted heat map accumulated in SQLite (`heatmap_cells` table).
 Each fix spreads weight across nearby cells using `exp(-(di^2+dj^2)/(2sigma^2))`.
@@ -1273,18 +1269,24 @@ Config: `map.heatmap_cell_m`, `map.heatmap_sigma_cells`.
 API: `DELETE /api/v1/heatmap` clears accumulated data.
 Control panel: "Reset Heat Map" button.
 
-### Web Page Control - Reset Fix History [x]
+---
+
+### ✓ Web Page Control - Reset Fix History
 
 `DELETE /api/v1/fixes` endpoint (auth-gated) truncates the fixes table.
 "Reset Fix History" button in the map control panel with confirmation dialog.
 
-### Live Map Updates via SSE [x]
+---
+
+### ✓ Live Map Updates via SSE
 
 `GET /api/v1/fixes/stream` SSE endpoint; page auto-reloads on `new_fix` event.
 LIVE / NEW FIX / OFFLINE status badge in control panel header.
 25 s keepalive comments to prevent proxy timeouts.
 
-### Web Page Control - Dynamic Aging Window [x]
+---
+
+### ✓ Web Page Control - Dynamic Aging Window
 
 Age-preset buttons (1 m / 5 m / 15 m / 1 h / 6 h / 24 h / ALL) in the map
 control panel.  Clicking a button calls `loadFixes(maxAgeS)` which fetches
@@ -1294,18 +1296,26 @@ call `loadFixes()` instead of `window.location.reload()`.
 `build_fix_geojson()` in `map_output.py` produces the GeoJSON; `build_map()`
 produces the static shell (node markers, heatmap) with no embedded fix data.
 
-### Map Control Panel [x]
+---
+
+### ✓ Map Control Panel
 
 Dark translucent panel (top-right): server label, time, last fix age, age-preset
 buttons, fix count (updated dynamically by `loadFixes()`). Extensible: new controls
 require only a new key in `_render_control_panel`, a row/button in `_PANEL_HTML`,
 and a JS handler reading `TDOA.<key>`.
 
-### Fix Layer Ordering + Hyperbola Generator [x]
+---
+
+### ✓ Fix Layer Ordering + Hyperbola Generator
 
 Fixed newest-on-top ordering (Leaflet z-order requires oldest-first insertion).
 Replaced broken grid-sampling hyperbola generator with analytic parametric form
 using `x = sgn*a*cosh(t)`, `y = b_h*sinh(t)` in a local flat-earth frame.
+
+---
+
+Copyright (c) 2026 Douglas P. Kingston III. MIT License - see [LICENSE](LICENSE).
 
 ---
 
