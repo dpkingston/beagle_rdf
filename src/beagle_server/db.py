@@ -176,6 +176,14 @@ async def open_registry_db(path: str) -> aiosqlite.Connection:
         await db.execute(
             "ALTER TABLE nodes ADD COLUMN freq_group_id TEXT"
         )
+    if "config_file_path" not in cols:
+        await db.execute(
+            "ALTER TABLE nodes ADD COLUMN config_file_path TEXT"
+        )
+    if "config_file_mtime" not in cols:
+        await db.execute(
+            "ALTER TABLE nodes ADD COLUMN config_file_mtime REAL"
+        )
     # Idempotent migration: add TOTP columns to users if missing.
     async with db.execute("PRAGMA table_info(users)") as cur:
         user_cols = {row[1] for row in await cur.fetchall()}
@@ -595,6 +603,98 @@ async def update_node_config(
     )
     await db.commit()
     return new_version
+
+
+async def update_node_config_file_meta(
+    db: aiosqlite.Connection,
+    node_id: str,
+    file_path: str | None,
+    file_mtime: float | None,
+) -> None:
+    """Update the config file path and mtime for a node."""
+    await db.execute(
+        "UPDATE nodes SET config_file_path = ?, config_file_mtime = ? WHERE node_id = ?",
+        (file_path, file_mtime, node_id),
+    )
+    await db.commit()
+
+
+async def reload_node_configs(db: aiosqlite.Connection) -> list[dict[str, Any]]:
+    """Stat config files for all nodes and reload any that have changed.
+
+    For each node with a config_file_path, stats the file and compares its
+    mtime to config_file_mtime.  If the file is newer (or mtime was never
+    recorded), re-reads the file, updates config_json, bumps config_version,
+    and records the new mtime.
+
+    Returns a list of dicts describing what changed:
+      [{"node_id": ..., "new_version": ..., "status": "updated"|"unchanged"|"missing"|"error"}, ...]
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    async with db.execute(
+        "SELECT node_id, config_file_path, config_file_mtime, config_version "
+        "FROM nodes WHERE config_file_path IS NOT NULL AND config_file_path != ''"
+    ) as cur:
+        nodes = [dict(r) for r in await cur.fetchall()]
+
+    results: list[dict[str, Any]] = []
+    for node in nodes:
+        node_id = node["node_id"]
+        fpath = _Path(node["config_file_path"])
+        old_mtime = node["config_file_mtime"]
+
+        if not fpath.exists():
+            results.append({"node_id": node_id, "status": "missing",
+                            "path": str(fpath)})
+            continue
+
+        try:
+            current_mtime = fpath.stat().st_mtime
+        except OSError as exc:
+            results.append({"node_id": node_id, "status": "error",
+                            "error": str(exc)})
+            continue
+
+        if old_mtime is not None and current_mtime <= old_mtime:
+            results.append({"node_id": node_id, "status": "unchanged"})
+            continue
+
+        # File is newer -- reload it
+        try:
+            text = fpath.read_text()
+            if fpath.suffix.lower() in (".yaml", ".yml"):
+                import yaml  # type: ignore[import]
+                obj = yaml.safe_load(text)
+            else:
+                obj = _json.loads(text)
+            config_json = _json.dumps(obj)
+        except Exception as exc:
+            results.append({"node_id": node_id, "status": "error",
+                            "error": f"parse error: {exc}"})
+            continue
+
+        new_version = node["config_version"] + 1
+        await db.execute(
+            "UPDATE nodes SET config_json = ?, config_version = ?, "
+            "config_file_mtime = ? WHERE node_id = ?",
+            (config_json, new_version, current_mtime, node_id),
+        )
+        await db.execute(
+            """
+            INSERT INTO node_config_history
+                (node_id, version, config_json, changed_by, changed_at, diff_note)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (node_id, new_version, config_json, "reload-configs",
+             time.time(), f"reloaded from {fpath}"),
+        )
+        results.append({"node_id": node_id, "status": "updated",
+                        "new_version": new_version})
+
+    await db.commit()
+    return results
 
 
 async def delete_node(db: aiosqlite.Connection, node_id: str) -> bool:

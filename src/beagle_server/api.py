@@ -1549,6 +1549,24 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return {"node_id": node_id, "deleted": True}
 
     # -------------------------------------------------------------------
+    # POST /api/v1/nodes/reload-configs
+    # Stat config files for all nodes and reload any that have changed.
+    # -------------------------------------------------------------------
+    @app.post("/api/v1/nodes/reload-configs")
+    async def reload_node_configs(
+        request: Request,
+        registry_db: aiosqlite.Connection = Depends(get_registry_db),
+    ) -> dict[str, Any]:
+        """Reload node configs from disk for any files that have changed."""
+        await auth_module.require_admin(request, registry_db)
+        results = await db_module.reload_node_configs(registry_db)
+        updated = [r for r in results if r["status"] == "updated"]
+        # Invalidate cached nodes so event ingest picks up new configs
+        for r in updated:
+            request.app.state.known_nodes.pop(r["node_id"], None)
+        return {"results": results, "updated": len(updated)}
+
+    # -------------------------------------------------------------------
     # Frequency groups CRUD (admin-gated)
     # -------------------------------------------------------------------
 

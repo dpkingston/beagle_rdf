@@ -473,6 +473,7 @@ _PANEL_HTML = """
       <button class="tdoa-btn-sm ton" id="tdoa-enable-all-btn">Enable All</button>
       <button class="tdoa-btn-sm toff" id="tdoa-disable-all-btn">Disable All</button>
       <button class="tdoa-btn-sm ton" id="tdoa-register-node-btn">+ Register</button>
+      <button class="tdoa-btn-sm" id="tdoa-reload-configs-btn">Reload Configs</button>
     </div>
     <div id="tdoa-node-reg-area" style="display:none"></div>
     <div id="tdoa-node-list">
@@ -1489,6 +1490,26 @@ var _usersTabActive = false;
     var disableAllBtn = document.getElementById('tdoa-disable-all-btn');
     if (enableAllBtn)  enableAllBtn.addEventListener('click',  function () { setBulk(true);  });
     if (disableAllBtn) disableAllBtn.addEventListener('click', function () { setBulk(false); });
+
+    /* Reload Configs button */
+    var reloadBtn = document.getElementById('tdoa-reload-configs-btn');
+    if (reloadBtn) reloadBtn.addEventListener('click', function () {
+        reloadBtn.disabled = true;
+        reloadBtn.textContent = 'Reloading...';
+        _fetch('/api/v1/nodes/reload-configs', { method: 'POST', headers: _hdr() })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function (data) {
+                var n = data.updated || 0;
+                reloadBtn.textContent = n > 0 ? n + ' updated' : 'No changes';
+                setTimeout(function () { reloadBtn.textContent = 'Reload Configs'; reloadBtn.disabled = false; }, 3000);
+                if (n > 0) loadNodes();
+            })
+            .catch(function (e) {
+                console.error('[Beagle] reload-configs error:', e);
+                reloadBtn.textContent = 'Error';
+                setTimeout(function () { reloadBtn.textContent = 'Reload Configs'; reloadBtn.disabled = false; }, 3000);
+            });
+    });
 })();
 
 /* Auto-refresh nodes every 10 s when the nodes tab is active */

@@ -150,6 +150,14 @@ def _open_db(db_path: str) -> sqlite3.Connection:
     con = sqlite3.connect(str(p))
     con.row_factory = sqlite3.Row
     con.executescript(_NODES_SCHEMA)
+    # Idempotent migrations for columns added after initial schema.
+    cols = {row[1] for row in con.execute("PRAGMA table_info(nodes)").fetchall()}
+    if "freq_group_id" not in cols:
+        con.execute("ALTER TABLE nodes ADD COLUMN freq_group_id TEXT")
+    if "config_file_path" not in cols:
+        con.execute("ALTER TABLE nodes ADD COLUMN config_file_path TEXT")
+    if "config_file_mtime" not in cols:
+        con.execute("ALTER TABLE nodes ADD COLUMN config_file_mtime REAL")
     con.commit()
     return con
 
@@ -325,10 +333,16 @@ def cmd_set_config(con: sqlite3.Connection, args: argparse.Namespace) -> None:
     if args.config_file and args.config_json:
         sys.exit("error: specify --config-file or --config-json, not both.")
 
+    file_path: str | None = None
+    file_mtime: float | None = None
+
     if args.config_file:
         obj = _load_config_file(args.config_file)
         new_json: str | None = json.dumps(obj)
         diff_note = f"loaded from {args.config_file}"
+        # Remember absolute path and mtime for reload-configs
+        file_path = str(Path(args.config_file).resolve())
+        file_mtime = Path(args.config_file).stat().st_mtime
     elif args.config_json:
         # Validate it parses
         try:
@@ -347,8 +361,9 @@ def cmd_set_config(con: sqlite3.Connection, args: argparse.Namespace) -> None:
         changed_by="manage_nodes.py", diff_note=diff_note,
     )
     con.execute(
-        "UPDATE nodes SET config_json = ?, config_version = ? WHERE node_id = ?",
-        (new_json, new_version, node_id),
+        "UPDATE nodes SET config_json = ?, config_version = ?, "
+        "config_file_path = ?, config_file_mtime = ? WHERE node_id = ?",
+        (new_json, new_version, file_path, file_mtime, node_id),
     )
     con.commit()
 
@@ -356,6 +371,8 @@ def cmd_set_config(con: sqlite3.Connection, args: argparse.Namespace) -> None:
         print(f"Config cleared for '{node_id}' (version -> {new_version}).")
     else:
         print(f"Config updated for '{node_id}' (version -> {new_version}).")
+        if file_path:
+            print(f"  file: {file_path} (mtime tracked for reload)")
 
 
 def cmd_enable(con: sqlite3.Connection, args: argparse.Namespace) -> None:
