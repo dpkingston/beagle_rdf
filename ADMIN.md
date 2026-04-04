@@ -428,13 +428,13 @@ into the node's bootstrap configuration (`/etc/beagle/bootstrap.yaml` or equival
 
 ### Config cache directory
 
-Bootstrap-mode nodes cache the fetched config to `/var/cache/tdoa/node_config.json`
+Bootstrap-mode nodes cache the fetched config to `/var/cache/beagle/node_config.json`
 by default so they can start without network access.  This directory does not exist
 by default and non-root users cannot create it.  Set it up once per node host:
 
 ```bash
-sudo mkdir -p /var/cache/tdoa
-sudo chown tdoa:tdoa /var/cache/tdoa   # or whichever user runs the node
+sudo mkdir -p /var/cache/beagle
+sudo chown tdoa:tdoa /var/cache/beagle   # or whichever user runs the node
 ```
 
 If you run the node as a regular user without creating this directory, the node

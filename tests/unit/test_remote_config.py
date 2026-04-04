@@ -87,7 +87,7 @@ def test_bootstrap_config_accepts_required_fields() -> None:
 
 
 def test_bootstrap_config_default_cache_path() -> None:
-    assert _make_bootstrap().config_cache_path == "/var/cache/tdoa/node_config.json"
+    assert _make_bootstrap().config_cache_path == "/var/cache/beagle/node_config.json"
 
 
 def test_bootstrap_config_default_poll_interval() -> None:

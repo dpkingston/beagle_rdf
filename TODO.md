@@ -1062,7 +1062,7 @@ GET /api/v1/nodes/{node_id}/config
 ```
 Returns the current assigned config JSON plus a `config_version` integer and
 `config_etag` string. The node caches this to local disk
-(`/var/cache/tdoa/node_config.json`) so it can start on next boot without network.
+(`/var/cache/beagle/node_config.json`) so it can start on next boot without network.
 
 **Long-poll for updates (preferred push mechanism):**
 

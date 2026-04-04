@@ -24,8 +24,8 @@ node_secret: "replace-with-secret-from-manage-nodes-add"
 
 # Path where the fetched config is cached for offline startup.
 # Leave as default unless the filesystem layout requires otherwise.
-# Default: /var/cache/tdoa/node_config.json
-# config_cache_path: "/var/cache/tdoa/node_config.json"
+# Default: /var/cache/beagle/node_config.json
+# config_cache_path: "/var/cache/beagle/node_config.json"
 
 # How often to poll for config updates, in seconds.
 # The long-poll mechanism means updates are applied within ~1 s regardless
