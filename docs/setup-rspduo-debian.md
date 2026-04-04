@@ -258,16 +258,58 @@ names your driver version uses.
 - Indoor mag-mount or short whip: start at 3-4
 - State 9 = maximum attenuation; state 0 = minimum attenuation (most gain)
 
+**Remote configuration (optional):** If you plan to manage this node's config
+from the server instead of editing `node.yaml` locally, set up a
+`bootstrap.yaml` file.  See
+[Node Quick Start -- Option B](../README.md#option-b-remote-config-bootstrap)
+in the README for instructions.
+
 ---
 
-## 9. `pipeline_offset_ns` calibration
+## 9. Run the node
+
+With the config in place, start the node and verify it connects to the server
+and begins reporting events.
+
+**Using a local config file:**
+
+```bash
+cd ~/src/beagle_rdf
+env/bin/python -m beagle_node --config config/node.yaml
+```
+
+**Using remote config (bootstrap):**
+
+```bash
+env/bin/python -m beagle_node --bootstrap config/bootstrap.yaml
+```
+
+You should see log output showing:
+- `Beagle node starting` with the correct `node_id`
+- `Opening RSPduo (DT mode)` with the expected sync and target frequencies
+- Periodic sync events (no repeated `FM pilot quality below threshold` warnings)
+- `Measurement: onset ...` / `Measurement: offset ...` lines when a carrier is
+  detected on the target channel
+
+Press Ctrl-C to stop.  For production deployment as a systemd service, see
+[Production deployment](../README.md#production-deployment-systemd) in the
+README.
+
+---
+
+## 10. `pipeline_offset_ns` calibration (optional)
+
+This step is **not required** to get the system running.  Leave
+`pipeline_offset_ns: 0` for initial deployment and return to this once the
+node is operational and producing fixes.  The system works well without it --
+calibration only improves accuracy on the sync_delta fallback path.
 
 `pipeline_offset_ns` corrects a systematic bias in the **sync_delta** timing
-path - it is subtracted from `sync_delta_ns` before each event is submitted.
+path -- it is subtracted from `sync_delta_ns` before each event is submitted.
 
-**Important:** the xcorr primary TDOA path (~80% of pairs) is completely
-independent of `pipeline_offset_ns`.  Cross-correlation measures the physical
-carrier arrival time difference directly from the IQ snippets, with no
+**Why this is optional:** the xcorr primary TDOA path (~80% of pairs) is
+completely independent of `pipeline_offset_ns`.  Cross-correlation measures the
+physical carrier arrival time difference directly from the IQ snippets, with no
 reference to `sync_delta_ns` or wall-clock timestamps.  `pipeline_offset_ns`
 only affects the sync_delta fallback path (~20% of pairs, used when xcorr SNR
 is too low or snippets are absent).
