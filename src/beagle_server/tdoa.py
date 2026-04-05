@@ -401,7 +401,55 @@ def compute_tdoa_s(
     node_b = event_b.get("node_id", "?")
     event_type = event_a.get("event_type", "")
 
-    # --- xcorr (primary method when IQ snippets are available) ---
+    # --- sync_delta: coarse TDOA from sample counting ---
+    # sync_delta_ns = (carrier_sample - sync_sample) / sample_rate.
+    # This is precise to the sample boundary (16 usec at 62.5 kHz).
+    # The sync path correction removes sync signal propagation geometry,
+    # leaving the target signal arrival time difference.
+    delta_a = event_a.get("sync_delta_ns")
+    delta_b = event_b.get("sync_delta_ns")
+    if delta_a is None or delta_b is None:
+        logger.warning(
+            "Missing sync_delta_ns for %s<->%s (%s) - pair skipped",
+            node_a, node_b, event_type,
+        )
+        return None
+
+    raw_ns = float(delta_a) - float(delta_b)
+
+    correction_ns = path_delay_correction_ns(
+        sync_tx_lat=event_a["sync_tx_lat"],
+        sync_tx_lon=event_a["sync_tx_lon"],
+        node_a_lat=event_a["node_lat"],
+        node_a_lon=event_a["node_lon"],
+        node_b_lat=event_b["node_lat"],
+        node_b_lon=event_b["node_lon"],
+    )
+
+    # Pilot sync event disambiguation: resolve which pilot cycle each node
+    # locked to.  |true_TDOA| <= dist(A,B)/c << T_sync/2 = 3500 usec.
+    n = round((raw_ns + correction_ns) / _T_SYNC_NS)
+    if n != 0:
+        logger.debug(
+            "Pilot disambiguation %s<->%s (%s): n=%+d raw_ns=%+.0f->%+.0f ns",
+            node_a, node_b, event_type, n, raw_ns, raw_ns - n * _T_SYNC_NS,
+        )
+        raw_ns -= n * _T_SYNC_NS
+
+    coarse_tdoa_ns = raw_ns + correction_ns
+
+    # --- xcorr: sub-sample refinement when IQ snippets are available ---
+    # Both snippets are derivative-peak anchored (transition at a fixed
+    # position), so xcorr measures the residual sub-sample positioning error
+    # -- NOT an absolute TDOA.  The coarse TDOA from sync_delta carries the
+    # propagation geometry; xcorr refines it to sub-sample precision.
+    #
+    # Maximum acceptable refinement: a few samples.  Anything larger
+    # indicates a false xcorr peak or mis-paired snippets.
+    _MAX_XCORR_REFINEMENT_NS = 50_000.0  # 50 usec ~ 3 samples at 62.5 kHz
+
+    xcorr_refinement_ns = 0.0
+    xcorr_used = False
     iq_a = event_a.get("iq_snippet_b64", "")
     iq_b = event_b.get("iq_snippet_b64", "")
     if iq_a and iq_b:
@@ -415,71 +463,31 @@ def compute_tdoa_s(
             event_type=event_type,
         )
         if xcorr_snr >= min_xcorr_snr:
-            max_lag_ns = max_xcorr_baseline_km * 1_000.0 / _C_M_PER_S * 1e9
-            if abs(xcorr_lag_ns) <= max_lag_ns:
+            if abs(xcorr_lag_ns) <= _MAX_XCORR_REFINEMENT_NS:
+                xcorr_refinement_ns = xcorr_lag_ns
+                xcorr_used = True
+            else:
                 logger.info(
-                    "TDOA (xcorr): %.1f ns (SNR=%.2f, type=%s) %s<->%s",
-                    xcorr_lag_ns, xcorr_snr, event_type, node_a, node_b,
+                    "xcorr refinement too large: %.1f ns > %.0f ns limit for %s<->%s (%s); "
+                    "using sync_delta only",
+                    xcorr_lag_ns, _MAX_XCORR_REFINEMENT_NS, node_a, node_b, event_type,
                 )
-                return float(xcorr_lag_ns / 1e9)
-            logger.info(
-                "xcorr rejected (lag): %.1f ns > geo limit %.1f ns (%.0f km) for %s<->%s (%s); "
-                "falling back to sync_delta",
-                xcorr_lag_ns, max_lag_ns, max_xcorr_baseline_km, node_a, node_b, event_type,
-            )
         else:
-            logger.info(
-                "xcorr rejected (SNR): %.2f < %.2f for %s<->%s (%s); falling back to sync_delta",
+            logger.debug(
+                "xcorr SNR too low: %.2f < %.2f for %s<->%s (%s); using sync_delta only",
                 xcorr_snr, min_xcorr_snr, node_a, node_b, event_type,
             )
 
-    # --- sync_delta subtraction (fallback) ---
-    delta_a = event_a.get("sync_delta_ns")
-    delta_b = event_b.get("sync_delta_ns")
-    if delta_a is None or delta_b is None:
-        logger.warning(
-            "Missing sync_delta_ns for %s<->%s (%s) - pair skipped",
-            node_a, node_b, event_type,
+    tdoa_ns = coarse_tdoa_ns + xcorr_refinement_ns
+
+    if xcorr_used:
+        logger.info(
+            "TDOA (sync_delta+xcorr): %.1f ns (coarse=%.1f + xcorr=%.1f, SNR=%.2f, type=%s) %s<->%s",
+            tdoa_ns, coarse_tdoa_ns, xcorr_refinement_ns, xcorr_snr, event_type, node_a, node_b,
         )
-        return None
-
-    raw_ns = float(delta_a) - float(delta_b)
-
-    # --- Sync-tx path-delay correction ---
-    # Apply first so that the corrected value is comparable across node pairs.
-    correction_ns = path_delay_correction_ns(
-        sync_tx_lat=event_a["sync_tx_lat"],
-        sync_tx_lon=event_a["sync_tx_lon"],
-        node_a_lat=event_a["node_lat"],
-        node_a_lon=event_a["node_lon"],
-        node_b_lat=event_b["node_lat"],
-        node_b_lon=event_b["node_lon"],
-    )
-
-    # --- Pilot sync event disambiguation ---
-    # Two nodes independently lock to the FM pilot at different cycle boundaries,
-    # so raw_ns = true_TDOA + n x T_sync for some unknown integer n.
-    #
-    # Geometric disambiguation: |true_TDOA| <= dist(A,B)/c <= 100 km/c ~ 333 usec,
-    # which is << T_sync/2 = 3500 usec.  Therefore:
-    #
-    #   n = round((raw_ns + correction_ns) / T_sync)
-    #
-    # is unambiguous - no onset_time_ns (NTP) required.  There are at most 3
-    # candidate values of n (-1, 0, +1) and the geometry selects the unique
-    # one that leaves |true_TDOA| < T_sync/2.
-    n = round((raw_ns + correction_ns) / _T_SYNC_NS)
-    if n != 0:
-        logger.debug(
-            "Pilot disambiguation %s<->%s (%s): n=%+d raw_ns=%+.0f->%+.0f ns",
-            node_a, node_b, event_type, n, raw_ns, raw_ns - n * _T_SYNC_NS,
+    else:
+        logger.info(
+            "TDOA (sync_delta): %.1f ns (raw=%.1f + corr=%.1f, type=%s) %s<->%s",
+            tdoa_ns, raw_ns, correction_ns, event_type, node_a, node_b,
         )
-        raw_ns -= n * _T_SYNC_NS
-
-    tdoa_ns = raw_ns + correction_ns
-
-    logger.info(
-        "TDOA (sync_delta): %.1f ns (raw=%.1f + corr=%.1f, type=%s) %s<->%s",
-        tdoa_ns, raw_ns, correction_ns, event_type, node_a, node_b,
-    )
     return float(tdoa_ns / 1e9)

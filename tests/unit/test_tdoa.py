@@ -348,27 +348,102 @@ def test_compute_tdoa_path_delay_applied():
 # compute_tdoa_s - xcorr primary path
 # ---------------------------------------------------------------------------
 
-def test_compute_tdoa_xcorr_preferred_over_sync_delta():
+def test_compute_tdoa_xcorr_refines_sync_delta():
     """
-    When IQ snippets are present and xcorr SNR is sufficient, the xcorr lag
-    is returned rather than sync_delta.
+    xcorr provides sub-sample refinement on top of the sync_delta TDOA.
 
-    Node pair with a known 10-sample propagation delay (~156 usec at 64 kHz).
-    The sync_delta values are deliberately set to 0 for both nodes, so if
-    sync_delta were used the result would be 0; xcorr must give the non-zero lag.
+    Co-located nodes (same lat/lon) with sync_delta encoding a known delay.
+    The IQ snippets have a small sub-sample offset that xcorr should detect
+    and add to the coarse sync_delta TDOA.
     """
     fs = 64_000.0
-    prop_delay = 10
-    expected_s = prop_delay / fs
+    # Small prop delay (2 samples) -- within the refinement gate
+    prop_delay = 2
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+    # sync_delta encodes 100 usec coarse TDOA
+    sd_a = 100_100_000  # 100.1 ms
+    sd_b = 100_000_000  # 100.0 ms -- difference = 100 usec
+    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=sd_a, snippet_b64=_iq_to_b64(iq_a),
                                      sample_rate_hz=fs, node_id="node-a")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=sd_b, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b")
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
-    assert abs(tdoa) > 1e-9, "Expected non-zero xcorr lag; sync_delta fallback may have fired"
-    assert abs(tdoa - expected_s) < 50e-6  # within 50 usec of true propagation delay
+    # Coarse TDOA = 100 usec, xcorr refinement adds ~31 usec (2 samples at 64 kHz)
+    # Combined should be ~131 usec
+    expected_coarse = 100_000 / 1e9  # 100 usec
+    expected_fine = prop_delay / fs   # ~31 usec
+    assert abs(tdoa - (expected_coarse + expected_fine)) < 20e-6  # within 20 usec
+
+
+def test_compute_tdoa_non_colocated_uses_sync_delta_geometry():
+    """
+    NON-CO-LOCATED nodes: xcorr of anchored snippets measures ~0 (both
+    transitions placed at 3/4), but the true TDOA is large (60+ usec).
+    sync_delta must carry the geometric TDOA; xcorr only refines it.
+
+    This is the test that would have caught the bug where xcorr replaced
+    sync_delta entirely -- returning ~0 instead of the true ~60 usec TDOA.
+
+    Setup: node A is 2.5 km from the transmitter, node B is 21 km away.
+    The sync station is at a third location.  sync_delta values are set
+    so that after path correction and disambiguation, the TDOA matches
+    the known geometry.
+    """
+    # Geometry matching the real Magnolia repeater scenario:
+    # sync_tx (KUOW):  47.6553, -122.3110
+    # node_a:          47.6719, -122.4042  (near transmitter)
+    # node_b:          47.5599, -122.1475  (21 km away)
+    # target_tx:       47.6509, -122.3915  (Magnolia repeater)
+    sync_tx = (47.6553, -122.3110)
+    node_a_pos = (47.6719, -122.4042)
+    node_b_pos = (47.5599, -122.1475)
+    target_tx = (47.6509, -122.3915)
+
+    # Compute true propagation delays
+    d_sync_a = haversine_m(sync_tx[0], sync_tx[1], node_a_pos[0], node_a_pos[1])
+    d_sync_b = haversine_m(sync_tx[0], sync_tx[1], node_b_pos[0], node_b_pos[1])
+    d_target_a = haversine_m(target_tx[0], target_tx[1], node_a_pos[0], node_a_pos[1])
+    d_target_b = haversine_m(target_tx[0], target_tx[1], node_b_pos[0], node_b_pos[1])
+
+    # True TDOA = (target_to_A - target_to_B) / c
+    true_tdoa_s = (d_target_a - d_target_b) / _C_M_S
+
+    # Construct sync_delta values that encode this geometry.
+    # sync_delta = (time target arrives) - (time sync arrives) at each node
+    # = (d_target / c) - (d_sync / c) + arbitrary common offset
+    base_ns = 50_000_000  # 50 ms common offset (arbitrary)
+    sd_a = int(base_ns + (d_target_a - d_sync_a) / _C_M_S * 1e9)
+    sd_b = int(base_ns + (d_target_b - d_sync_b) / _C_M_S * 1e9)
+
+    # Both snippets have the transition at the SAME position (anchored).
+    # xcorr will measure ~0 lag between them.
+    iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=0, snr_db=25.0)
+
+    ev_a = _make_event_with_snippet(
+        node_a_pos[0], node_a_pos[1], sync_delta_ns=sd_a,
+        snippet_b64=_iq_to_b64(iq_a), node_id="node-a",
+    )
+    ev_a["sync_tx_lat"] = sync_tx[0]
+    ev_a["sync_tx_lon"] = sync_tx[1]
+
+    ev_b = _make_event_with_snippet(
+        node_b_pos[0], node_b_pos[1], sync_delta_ns=sd_b,
+        snippet_b64=_iq_to_b64(iq_b), node_id="node-b",
+    )
+    ev_b["sync_tx_lat"] = sync_tx[0]
+    ev_b["sync_tx_lon"] = sync_tx[1]
+
+    tdoa = compute_tdoa_s(ev_a, ev_b)
+    assert tdoa is not None
+
+    # The true TDOA is about -61 usec (node A is closer to the transmitter).
+    # The old code (xcorr replaces sync_delta) would return ~0.
+    # The new code (sync_delta + xcorr refinement) must return ~-61 usec.
+    assert abs(tdoa - true_tdoa_s) < 20e-6, (
+        f"TDOA {tdoa*1e6:.1f} usec != expected {true_tdoa_s*1e6:.1f} usec; "
+        f"xcorr may be replacing sync_delta instead of refining it"
+    )
 
 
 def test_compute_tdoa_xcorr_falls_back_on_low_snr():
@@ -429,24 +504,50 @@ def test_compute_tdoa_xcorr_geo_filter_rejects_implausible_lag():
     )
 
 
-def test_compute_tdoa_xcorr_geo_filter_accepts_plausible_lag():
+def test_compute_tdoa_xcorr_refinement_within_gate():
     """
-    xcorr lag within the geometric plausibility limit is accepted.
+    xcorr lag within the refinement gate (50 usec) is accepted and added
+    to the sync_delta TDOA.
 
-    10-sample prop delay at 64 kHz ~ 156 usec.  With max_xcorr_baseline_km=100
-    (max TDOA ~ 333 usec), the lag is within bounds and xcorr result is used.
+    1-sample prop delay at 64 kHz ~ 15.6 usec -- well within the gate.
+    sync_delta is 0 for both co-located nodes, so the result should be
+    the xcorr refinement alone (~15.6 usec).
     """
     fs = 64_000.0
-    prop_delay = 10  # ~ 156 usec
+    prop_delay = 1  # ~ 15.6 usec -- within 50 usec refinement gate
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
                                      sample_rate_hz=fs, node_id="node-a")
     ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b")
-    tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3, max_xcorr_baseline_km=100.0)
+    tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
     assert tdoa is not None
-    assert abs(tdoa) > 1e-9, "Expected non-zero xcorr lag; sync_delta fallback may have fired"
-    assert abs(tdoa - prop_delay / fs) < 50e-6  # within 50 usec of true delay
+    assert abs(tdoa - prop_delay / fs) < 10e-6  # within 10 usec of true delay
+
+
+def test_compute_tdoa_xcorr_large_lag_rejected_as_refinement():
+    """
+    xcorr lag exceeding the refinement gate (50 usec) is rejected.
+    The result falls back to sync_delta only.
+
+    10-sample prop delay at 64 kHz ~ 156 usec -- exceeds 50 usec gate.
+    With sync_delta = 0 for both nodes, the result should be ~0 (sync_delta),
+    NOT ~156 usec (the xcorr lag).
+    """
+    fs = 64_000.0
+    prop_delay = 10  # ~ 156 usec -- exceeds refinement gate
+    iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
+    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+                                     sample_rate_hz=fs, node_id="node-a")
+    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+                                     sample_rate_hz=fs, node_id="node-b")
+    tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
+    assert tdoa is not None
+    # xcorr refinement rejected (156 usec > 50 usec gate), sync_delta = 0
+    assert abs(tdoa) < 10e-6, (
+        f"Expected ~0 (sync_delta only); got {tdoa*1e6:.1f} usec -- "
+        f"xcorr refinement gate may not have fired"
+    )
 
 
 def test_compute_tdoa_colocated_xcorr_near_zero():

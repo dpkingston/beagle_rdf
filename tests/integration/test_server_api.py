@@ -98,23 +98,17 @@ _MIN_SYNC_DELTA: int = 0
 
 def _make_node_snippet_b64(sync_delta_ns: int) -> str:
     """
-    Encode inter-node TDOA into a snippet's carrier content offset.
+    Generate an IQ snippet with the PA transition anchored at a fixed position.
 
-    All snippets have the same onset (_BASE_ONSET) and ramp (_RAMP_SAMPLES).
-    The carrier content starts carrier_delay = sync_delta_ns - _MIN_SYNC_DELTA
-    (in samples at _SNIPPET_RATE_HZ) into the shared AM-carrier sequence.
-    Power-envelope xcorr of centred windows gives:
-        lag_ns ~ (carrier_delay_A - carrier_delay_B) / rate * 1e9
-               = sync_delta_A - sync_delta_B
-    Note: xcorr lag = raw sync_delta difference (without path correction), so
-    xcorr-as-primary in compute_tdoa_s gives the wrong answer for this synthetic
-    data; see test_fix_accuracy_within_500m for the xfail marker.
+    All snippets have the same onset (_BASE_ONSET) and ramp (_RAMP_SAMPLES)
+    at the same position, matching real derivative-peak anchored snippets.
+    The carrier content is identical across nodes -- xcorr measures ~0
+    refinement.  The TDOA is carried entirely by sync_delta_ns.
     """
     onset = _BASE_ONSET
     ramp_end = onset + _RAMP_SAMPLES
     n_carrier = _SNIPPET_LEN - ramp_end
-    carrier_delay = round((sync_delta_ns - _MIN_SYNC_DELTA) * _SNIPPET_RATE_HZ / 1e9)
-    carrier_offset = carrier_delay
+    carrier_offset = 0  # same content for all nodes (anchored snippets)
 
     rng_noise = np.random.default_rng(42)  # fixed seed -> same noise for every node
     iq = np.zeros(_SNIPPET_LEN, dtype=np.complex64)
@@ -321,15 +315,6 @@ def test_three_nodes_produce_fix(client: TestClient) -> None:
     assert len(fixes) >= 1, "Expected at least one fix"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Synthetic snippets encode sync_delta differences, not physical propagation "
-        "delays, so xcorr-as-primary returns the uncorrected lag without path "
-        "correction, degrading fix accuracy.  Will be replaced by a real distributed "
-        "node fixture once hardware captures are available."
-    ),
-    strict=False,
-)
 def test_fix_accuracy_within_500m(client: TestClient) -> None:
     """Fix should be within 500 m of the true target location."""
     t0 = int(time.time() * 1e9)
