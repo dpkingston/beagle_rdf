@@ -224,6 +224,26 @@ def solve_fix(
 
     node_ids = [e["node_id"] for e in node_events]
 
+    # Check for degenerate geometry: all nodes effectively co-located.
+    # With no meaningful baseline, the solver returns the search center
+    # which is useless.  Log and skip.
+    max_baseline_m = 0.0
+    for i in range(len(node_events)):
+        for j in range(i + 1, len(node_events)):
+            d = haversine_m(
+                node_events[i]["node_lat"], node_events[i]["node_lon"],
+                node_events[j]["node_lat"], node_events[j]["node_lon"],
+            )
+            if d > max_baseline_m:
+                max_baseline_m = d
+    if max_baseline_m < 100.0:
+        logger.info(
+            "Degenerate geometry: max baseline %.0f m < 100 m "
+            "(all nodes co-located); fix skipped for %s",
+            max_baseline_m, node_ids,
+        )
+        return None
+
     # Build TDOA pairs from sync_delta subtraction + path-delay correction.
     pairs: list[tuple[int, int, float]] = []
     for i in range(len(node_events)):
