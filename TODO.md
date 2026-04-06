@@ -3,6 +3,7 @@
 ## Contents
 
 **Outstanding**
+- [Remote node restart trigger](#remote-node-restart-trigger)
 - [Onset xcorr: investigate alternative detection methods](#onset-xcorr-investigate-alternative-detection-methods)
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
 - [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
@@ -44,6 +45,27 @@
 - [✓ Web Page Control - Dynamic Aging Window](#web-page-control-dynamic-aging-window)
 - [✓ Map Control Panel](#map-control-panel)
 - [✓ Fix Layer Ordering + Hyperbola Generator](#fix-layer-ordering-hyperbola-generator)
+
+---
+
+### Remote node restart trigger
+
+Add a mechanism to remotely trigger a node restart from the server UI or API.
+When a node is running under systemd with `Restart=on-failure`, the server
+can signal it to exit with code 75 (EX_TEMPFAIL), causing systemd to restart
+it with the updated config.
+
+**Motivation:** Config changes that require a full restart (sync station
+coordinates, SDR hardware params, sample rate) cannot be hot-reloaded.
+Currently the only way to restart a remote node is SSH access or asking
+the operator to do it manually. A server-side "restart node" button would
+allow the admin to trigger a clean restart remotely.
+
+**Approach:** Add a `restart_requested` flag to the node's config response.
+The node's config poll thread checks this flag; when set, it logs a message
+and calls `sys.exit(75)`. The server UI gets a "Restart" button per node
+(with armed confirmation). The flag is cleared after one delivery so the
+node doesn't restart in a loop.
 
 ---
 
