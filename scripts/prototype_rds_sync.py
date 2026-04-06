@@ -663,13 +663,23 @@ def decode_rds_pysdr(iq: np.ndarray, verbose: bool = False) -> dict:
     if groups:
         pi_code = (groups[0][0] << 8) | groups[0][1]
 
+    # Map M&M symbol positions back to 250 kHz sync stream coordinates.
+    # Chain: 250k ->/10-> 25k ->*19/25-> 19k -> M&M -> symbols
+    # Reverse: pos_250k = pos_19k * (25/19) * 10 + lpf_group_delay
+    # lpf_group_delay = (101-1)//2 = 50 samples at 250 kHz
+    _LPF_DELAY = 50  # (numtaps-1)//2 for the 101-tap LPF
+    symbol_positions_250k = np.array(mm_indices, dtype=np.float64) * (25.0 / 19.0) * 10.0 + _LPF_DELAY
+
+    # Differential decode shifts by 1 symbol, so bit positions start at index 1
+    bit_positions_250k = symbol_positions_250k[1:] if len(symbol_positions_250k) > 1 else np.array([])
+
     return {
         "groups": groups,
         "pi_code": pi_code,
         "n_bits": len(bits),
         "n_symbols": N_s,
         "sync_bit_index": sync_bit_index,
-        "mm_indices": mm_indices,
+        "bit_positions_250k": bit_positions_250k,
         "synced": synced,
     }
 
@@ -704,11 +714,25 @@ def main():
         print("Full RDS Decode (PySDR chain)")
         print("=" * 60)
         result = decode_rds_pysdr(iq, verbose=args.verbose)
+        duration = len(iq) / SDR_RATE
         print(f"\nGroups decoded: {len(result['groups'])}")
         if result['pi_code']:
             print(f"PI code: 0x{result['pi_code']:04X}")
         print(f"Bits: {result['n_bits']}")
         print(f"Still synced: {result['synced']}")
+
+        bp = result['bit_positions_250k']
+        if len(bp) > 2:
+            intervals = np.diff(bp)
+            expected = SYNC_RATE / RDS_BIT_RATE
+            jitter_samples = np.std(intervals - expected)
+            print(f"\nBit transition timing (250 kHz sync stream):")
+            print(f"  Transitions: {len(bp)} ({len(bp)/duration:.0f}/sec)")
+            print(f"  Interval: {np.mean(intervals):.2f} +/- {jitter_samples:.3f} samples")
+            print(f"  Jitter: {jitter_samples/SYNC_RATE*1e6:.2f} usec")
+            print(f"  (pilot sync: ~143/sec; RDS: {len(bp)/duration:.0f}/sec = "
+                  f"{len(bp)/duration/143:.1f}x more)")
+
         if result['groups']:
             print("\nDecoded groups:")
             for g in result['groups']:
