@@ -1555,6 +1555,8 @@ Clock
 ## Production deployment (systemd)
 
 ```bash
+sudo mkdir -p /etc/beagle
+
 # Local config approach:
 sudo cp config/node.yaml /etc/beagle/node.yaml
 sudo $EDITOR /etc/beagle/node.yaml
@@ -1564,14 +1566,13 @@ sudo cp config/bootstrap.example.yaml /etc/beagle/bootstrap.yaml
 sudo $EDITOR /etc/beagle/bootstrap.yaml   # fill in server_url, node_id, node_secret
 
 # Create service user
-sudo useradd -r -s /usr/sbin/nologin beagle
-sudo usermod -m -aG plugdev beagle   # USB SDR access
+sudo useradd -m -r -s /usr/sbin/nologin beagle
+sudo usermod -aG plugdev beagle   # USB SDR access
 
 # Install the service
 sudo cp etc/beagle-node.service /etc/systemd/system/
 # if necessary, update location of beagle_rdf directory you want to use
 sudo $EDITOR /etc/systemd/system/beagle-node.service
-sudo mkdir -p /etc/beagle
 
 # Create config cache directory (used by bootstrap mode to survive reboots)
 sudo mkdir -p /var/cache/beagle /var/lib/beagle
