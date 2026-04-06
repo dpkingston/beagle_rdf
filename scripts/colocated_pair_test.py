@@ -538,31 +538,27 @@ def run_db_analysis(args: argparse.Namespace) -> None:
                 src["tdoa_ns"].append(float(tdoa_ns))
 
             # --- sync_delta method ---
-            # Compute TDOA via sync_delta subtraction + pilot disambiguation.
-            # This is the same path used for real TDOA fixes.  For co-located
-            # nodes the result should be 0 (after pipeline_offset calibration).
+            # Compute TDOA via sync_delta subtraction + geometric disambiguation.
+            # This matches compute_tdoa_s exactly: the disambiguation uses the
+            # path delay correction (geometric), NOT the wall-clock onset_time
+            # difference.  Wall-clock disambiguation was a hold-over from when
+            # T_sync was 7 ms (pilot period); with RDS sync at 842 usec, NTP
+            # jitter alone can push n far off and reapply the wall-clock offset.
             delta_a = ev_a.get("sync_delta_ns")
             delta_b = ev_b.get("sync_delta_ns")
             sync_method = "no sync_delta"
             if delta_a is not None and delta_b is not None:
-                onset_a = ev_a.get("onset_time_ns")
-                onset_b = ev_b.get("onset_time_ns")
                 raw_ns = float(delta_a) - float(delta_b)
-                n_periods = 0
-                if onset_a is not None and onset_b is not None:
-                    onset_diff_ns = float(onset_a) - float(onset_b)
-                    n_periods = round((raw_ns - onset_diff_ns) / _T_SYNC_NS)
-                    raw_ns -= n_periods * _T_SYNC_NS
-                    sync_method = f"sync_delta (n={n_periods:+d})"
-                    if n_periods != 0:
-                        n_sync_disambig += 1
-                else:
-                    sync_method = "sync_delta (no onset->no disambig)"
                 path_corr_ns = path_delay_correction_ns(
                     ev_a["sync_tx_lat"], ev_a["sync_tx_lon"],
                     ev_a["node_lat"], ev_a["node_lon"],
                     ev_b["node_lat"], ev_b["node_lon"],
                 )
+                n_periods = round((raw_ns + path_corr_ns) / _T_SYNC_NS)
+                if n_periods != 0:
+                    raw_ns -= n_periods * _T_SYNC_NS
+                    n_sync_disambig += 1
+                sync_method = f"sync_delta (n={n_periods:+d})"
                 sync_tdoa_ab_ns.append(raw_ns + path_corr_ns)
                 n_sync_ok += 1
             # ---
