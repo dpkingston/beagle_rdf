@@ -391,11 +391,11 @@ def test_compute_tdoa_non_colocated_uses_sync_delta_geometry():
     the known geometry.
     """
     # Geometry matching the real Magnolia repeater scenario:
-    # sync_tx (KUOW):  47.6553, -122.3110
+    # sync_tx (KUOW):  47.61576, -122.30919  (FCC-documented)
     # node_a:          47.6719, -122.4042  (near transmitter)
     # node_b:          47.5599, -122.1475  (21 km away)
     # target_tx:       47.6509, -122.3915  (Magnolia repeater)
-    sync_tx = (47.6553, -122.3110)
+    sync_tx = (47.61576, -122.30919)
     node_a_pos = (47.6719, -122.4042)
     node_b_pos = (47.5599, -122.1475)
     target_tx = (47.6509, -122.3915)

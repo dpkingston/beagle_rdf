@@ -7,6 +7,7 @@
 - [Onset xcorr: investigate alternative detection methods](#onset-xcorr-investigate-alternative-detection-methods)
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
 - [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
+- [manage_nodes: add group-update command](#manage_nodes-add-group-update-command)
 
 **Completed**
 - [✓ Web UI: User Management, Login, 2FA, Google OAuth](#web-ui-user-management-login-2fa-google-oauth)
@@ -134,6 +135,39 @@ calls via `ctypes` or a small C extension. The SoapySDR abstraction layer
 provides no benefit for the RSPduo dual-tuner path - `rspduo.py` is already
 device-specific. Direct API access gives full control over `firstSampleNum`
 timestamps without maintaining a C++ fork.
+
+---
+
+### manage_nodes: add group-update command
+
+`scripts/manage_nodes.py` has `group-add`, `group-list`, `group-show`,
+`group-remove`, and `group-set-node` commands but no `group-update`.  To
+fix coordinates or other fields on an existing freq group, the only
+options are direct SQL UPDATE on `tdoa_registry.db` or HTTP PATCH via
+the web UI.
+
+**Motivation:** Discovered when fixing the stale Magnolia KUOW coordinates
+on 2026-04-06.  The freq-group sync_station_lat/lon overrides the
+per-node `primary_station` in the API response (api.py:1407-1424), so
+correcting the per-node config file alone has no effect for nodes
+assigned to a freq group.  Hand-rolling the SQL UPDATE was awkward and
+required also bumping `config_version` and writing to
+`node_config_history` to trigger long-poll updates.
+
+**Approach:** Add `cmd_group_update` mirroring the HTTP PATCH endpoint
+(`api.py:patch_group`).  Should:
+1. Accept partial updates (label, sync_freq_hz, sync_station_id,
+   sync_station_lat, sync_station_lon, target_channels).
+2. Bump `config_version` on all member nodes when any frequency-plan
+   field changes (mirror `bump_group_members_version` from db.py).
+3. Write a row to `node_config_history` for each bumped node.
+4. Validate that the group exists; print a friendly error otherwise.
+
+Usage example:
+```
+scripts/manage_nodes.py group-update Magnolia \
+    --sync-station-lat 47.61576 --sync-station-lon -122.30919
+```
 
 ---
 

@@ -56,7 +56,7 @@ The following stations provide good coverage across the Seattle/Eastside area:
 | Station | Frequency | Transmitter Location | Notes |
 |---------|-----------|---------------------|-------|
 | KISW | 99.9 MHz | 47.6253 deg N, 122.3563 deg W (Queen Anne Hill) | Primary; used in TDOAv1/v2 |
-| KUOW | 94.9 MHz | 47.6553 deg N, 122.3110 deg W (Capitol Hill) | Secondary; good cross-check |
+| KUOW | 94.9 MHz | 47.61576 deg N, 122.30919 deg W | Primary; FCC-documented |
 | KEXP | 90.3 MHz | 47.6619 deg N, 122.3487 deg W (Capitol Hill) | Tertiary option |
 | KING-FM | 98.1 MHz | 47.5235 deg N, 122.1306 deg W (Cougar Mountain) | Useful for eastern nodes |
 
