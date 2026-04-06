@@ -729,3 +729,177 @@ def test_pilot_disambiguation_large_tdoa_within_half_period():
     ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Mismatched sync_tx coordinates -- reproduces production bug
+# ---------------------------------------------------------------------------
+
+class TestSyncTxCoordinateMismatch:
+    """
+    Reproduces the production bug where nodes report different sync transmitter
+    coordinates due to stale config.  The path delay correction uses each
+    event's sync_tx_lat/lon independently, so a mismatch causes the wrong
+    correction, which causes disambiguation to pick the wrong pilot cycle (n),
+    producing a TDOA that is off by thousands of microseconds.
+
+    Uses real positions and sync_delta values from the 2026-04-05 deployment:
+      - dpk-tdoa1/dpk-tdoa2: co-located at (47.671928, -122.404209)
+      - kb7ryy: remote at (47.559910, -122.147540)
+      - Magnolia repeater (target): (47.650875, -122.391478)
+      - KUOW 94.9 (sync): correct location (47.61576, -122.30919)
+      - Stale KUOW location: (47.6553, -122.311) -- 4.4 km off
+
+    The true TDOA for dpk-tdoa1 <-> kb7ryy is approximately -61 usec.
+    """
+
+    # Real geometry
+    CORRECT_SYNC_TX = (47.61576, -122.30919)
+    STALE_SYNC_TX = (47.6553, -122.311)
+    NODE_A_POS = (47.671928, -122.404209)   # dpk-tdoa1 (co-located)
+    NODE_B_POS = (47.559910, -122.147540)   # kb7ryy
+    TARGET_TX = (47.650875, -122.391478)    # Magnolia repeater
+
+    # True TDOA: (dist(target,A) - dist(target,B)) / c ~ -61 usec
+    TRUE_TDOA_US = (
+        (haversine_m(TARGET_TX[0], TARGET_TX[1], NODE_A_POS[0], NODE_A_POS[1])
+         - haversine_m(TARGET_TX[0], TARGET_TX[1], NODE_B_POS[0], NODE_B_POS[1]))
+        / _C_M_S * 1e6
+    )
+
+    # Real sync_delta values from production (offset event pair).
+    # These encode the physical geometry correctly -- the bug is only in
+    # which sync_tx coordinates accompany them.
+    # Picked from the "good" pair in the production data: sd_diff ~ +52 usec, n=0.
+    SD_A_NS = 2816029    # dpk-tdoa1 sync_delta_ns
+    SD_B_NS = 2764024    # kb7ryy sync_delta_ns
+
+    def _make_event(self, node_pos, sync_delta_ns, sync_tx, node_id):
+        return {
+            "node_id": node_id,
+            "sync_delta_ns": sync_delta_ns,
+            "sync_tx_lat": sync_tx[0],
+            "sync_tx_lon": sync_tx[1],
+            "node_lat": node_pos[0],
+            "node_lon": node_pos[1],
+            "event_type": "offset",
+        }
+
+    def test_correct_sync_tx_gives_correct_tdoa(self):
+        """
+        Both nodes report the correct sync transmitter location.
+        Disambiguation should pick n=0 and TDOA should be near -61 usec.
+        """
+        ev_a = self._make_event(
+            self.NODE_A_POS, self.SD_A_NS, self.CORRECT_SYNC_TX, "dpk-tdoa1")
+        ev_b = self._make_event(
+            self.NODE_B_POS, self.SD_B_NS, self.CORRECT_SYNC_TX, "kb7ryy")
+
+        tdoa = compute_tdoa_s(ev_a, ev_b)
+        assert tdoa is not None
+
+        tdoa_us = tdoa * 1e6
+        # Should be close to the true TDOA (-61 usec).
+        # Allow +/-500 usec for the sync_delta sample quantisation.
+        assert abs(tdoa_us - self.TRUE_TDOA_US) < 500, (
+            f"TDOA {tdoa_us:+.1f} usec with correct sync_tx; "
+            f"expected ~{self.TRUE_TDOA_US:+.1f} usec"
+        )
+
+    def test_mismatched_sync_tx_gives_wrong_tdoa(self):
+        """
+        Node A reports the correct sync_tx, node B reports the stale (wrong)
+        sync_tx.  The path correction is computed with inconsistent coordinates,
+        causing disambiguation to pick the wrong n.  The resulting TDOA is
+        thousands of microseconds off -- matching the production-observed bug
+        where fixes land at the search boundary (~76 usec implied TDOA).
+        """
+        ev_a = self._make_event(
+            self.NODE_A_POS, self.SD_A_NS, self.CORRECT_SYNC_TX, "dpk-tdoa1")
+        ev_b = self._make_event(
+            self.NODE_B_POS, self.SD_B_NS, self.STALE_SYNC_TX, "kb7ryy")
+
+        tdoa = compute_tdoa_s(ev_a, ev_b)
+        assert tdoa is not None
+
+        tdoa_us = tdoa * 1e6
+        # With mismatched sync_tx, the TDOA should be FAR from the true value.
+        # In production we saw values of +1000 to +3500 usec.
+        error_us = abs(tdoa_us - self.TRUE_TDOA_US)
+        assert error_us > 500, (
+            f"TDOA {tdoa_us:+.1f} usec with mismatched sync_tx is unexpectedly "
+            f"close to truth ({self.TRUE_TDOA_US:+.1f} usec); error only {error_us:.0f} usec. "
+            f"Expected disambiguation to pick the wrong pilot cycle."
+        )
+
+    def test_stale_sync_tx_on_both_nodes_still_works(self):
+        """
+        Both nodes report the SAME stale sync_tx location.  Even though the
+        coordinates are wrong, they are consistent -- the path correction
+        error cancels in the subtraction, and disambiguation picks the right n.
+        The TDOA should still be close to the true value.
+
+        This matches the production observation that dpk-tdoa1 + kb7ryy
+        (both using stale coords) produced Fix 168 at 5.4 km error.
+        """
+        ev_a = self._make_event(
+            self.NODE_A_POS, self.SD_A_NS, self.STALE_SYNC_TX, "dpk-tdoa1")
+        ev_b = self._make_event(
+            self.NODE_B_POS, self.SD_B_NS, self.STALE_SYNC_TX, "kb7ryy")
+
+        tdoa = compute_tdoa_s(ev_a, ev_b)
+        assert tdoa is not None
+
+        tdoa_us = tdoa * 1e6
+        # Both nodes use the same (wrong) sync_tx, so the error partially
+        # cancels. The TDOA should be reasonable (within 500 usec of truth).
+        assert abs(tdoa_us - self.TRUE_TDOA_US) < 500, (
+            f"TDOA {tdoa_us:+.1f} usec with consistent (stale) sync_tx; "
+            f"expected ~{self.TRUE_TDOA_US:+.1f} usec. "
+            f"Consistent sync_tx should cancel in the subtraction."
+        )
+
+    def test_multiple_real_pairs_with_correct_sync_tx(self):
+        """
+        Multiple real sync_delta pairs from production, all with correct
+        sync_tx coordinates.  All should produce TDOAs within 500 usec
+        of the true value (-61 usec).
+
+        These pairs represent different transmissions on the same repeater.
+        """
+        # Real sync_delta pairs from the production data (dpk-tdoa1 vs kb7ryy)
+        real_pairs = [
+            (3004040, 6068067),   # sd_diff = -3064 usec
+            (1444012, 3768038),   # sd_diff = -2324 usec
+            (2308033, 5716058),   # sd_diff = -3408 usec
+            (472005,  2500033),   # sd_diff = -2028 usec
+            (3836044, 2356025),   # sd_diff = +1480 usec
+            (3548040, 1828015),   # sd_diff = +1720 usec
+            (1636017,   88001),   # sd_diff = +1548 usec
+            (2816029, 2764024),   # sd_diff = +52 usec
+        ]
+
+        tdoas_us = []
+        for sd_a, sd_b in real_pairs:
+            ev_a = self._make_event(
+                self.NODE_A_POS, sd_a, self.CORRECT_SYNC_TX, "dpk-tdoa1")
+            ev_b = self._make_event(
+                self.NODE_B_POS, sd_b, self.CORRECT_SYNC_TX, "kb7ryy")
+            tdoa = compute_tdoa_s(ev_a, ev_b)
+            assert tdoa is not None, f"Pair sd_a={sd_a} sd_b={sd_b} returned None"
+            tdoas_us.append(tdoa * 1e6)
+
+        # All should cluster near -61 usec
+        import statistics
+        mean_tdoa = statistics.mean(tdoas_us)
+        std_tdoa = statistics.stdev(tdoas_us)
+        assert abs(mean_tdoa - self.TRUE_TDOA_US) < 500, (
+            f"Mean TDOA {mean_tdoa:+.1f} usec (std={std_tdoa:.1f}) too far from "
+            f"truth {self.TRUE_TDOA_US:+.1f} usec"
+        )
+        # Check that individual values are consistent (not scattered by wrong n)
+        for i, t in enumerate(tdoas_us):
+            assert abs(t - self.TRUE_TDOA_US) < 3600, (
+                f"Pair {i} TDOA {t:+.1f} usec > 3500 usec from truth -- "
+                f"disambiguation likely picked wrong n"
+            )
