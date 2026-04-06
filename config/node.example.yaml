@@ -87,15 +87,15 @@ freq_hop:
 sync_signal:
   type: "fm_pilot"
   primary_station:
+    station_id: "KUOW_94.9"
+    frequency_hz: 94900000
+    latitude_deg: 47.61576     # FCC-documented
+    longitude_deg: -122.30919
+  secondary_station:           # Used for passive calibration cross-check
     station_id: "KISW_99.9"
     frequency_hz: 99900000
     latitude_deg: 47.6253      # FCC-documented transmitter location
     longitude_deg: -122.3563
-  secondary_station:           # Used for passive calibration cross-check
-    station_id: "KUOW_94.9"
-    frequency_hz: 94900000
-    latitude_deg: 47.6553      # FCC-documented
-    longitude_deg: -122.3110
   sync_period_ms: 7.0          # Emit one SyncEvent every N ms.
                                # For freq_hop: must be < (samples_per_block - settling_samples)
                                # / sample_rate_hz * 1000.  With block=65536, settling=49152,
