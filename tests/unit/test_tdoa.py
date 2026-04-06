@@ -611,36 +611,32 @@ def _make_event_with_onset_time(node_lat, node_lon, sync_delta_ns, onset_time_ns
     }
 
 
-_T_SYNC_NS = 7_000_000   # must match tdoa.py constant
+_T_SYNC_NS = 1_000_000_000.0 / 1187.5   # must match tdoa.py constant (~842,105 ns)
 
 
-def test_pilot_disambiguation_no_adjustment_needed():
+def test_sync_disambiguation_no_adjustment_needed():
     """
-    Both nodes used the same pilot pulse (raw_ns within T_sync/2 of onset_diff).
+    Both nodes used the same RDS bit boundary (raw_ns within T_sync/2).
     No adjustment should be applied; TDOA equals the raw 5 usec difference.
     """
-    # onset_time_ns identical -> onset_diff = 0; raw_ns = 5_000 -> n = 0
     t0 = 1_700_000_000_000_000_000  # arbitrary epoch ns
-    ev_a = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=5_005_000, onset_time_ns=t0 + 5_000)
-    ev_b = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=5_000_000, onset_time_ns=t0)
+    ev_a = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=505_000, onset_time_ns=t0 + 5_000)
+    ev_b = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=500_000, onset_time_ns=t0)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
     assert tdoa == pytest.approx(5_000 / 1e9, abs=1e-9)
 
 
-def test_pilot_disambiguation_corrects_one_period_offset():
+def test_sync_disambiguation_corrects_one_period_offset():
     """
-    Node B used the pilot pulse one T_sync later than node A.
-    raw_ns = true_TDOA - T_sync (~ -6.995 ms); disambiguation adds +T_sync.
+    Node B referenced the RDS bit boundary one T_sync later than node A.
+    raw_ns = true_TDOA - T_sync (~ -837 usec); disambiguation adds +T_sync.
     """
-    true_tdoa_ns = 5_000  # 5 usec - the real propagation-delay difference
+    true_tdoa_ns = 5_000  # 5 usec
     t0 = 1_700_000_000_000_000_000
-    # Node A: sync_delta = 6_000_000; Node B: used a pilot T_sync later,
-    # so its sync_delta = 6_000_000 + true_tdoa - T_sync = 6_000_000 + 5_000 - 7_000_000
-    raw_ns = true_tdoa_ns - _T_SYNC_NS           # = -6_995_000 ns (without fix)
-    sync_delta_a = 6_000_000
-    sync_delta_b = sync_delta_a - raw_ns         # = 13_000_000 (> T_sync, but only after wrap)
-    # Onset times: nearly equal for co-located nodes, difference = true_tdoa_ns
+    raw_ns = true_tdoa_ns - _T_SYNC_NS           # ~ -837_105 ns
+    sync_delta_a = 500_000
+    sync_delta_b = sync_delta_a - raw_ns
     ev_a = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=sync_delta_a,
                                         onset_time_ns=t0 + true_tdoa_ns)
     ev_b = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=sync_delta_b,
@@ -650,30 +646,28 @@ def test_pilot_disambiguation_corrects_one_period_offset():
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-6)
 
 
-def test_pilot_disambiguation_works_without_onset_time():
+def test_sync_disambiguation_works_without_onset_time():
     """
-    Geometric disambiguation resolves n from path geometry alone - onset_time_ns
-    is not required.  raw_ns = true_TDOA - T_sync is corrected to true_TDOA.
+    Geometric disambiguation resolves n from path geometry alone.
+    raw_ns = true_TDOA - T_sync is corrected to true_TDOA.
 
-    Rationale: |true_TDOA| <= dist(A,B)/c <= 100 km/c ~ 333 usec << T_sync/2 = 3.5 ms,
-    so round((raw_ns + correction) / T_sync) uniquely identifies n without any
-    wall-clock comparison.
+    Rationale: |true_TDOA| <= dist(A,B)/c <= 100 km/c ~ 333 usec << T_sync/2 = 421 usec,
+    so round((raw_ns + correction) / T_sync) uniquely identifies n.
     """
     true_tdoa_ns = 5_000  # 5 usec
-    sync_delta_a = 6_000_000
-    sync_delta_b = sync_delta_a - (true_tdoa_ns - _T_SYNC_NS)  # raw_ns = -6_995_000
+    sync_delta_a = 500_000
+    sync_delta_b = sync_delta_a - (true_tdoa_ns - _T_SYNC_NS)
     ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
     ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
-    # Geometric disambiguation corrects the T_sync offset; result is near true_TDOA
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-6)
 
 
-def test_pilot_disambiguation_n_zero():
-    """n=0: nodes locked to the same pilot cycle; raw_ns is already correct."""
-    true_tdoa_ns = 200_000   # 200 usec - within one pilot period
-    sync_delta_a = 3_000_000
+def test_sync_disambiguation_n_zero():
+    """n=0: nodes referenced the same bit boundary; raw_ns is already correct."""
+    true_tdoa_ns = 200_000   # 200 usec - within T_sync/2 = 421 usec
+    sync_delta_a = 400_000
     sync_delta_b = sync_delta_a - true_tdoa_ns  # raw_ns = +200_000
     ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
     ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
@@ -682,34 +676,15 @@ def test_pilot_disambiguation_n_zero():
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
 
 
-def test_pilot_disambiguation_n_plus_one():
+def test_sync_disambiguation_n_plus_one():
     """
-    n=+1: node A locked to a pilot cycle one T_sync *earlier* than node B.
-    raw_ns = true_TDOA + T_sync ~ +7 ms; disambiguation subtracts T_sync.
-    """
-    true_tdoa_ns = 150_000   # 150 usec
-    sync_delta_a = 2_000_000
-    sync_delta_b = sync_delta_a - (true_tdoa_ns + _T_SYNC_NS)  # raw = -6_850_000 -> n=-1?
-    # Construct n=+1 case: raw_ns = true_tdoa + T_sync
-    raw_ns = true_tdoa_ns + _T_SYNC_NS        # = +7_150_000 ns
-    sync_delta_a2 = 5_000_000
-    sync_delta_b2 = sync_delta_a2 - raw_ns    # = -2_150_000
-    ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a2)
-    ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b2)
-    tdoa = compute_tdoa_s(ev_a, ev_b)
-    assert tdoa is not None
-    assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
-
-
-def test_pilot_disambiguation_n_minus_one():
-    """
-    n=-1: node A locked to a pilot cycle one T_sync *later* than node B.
-    raw_ns = true_TDOA - T_sync ~ -7 ms; disambiguation adds T_sync.
+    n=+1: node A referenced a bit boundary one T_sync earlier than node B.
+    raw_ns = true_TDOA + T_sync ~ +992 usec; disambiguation subtracts T_sync.
     """
     true_tdoa_ns = 150_000   # 150 usec
-    raw_ns = true_tdoa_ns - _T_SYNC_NS        # = -6_850_000 ns
-    sync_delta_a = 5_000_000
-    sync_delta_b = sync_delta_a - raw_ns      # = 11_850_000
+    raw_ns = true_tdoa_ns + _T_SYNC_NS        # ~ +992_105 ns
+    sync_delta_a = 500_000
+    sync_delta_b = sync_delta_a - raw_ns
     ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
     ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
@@ -717,14 +692,30 @@ def test_pilot_disambiguation_n_minus_one():
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
 
 
-def test_pilot_disambiguation_large_tdoa_within_half_period():
+def test_sync_disambiguation_n_minus_one():
+    """
+    n=-1: node A referenced a bit boundary one T_sync later than node B.
+    raw_ns = true_TDOA - T_sync ~ -692 usec; disambiguation adds T_sync.
+    """
+    true_tdoa_ns = 150_000   # 150 usec
+    raw_ns = true_tdoa_ns - _T_SYNC_NS        # ~ -692_105 ns
+    sync_delta_a = 500_000
+    sync_delta_b = sync_delta_a - raw_ns
+    ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
+    ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
+    tdoa = compute_tdoa_s(ev_a, ev_b)
+    assert tdoa is not None
+    assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
+
+
+def test_sync_disambiguation_large_tdoa_within_half_period():
     """
     A true TDOA near +/-T_sync/2 but still within it (n=0) is left unchanged.
-    raw_ns = -3_400_000 ns: |raw| < T_sync/2 = 3_500_000 -> n=0, no adjustment.
+    raw_ns = -300_000 ns: |raw| < T_sync/2 = 421_053 -> n=0, no adjustment.
     """
-    true_tdoa_ns = -3_400_000
-    sync_delta_a = 1_000_000
-    sync_delta_b = sync_delta_a - true_tdoa_ns   # = 4_400_000
+    true_tdoa_ns = -300_000
+    sync_delta_a = 400_000
+    sync_delta_b = sync_delta_a - true_tdoa_ns   # = 700_000
     ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
     ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
@@ -740,8 +731,11 @@ class TestSyncTxCoordinateMismatch:
     Reproduces the production bug where nodes report different sync transmitter
     coordinates due to stale config.  The path delay correction uses each
     event's sync_tx_lat/lon independently, so a mismatch causes the wrong
-    correction, which causes disambiguation to pick the wrong pilot cycle (n),
-    producing a TDOA that is off by thousands of microseconds.
+    correction.  With the old pilot-based sync (T_sync = 7 ms), this was enough
+    to pick the wrong cycle (n), producing errors of thousands of microseconds.
+    With RDS sync (T_sync = 842 usec), the smaller period makes disambiguation
+    robust against this level of coordinate error (~99 usec correction error
+    vs T_sync/2 = 421 usec), so n is still resolved correctly.
 
     Uses real positions and sync_delta values from the 2026-04-05 deployment:
       - dpk-tdoa1/dpk-tdoa2: co-located at (47.671928, -122.404209)
@@ -809,10 +803,13 @@ class TestSyncTxCoordinateMismatch:
     def test_mismatched_sync_tx_gives_wrong_tdoa(self):
         """
         Node A reports the correct sync_tx, node B reports the stale (wrong)
-        sync_tx.  The path correction is computed with inconsistent coordinates,
-        causing disambiguation to pick the wrong n.  The resulting TDOA is
-        thousands of microseconds off -- matching the production-observed bug
-        where fixes land at the search boundary (~76 usec implied TDOA).
+        sync_tx.  The path correction is computed with inconsistent coordinates.
+
+        With RDS sync (T_sync = 842 usec), the ~99 usec correction error from
+        a 4.4 km sync_tx mismatch is within T_sync/2 (421 usec), so
+        disambiguation still picks the correct n.  The TDOA error is limited
+        to the path correction error itself (~100 usec), not thousands of
+        microseconds as with pilot sync.
         """
         ev_a = self._make_event(
             self.NODE_A_POS, self.SD_A_NS, self.CORRECT_SYNC_TX, "dpk-tdoa1")
@@ -823,13 +820,14 @@ class TestSyncTxCoordinateMismatch:
         assert tdoa is not None
 
         tdoa_us = tdoa * 1e6
-        # With mismatched sync_tx, the TDOA should be FAR from the true value.
-        # In production we saw values of +1000 to +3500 usec.
+        # With RDS sync, the smaller period means disambiguation is correct
+        # even with mismatched sync_tx.  The error is just the path correction
+        # difference (~100 usec), not a whole-cycle error.
         error_us = abs(tdoa_us - self.TRUE_TDOA_US)
-        assert error_us > 500, (
-            f"TDOA {tdoa_us:+.1f} usec with mismatched sync_tx is unexpectedly "
-            f"close to truth ({self.TRUE_TDOA_US:+.1f} usec); error only {error_us:.0f} usec. "
-            f"Expected disambiguation to pick the wrong pilot cycle."
+        assert error_us < 200, (
+            f"TDOA {tdoa_us:+.1f} usec with mismatched sync_tx; "
+            f"error {error_us:.0f} usec exceeds 200 usec. "
+            f"RDS disambiguation should handle this level of coord error."
         )
 
     def test_stale_sync_tx_on_both_nodes_still_works(self):

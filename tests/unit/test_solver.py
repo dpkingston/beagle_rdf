@@ -308,10 +308,11 @@ def test_solve_fix_outlier_node_detected_and_excluded():
             # This ensures the corrupt sync_delta reaches the residual stage.
         })
 
-    # Corrupt node-D's sync_delta_ns: add 1 ms (~300 km equivalent) of error.
-    # The 3 good nodes produce small TDOA residuals; all pairs involving
-    # node-D have ~1 ms residual, so rms_excluding_D << rms_all / 3.
-    events[3]["sync_delta_ns"] += 1_000_000  # +1 ms
+    # Corrupt node-D's sync_delta_ns: add 400 usec (~120 km equivalent) of
+    # error.  This stays within T_sync/2 (421 usec) so disambiguation does
+    # not mask it.  The 3 good nodes produce small TDOA residuals; all pairs
+    # involving node-D have ~400 usec residual, triggering outlier detection.
+    events[3]["sync_delta_ns"] += 400_000  # +400 usec
 
     result = solve_fix(
         events, 47.6, -122.3,

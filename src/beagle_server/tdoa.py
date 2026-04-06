@@ -331,10 +331,11 @@ def cross_correlate_snippets(
     return _xcorr_arrays(env_a, env_b, effective_rate)
 
 
-# FM stereo pilot sync event period in nanoseconds.  Matches
-# PipelineConfig.sync_period_ms = 7.0 ms (set via FMPilotSyncDetector).
-# Used to disambiguate which pilot pulse each node used for sync_delta.
-_T_SYNC_NS: float = 7_000_000.0
+# RDS bit period in nanoseconds (1/1187.5 Hz = 842.1 usec).
+# All nodes receiving the same FM station see the same RDS bit transitions,
+# so disambiguation should rarely need n != 0.  The margin is:
+#   max_TDOA (~333 usec) < T_sync/2 (421 usec) -> unambiguous.
+_T_SYNC_NS: float = 1_000_000_000.0 / 1187.5  # 842,105.26 ns
 
 # Speed of light in m/s - used to convert baseline distance to max TDOA.
 _C_M_PER_S: float = 299_792_458.0
@@ -426,12 +427,12 @@ def compute_tdoa_s(
         node_b_lon=event_b["node_lon"],
     )
 
-    # Pilot sync event disambiguation: resolve which pilot cycle each node
-    # locked to.  |true_TDOA| <= dist(A,B)/c << T_sync/2 = 3500 usec.
+    # Sync period disambiguation: resolve which RDS bit boundary each node
+    # referenced.  |true_TDOA| <= dist(A,B)/c << T_sync/2 = 421 usec.
     n = round((raw_ns + correction_ns) / _T_SYNC_NS)
     if n != 0:
         logger.debug(
-            "Pilot disambiguation %s<->%s (%s): n=%+d raw_ns=%+.0f->%+.0f ns",
+            "Sync disambiguation %s<->%s (%s): n=%+d raw_ns=%+.0f->%+.0f ns",
             node_a, node_b, event_type, n, raw_ns, raw_ns - n * _T_SYNC_NS,
         )
         raw_ns -= n * _T_SYNC_NS

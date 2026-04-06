@@ -76,7 +76,7 @@ class TDOAMeasurement:
     """
     sync_delta_ns: int                  # THE measurement
     target_sample: int                  # triggering event sample index
-    sync_sample: int                    # SyncEvent sample index used
+    sync_sample: float                  # SyncEvent sample index used (sub-sample precision)
     sample_rate_hz: float               # Corrected sample rate
     sample_rate_correction: float       # CrystalCalibrator factor
     pps_anchored: bool                  # True if GPS 1PPS was used

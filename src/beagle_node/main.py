@@ -517,7 +517,6 @@ def run(args: argparse.Namespace | None = None) -> int:
     pipeline = NodePipeline(
         config=PipelineConfig(
             sdr_rate_hz=receiver.config.sample_rate_hz,
-            sync_period_ms=config.sync_signal.sync_period_ms,
             min_corr_peak=config.sync_signal.min_corr_peak,
             max_sync_age_samples=_max_sync_age_samples,
             carrier_onset_db=config.carrier.onset_db,

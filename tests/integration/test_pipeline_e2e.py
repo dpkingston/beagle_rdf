@@ -1,19 +1,16 @@
 # Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-Integration test: synthetic FM pilot + LMR carrier -> correct sync_delta_ns.
+Integration test: synthetic FM (pilot + RDS) + LMR carrier -> correct sync_delta_ns.
 
-This test drives the full NodePipeline with MockReceiver-generated IQ
-and verifies that the measured sync_delta_ns matches the known ground-truth
-delay between the FM pilot events and the LMR carrier onset.
+This test drives the full NodePipeline with synthetic IQ and verifies that
+the measured sync_delta_ns is reasonable given a known carrier onset time.
 
 Setup
 -----
-- Sync channel: FM IQ at 2.048 MSPS containing a 19 kHz pilot tone
+- Sync channel: FM IQ at 2.048 MSPS containing 19 kHz pilot + 57 kHz RDS BPSK
 - Target channel: LMR IQ at 2.048 MSPS, carrier begins at a known sample
-- Known sync event spacing: 10 ms windows -> one SyncEvent per 2560 decimated samples
+- Known sync event spacing: ~842 usec (RDS bit period, 1187.5 Hz)
 - Known onset: LMR carrier starts at sample T in the raw stream
-
-Expected result: sync_delta_ns ~= (T_sync_space - nearest_sync_sample) * 1e9 / sync_rate
 """
 
 from __future__ import annotations
@@ -27,26 +24,39 @@ SDR_RATE  = 2_048_000.0
 SYNC_DEC  = 8                    # -> 256 kHz
 TARGET_DEC = 32                  # -> 64 kHz
 SYNC_RATE = SDR_RATE / SYNC_DEC  # 256_000 Hz
-SYNC_PERIOD_SAMPLES = int(SYNC_RATE * 0.010)   # 2560 samples per 10 ms window
+RDS_BIT_RATE = 1187.5
+RDS_BIT_PERIOD_SAMPLES = int(round(SYNC_RATE / RDS_BIT_RATE))  # ~216
 
 
-def _fm_sync_iq(n: int, pilot_amplitude: float = 0.1) -> np.ndarray:
+def _fm_sync_iq(n: int, pilot_dev_hz: float = 7500.0,
+                rds_dev_hz: float = 1500.0, seed: int = 42) -> np.ndarray:
     """
-    Generate FM IQ containing a strong 19 kHz pilot tone in the baseband.
+    Generate FM IQ containing 19 kHz pilot + 57 kHz RDS BPSK subcarrier.
 
-    We approximate FM modulation: the pilot appears as a 19 kHz sinusoid in
-    the demodulated audio.  For an IQ signal at SDR_RATE centred on the FM
-    station, the pilot modulates the carrier phase, producing sidebands at
-    +/-19 kHz.  For test purposes we directly inject a +/-19 kHz component.
-
-    Carrier at DC (centre-tuned), pilot as a +/-19 kHz phase modulation:
-        x(t) = exp(j * beta * sin(2pi * 19000 * t))
-    where beta = pilot_amplitude / (2pi * 19000 / SDR_RATE) controls modulation depth.
+    Uses FM phase modulation: x(t) = exp(j * 2pi * cumsum(audio) / SDR_RATE).
+    The audio contains the pilot tone and RDS BPSK-modulated 57 kHz subcarrier,
+    so after FM demodulation the RDSSyncDetector can lock onto the RDS bitstream.
     """
-    t = np.arange(n) / SDR_RATE
-    # Phase modulation with pilot
-    beta = pilot_amplitude * SDR_RATE / (2.0 * np.pi * 19_000.0)
-    phase = beta * np.sin(2.0 * np.pi * 19_000.0 * t)
+    t = np.arange(n, dtype=np.float64) / SDR_RATE
+
+    # 19 kHz pilot
+    audio = pilot_dev_hz * np.sin(2.0 * np.pi * 19_000.0 * t)
+
+    # RDS: BPSK on 57 kHz subcarrier
+    rng = np.random.default_rng(seed)
+    n_bits = int(n / SDR_RATE * RDS_BIT_RATE) + 2
+    raw_bits = rng.integers(0, 2, n_bits)
+    sps = SDR_RATE / RDS_BIT_RATE
+    bpsk = np.zeros(n, dtype=np.float64)
+    for i in range(n_bits):
+        s = int(round(i * sps))
+        e = min(int(round((i + 1) * sps)), n)
+        if s < n:
+            bpsk[s:e] = 1.0 if raw_bits[i] else -1.0
+    audio += rds_dev_hz * bpsk * np.sin(2.0 * np.pi * 57_000.0 * t)
+
+    # FM modulate: phase = 2pi * cumulative_integral(audio)
+    phase = 2.0 * np.pi / SDR_RATE * np.cumsum(audio)
     return np.exp(1j * phase).astype(np.complex64)
 
 
@@ -85,7 +95,7 @@ class TestPipelineE2E:
             sdr_rate_hz=SDR_RATE,
             sync_decimation=SYNC_DEC,
             sync_cutoff_hz=128_000.0,
-            sync_period_ms=10.0,
+
             target_decimation=TARGET_DEC,
             target_cutoff_hz=25_000.0,
             carrier_onset_db=-25.0,
@@ -122,11 +132,11 @@ class TestPipelineE2E:
 
     def test_sync_delta_ns_reasonable(self):
         """
-        sync_delta_ns should be positive and less than one sync period (10 ms).
+        sync_delta_ns should be positive and bounded.
 
-        The carrier starts at a known point in the stream.  The nearest
-        preceding sync event should be within one 10 ms window, so
-        sync_delta_ns in [0, 10_000_000] nanoseconds.
+        With RDS sync events every ~842 usec, the nearest preceding sync event
+        should be very close.  Allow up to max_sync_age (~80 ms) to account
+        for M&M warmup and filter settling.
         """
         carrier_start = int(SDR_RATE * 0.100)   # 100 ms in
         measurements = self._run(
@@ -138,8 +148,8 @@ class TestPipelineE2E:
         m = measurements[0]
         # Must be non-negative (onset after sync)
         assert m.sync_delta_ns >= 0, f"Negative sync_delta_ns: {m.sync_delta_ns}"
-        # Must be within 2 sync periods (20 ms) - accounting for filter latency
-        assert m.sync_delta_ns <= 20_000_000, \
+        # Must be within max_sync_age (~80 ms)
+        assert m.sync_delta_ns <= 80_000_000, \
             f"sync_delta_ns too large: {m.sync_delta_ns} ns"
 
     def test_measurement_fields_populated(self):
@@ -213,7 +223,7 @@ class TestFreqHopTiming:
             sdr_rate_hz=SDR_RATE,
             sync_decimation=SYNC_DEC,
             sync_cutoff_hz=128_000.0,
-            sync_period_ms=10.0,
+
             target_decimation=TARGET_DEC,
             target_cutoff_hz=25_000.0,
             carrier_onset_db=-25.0,
@@ -259,29 +269,25 @@ class TestFreqHopTiming:
 
     def test_freq_hop_produces_measurement(self):
         """Pipeline fed with freq_hop-style offsets should produce measurements."""
-        measurements = self._run_freq_hop(n_blocks=8, carrier_block=0)
+        # carrier_block=4: delay carrier start until after RDS warmup (~50 symbols
+        # across the first few sync blocks).  n_blocks=16 gives 8 sync blocks.
+        measurements = self._run_freq_hop(n_blocks=16, carrier_block=4)
         assert len(measurements) >= 1
 
     def test_freq_hop_sync_delta_non_negative(self):
-        """
-        Onset in target block 1 (raw [B, 2B-1]) follows sync events from block 0
-        (raw [0, B-1]), so sync_delta_ns must be non-negative.
-        """
-        measurements = self._run_freq_hop(n_blocks=8, carrier_block=0)
+        """Carrier onset follows sync events, so sync_delta_ns must be non-negative."""
+        measurements = self._run_freq_hop(n_blocks=16, carrier_block=4)
         assert len(measurements) >= 1
         assert measurements[0].sync_delta_ns >= 0, (
             f"Negative sync_delta_ns: {measurements[0].sync_delta_ns}"
         )
 
     def test_freq_hop_sync_delta_reasonable(self):
-        """
-        sync_delta_ns must be less than max_sync_age (30 ms) + one block (16 ms).
-        """
-        measurements = self._run_freq_hop(n_blocks=8, carrier_block=0)
+        """sync_delta_ns must be within max_sync_age (~80 ms)."""
+        measurements = self._run_freq_hop(n_blocks=16, carrier_block=4)
         assert len(measurements) >= 1
         m = measurements[0]
-        # max_sync_age_samples default -> ~30 ms; target block starts ~16 ms after sync block
-        assert m.sync_delta_ns <= 50_000_000, (
+        assert m.sync_delta_ns <= 80_000_000, (
             f"sync_delta_ns too large: {m.sync_delta_ns} ns"
         )
 
@@ -298,8 +304,8 @@ class TestFreqHopTiming:
         B = self.BLOCK
         carrier_offset = 500  # samples into target buffer
 
-        # freq_hop: target buffer starts at raw sample B
-        m_hop = self._run_freq_hop(n_blocks=8, carrier_block=0,
+        # freq_hop: target buffer starts after enough sync blocks for RDS warmup
+        m_hop = self._run_freq_hop(n_blocks=16, carrier_block=4,
                                    carrier_offset=carrier_offset)
 
         # non-offset: feed the SAME IQ buffers but with raw_start_sample=0
@@ -309,7 +315,7 @@ class TestFreqHopTiming:
             sdr_rate_hz=SDR_RATE,
             sync_decimation=SYNC_DEC,
             sync_cutoff_hz=128_000.0,
-            sync_period_ms=10.0,
+
             target_decimation=TARGET_DEC,
             target_cutoff_hz=25_000.0,
             carrier_onset_db=-25.0,

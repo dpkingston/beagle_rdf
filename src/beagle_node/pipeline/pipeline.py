@@ -9,7 +9,7 @@ Data flow (freq_hop / same_sdr mode)
       |
       |-> sync_decimator  (-> ~256 kHz)
       |       +-> FMDemodulator
-      |               +-> FMPilotSyncDetector  ------> SyncEvent
+      |               +-> RDSSyncDetector  ----------> SyncEvent
       |                                                    |
       +-> target_decimator (-> ~48 kHz)                    |
               +-> CarrierDetector                          |
@@ -40,7 +40,7 @@ from beagle_node.pipeline.decimator import Decimator
 from beagle_node.pipeline.delta import DeltaComputer, TDOAMeasurement
 from beagle_node.pipeline.demodulator import FMDemodulator
 from beagle_node.pipeline.pps_detector import PPSDetector
-from beagle_node.pipeline.sync_detector import FMPilotSyncDetector
+from beagle_node.pipeline.rds_sync_detector import RDSSyncDetector
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class PipelineConfig:
     # Sync channel (FM broadcast)
     sync_decimation: int = 8            # 2.048 MHz -> 256 kHz
     sync_cutoff_hz: float = 128_000.0
-    sync_period_ms: float = 7.0
+    sync_mode: str = "rds"              # sync detector type
 
     # Target channel (LMR)
     target_decimation: int = 32         # 2.048 MHz -> 64 kHz
@@ -128,10 +128,12 @@ class NodePipeline:
         # Sync chain
         self._sync_dec = Decimator(c.sync_decimation, c.sdr_rate_hz, c.sync_cutoff_hz)
         self._sync_demod = FMDemodulator(c.sdr_rate_hz / c.sync_decimation)
-        self._sync_det = FMPilotSyncDetector(
-            sample_rate_hz=c.sdr_rate_hz / c.sync_decimation,
-            sync_period_ms=c.sync_period_ms,
-        )
+        if c.sync_mode == "rds":
+            self._sync_det = RDSSyncDetector(
+                sample_rate_hz=c.sdr_rate_hz / c.sync_decimation,
+            )
+        else:
+            raise ValueError(f"Unknown sync_mode: {c.sync_mode!r}")
 
         # Target chain
         self._target_dec = Decimator(c.target_decimation, c.sdr_rate_hz, c.target_cutoff_hz)

@@ -476,9 +476,14 @@ with stable timing recovery.
 
 ### Phase 3: Field test with co-located nodes (~1 day)
 
-1. Deploy to dpk-tdoa1 + dpk-tdoa2
-2. Run `colocated_pair_test.py`
-3. Verify sync_delta scatter < 50 usec (vs current thousands of usec)
+1. Write `scripts/verify_rds_sync.py` — diagnostic script that runs the live
+   `RDSSyncDetector` against the SDR and reports event rate, crystal correction,
+   pilot quality, and bit interval jitter.  Mirrors `verify_sync.py` but uses
+   the RDS detector.
+2. Deploy to dpk-tdoa1 + dpk-tdoa2 (`feature/rds-sync` branch)
+3. Run `verify_rds_sync.py` on each node to confirm RDS detection works
+4. Run `colocated_pair_test.py`
+5. Verify sync_delta scatter < 50 usec (vs current thousands of usec)
 
 ### Phase 4: Non-co-located field test (~1 day)
 

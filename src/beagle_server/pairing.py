@@ -163,11 +163,9 @@ class EventPairer:
             T_sync = onset_time_ns - (sync_delta_ns mod T_sync) - dist(sync_tx, node) / c
 
         The modular reduction ensures that nodes with different observation
-        windows (e.g. freq_hop seeing sync pulses only during the sync block,
-        giving sync_delta 28-85 ms spanning multiple 7 ms sync periods) produce
-        the same T_sync as nodes with continuous observation (RSPduo, sync_delta
-        0-7 ms).  Without the reduction, freq_hop T_sync would reference a
-        different (older) pilot zero-crossing, offset by N x 7 ms.
+        windows (e.g. freq_hop seeing sync pulses only during the sync block)
+        produce the same T_sync as nodes with continuous observation.  Without
+        the reduction, T_sync would reference a different (older) sync event.
         """
         dist_m = haversine_m(
             event["sync_tx_lat"], event["sync_tx_lon"],
@@ -195,7 +193,7 @@ class EventPairer:
 
         Also tries pilot-period disambiguation: if the T_sync difference
         exceeds the direct-match window but is approximately an integer
-        multiple of _T_SYNC_NS (7 ms FM pilot period), the event joins the
+        multiple of _T_SYNC_NS (RDS bit period ~842 usec), the event joins the
         group - provided the incoming node is not already in the group.
 
         The per-node guard is essential: because any time difference is within
@@ -212,10 +210,7 @@ class EventPairer:
             delta = t_sync_ns - grp.t_sync_anchor_ns
             if abs(delta) <= self._half_window_ns:
                 return grp
-            # Pilot-period disambiguation for cross-node clock offsets.
-            # RSPduo nodes whose HAS_TIME anchor was captured when NTP was
-            # Nx7 ms ahead will produce T_sync values offset by Nx7 ms
-            # relative to freq_hop / GPS-disciplined nodes.
+            # Sync-period disambiguation for cross-node clock offsets.
             # Only attempt when this node has no existing event in the group,
             # so that different transmissions from the same node are not merged.
             node_in_group = any(

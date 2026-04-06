@@ -39,10 +39,10 @@ PILOT_FREQ_HZ = 19_000.0   # FM stereo pilot - locked to station frequency stand
 
 @dataclass(frozen=True)
 class SyncEvent:
-    """One FM pilot sync event."""
-    sample_index: int               # In the sync IQ stream
+    """One sync event (FM pilot zero-crossing or RDS bit transition)."""
+    sample_index: float             # In the sync IQ stream (sub-sample precision)
     time_ns: int                    # Rough wall-clock (from EventStamper), event-association only
-    corr_peak: float                # Cross-correlation peak magnitude (0-1)
+    corr_peak: float                # Cross-correlation / signal quality (0-1)
     pilot_phase_rad: float          # Measured pilot phase (for CrystalCalibrator)
     sample_rate_correction: float   # Crystal calibration factor (multiply deltas by this)
 
@@ -338,7 +338,8 @@ class FMPilotSyncDetector:
         _half_period  = _pilot_period / 2.0
         _offset = -_phase_at_center / _phase_per_sample
         _offset = (_offset + _half_period) % _pilot_period - _half_period
-        sample_index = _center + round(_offset)
+        # Preserve the fractional offset for sub-sample TDOA precision.
+        sample_index = float(_center) + _offset
 
         return SyncEvent(
             sample_index=sample_index,
