@@ -420,9 +420,22 @@ class RDSSyncDetector:
         return symbols, positions
 
     def _trim_mm_buf(self) -> None:
-        """Remove consumed samples from the M&M buffer to bound memory."""
-        # Keep 2 samples before current position for cubic interpolation context
-        trim = max(0, self._mm_i_in - 2)
+        """Remove consumed samples from the M&M buffer to bound memory.
+
+        Two invariants must hold across calls:
+          1. Keep at least 2 samples before mm_i_in for cubic interp context
+          2. Never let mm_buf become empty in steady state -- if it did,
+             process() would reset mm_buf_origin to dec_origin on the next
+             call, discarding any "outstanding advance" of mm_i_in past the
+             buffer end and causing the M&M's logical position to jump
+             backward by (overshoot - 2) * dec_factor samples.
+        """
+        if len(self._mm_buf) == 0:
+            return
+        # Cap trim so the buffer always retains at least 2 samples.
+        max_trim = max(0, len(self._mm_buf) - 2)
+        desired_trim = max(0, self._mm_i_in - 2)
+        trim = min(desired_trim, max_trim)
         if trim > 0:
             self._mm_buf = self._mm_buf[trim:]
             self._mm_buf_origin += trim * self._dec_factor
