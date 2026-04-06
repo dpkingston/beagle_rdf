@@ -9,7 +9,7 @@ The system has two components:
 - **Nodes** - Raspberry Pi (or other Linux system) + SDR receivers deployed at fixed locations.  Each
   node listens for LMR carrier events and measures their timing relative to an
   FM broadcast pilot tone used as a shared clock reference.  Nodes POST their
-  measurements to the central server.
+  measurements to the central server. 
 
 - **Aggregation Server** - A central server (laptop, Pi, or cloud VM typically running Linux) that
   collects measurements from all nodes, computes hyperbolic position fixes, and
@@ -17,6 +17,14 @@ The system has two components:
 
 You need **one server** and **two or more nodes** (three or more for a unique
 position fix; two nodes produce a line of position).
+
+The primary SDR we have been testing with and the one we recommend is
+the [SDRPlay RSPduo](https://www.hamradio.com/detail.cfm?pid=H0-016162).
+The dual tunner feature is perfect for this application.
+We believe others SDRs can be made to work but we have not worked with them yet.
+
+The freq-hop mode with a single channel SDR should in theory function but needs more
+work after recent sync algorithm changes.
 
 ---
 
