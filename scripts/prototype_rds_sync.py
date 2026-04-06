@@ -457,6 +457,224 @@ def process_iq(iq: np.ndarray, verbose: bool = False, compare: bool = False):
 
 
 # ---------------------------------------------------------------------------
+# Working RDS decoder (PySDR approach)
+# Reference: https://pysdr.org/content/rds.html
+# ---------------------------------------------------------------------------
+
+_RDS_SYNDROME_PYSDR = [383, 14, 303, 663, 748]
+_RDS_OFFSET_POS = [0, 1, 2, 3, 2]
+_RDS_OFFSET_WORD = [252, 408, 360, 436, 848]
+
+
+def _calc_syndrome_pysdr(x_val: int, mlen: int) -> int:
+    """CRC-10 syndrome per PySDR / NRSC-4-B (polynomial 0x5B9)."""
+    reg = 0
+    plen = 10
+    for ii in range(mlen, 0, -1):
+        reg = (reg << 1) | ((x_val >> (ii - 1)) & 0x01)
+        if reg & (1 << plen):
+            reg ^= 0x5B9
+    for ii in range(plen, 0, -1):
+        reg = reg << 1
+        if reg & (1 << plen):
+            reg ^= 0x5B9
+    return reg & ((1 << plen) - 1)
+
+
+def decode_rds_pysdr(iq: np.ndarray, verbose: bool = False) -> dict:
+    """
+    Full RDS decode using the PySDR signal chain.
+
+    Input: raw complex64 IQ at 2 MHz (or 250 kHz if pre-decimated).
+    Returns dict with groups, PI code, bit transition timestamps, etc.
+    """
+    from scipy.signal import resample_poly, firwin
+
+    # Decimate to 250 kHz if needed
+    if len(iq) > 1_000_000:
+        dec = Decimator(8, 2_000_000.0, 128_000.0)
+        chunks = []
+        for i in range(0, len(iq), 65536):
+            chunks.append(dec.process(iq[i:i + 65536]))
+        iq_dec = np.concatenate(chunks)
+        sample_rate = 250_000.0
+    else:
+        iq_dec = iq
+        sample_rate = 250_000.0
+
+    # FM demod (phase change, radians)
+    x = 0.5 * np.angle(iq_dec[:-1] * np.conj(iq_dec[1:]))
+
+    # Freq shift -57 kHz
+    N = len(x)
+    t = np.arange(N) / sample_rate
+    x = x * np.exp(2j * np.pi * (-57e3) * t)
+
+    # LPF
+    taps = firwin(numtaps=101, cutoff=7.5e3, fs=sample_rate)
+    x = np.convolve(x, taps, 'valid')
+
+    # Decimate by 10
+    x = x[::10]
+    sample_rate = 25e3
+
+    # Resample to 19 kHz (16 sps)
+    x = resample_poly(x, 19, 25)
+    sample_rate = 19e3
+
+    # M&M timing recovery (32x pre-interpolation)
+    samples_interpolated = resample_poly(x, 32, 1)
+    sps = 16
+    mu = 0.01
+    out = np.zeros(len(x) + 10, dtype=np.complex64)
+    out_rail = np.zeros(len(x) + 10, dtype=np.complex64)
+    i_in = 0
+    i_out = 2
+    # Track M&M sample indices for timing extraction
+    mm_indices = [0, 0]  # pad for i_out starting at 2
+    while i_out < len(x) and i_in + 32 < len(x):
+        out[i_out] = samples_interpolated[i_in * 32 + int(mu * 32)]
+        out_rail[i_out] = int(np.real(out[i_out]) > 0) + 1j * int(np.imag(out[i_out]) > 0)
+        x_val = (out_rail[i_out] - out_rail[i_out - 2]) * np.conj(out[i_out - 1])
+        y_val = (out[i_out] - out[i_out - 2]) * np.conj(out_rail[i_out - 1])
+        mm_val = np.real(y_val - x_val)
+        mu += sps + 0.01 * mm_val
+        # Record the input sample index for this symbol
+        mm_indices.append(i_in + mu / sps)
+        i_in += int(np.floor(mu))
+        mu = mu - np.floor(mu)
+        i_out += 1
+    x = out[2:i_out]
+    mm_indices = mm_indices[2:i_out]
+
+    # Costas loop
+    N_s = len(x)
+    phase = 0.0
+    freq = 0.0
+    out2 = np.zeros(N_s, dtype=np.complex64)
+    for i in range(N_s):
+        out2[i] = x[i] * np.exp(-1j * phase)
+        error = np.real(out2[i]) * np.imag(out2[i])
+        freq += 0.02 * error
+        phase += freq + 8.0 * error
+        while phase >= 2 * np.pi:
+            phase -= 2 * np.pi
+        while phase < 0:
+            phase += 2 * np.pi
+    x = out2
+
+    # Bit decisions + differential decode
+    bits = (np.real(x) > 0).astype(int)
+    bits = (bits[1:] - bits[0:-1]) % 2
+    bits = bits.astype(np.uint8)
+
+    # RDS block sync + decode
+    synced = False
+    presync = False
+    wrong_blocks_counter = 0
+    blocks_counter = 0
+    group_good_blocks_counter = 0
+    reg = np.uint32(0)
+    lastseen_offset_counter = 0
+    lastseen_offset = 0
+    groups = []
+    sync_bit_index = None
+
+    for i in range(len(bits)):
+        reg = np.bitwise_or(np.left_shift(reg, 1), bits[i])
+        if not synced:
+            reg_syndrome = _calc_syndrome_pysdr(reg, 26)
+            for j in range(5):
+                if reg_syndrome == _RDS_SYNDROME_PYSDR[j]:
+                    if not presync:
+                        lastseen_offset = j
+                        lastseen_offset_counter = i
+                        presync = True
+                    else:
+                        if _RDS_OFFSET_POS[lastseen_offset] >= _RDS_OFFSET_POS[j]:
+                            block_distance = _RDS_OFFSET_POS[j] + 4 - _RDS_OFFSET_POS[lastseen_offset]
+                        else:
+                            block_distance = _RDS_OFFSET_POS[j] - _RDS_OFFSET_POS[lastseen_offset]
+                        if (block_distance * 26) != (i - lastseen_offset_counter):
+                            presync = False
+                        else:
+                            if verbose:
+                                print(f"  RDS sync acquired at bit {i}")
+                            sync_bit_index = i
+                            wrong_blocks_counter = 0
+                            blocks_counter = 0
+                            block_bit_counter = 0
+                            block_number = (j + 1) % 4
+                            group_assembly_started = False
+                            synced = True
+                break
+        else:
+            if block_bit_counter < 25:
+                block_bit_counter += 1
+            else:
+                good_block = False
+                dataword = (reg >> 10) & 0xFFFF
+                block_calculated_crc = _calc_syndrome_pysdr(dataword, 16)
+                checkword = reg & 0x3FF
+                if block_number == 2:
+                    block_received_crc = checkword ^ _RDS_OFFSET_WORD[block_number]
+                    if block_received_crc == block_calculated_crc:
+                        good_block = True
+                    else:
+                        block_received_crc = checkword ^ _RDS_OFFSET_WORD[4]
+                        if block_received_crc == block_calculated_crc:
+                            good_block = True
+                        else:
+                            wrong_blocks_counter += 1
+                else:
+                    block_received_crc = checkword ^ _RDS_OFFSET_WORD[block_number]
+                    if block_received_crc == block_calculated_crc:
+                        good_block = True
+                    else:
+                        wrong_blocks_counter += 1
+
+                if block_number == 0 and good_block:
+                    group_assembly_started = True
+                    group_good_blocks_counter = 1
+                    group = bytearray(8)
+                if group_assembly_started:
+                    if not good_block:
+                        group_assembly_started = False
+                    else:
+                        group[block_number * 2] = (dataword >> 8) & 255
+                        group[block_number * 2 + 1] = dataword & 255
+                        group_good_blocks_counter += 1
+                    if group_good_blocks_counter == 5:
+                        groups.append(bytes(group))
+                block_bit_counter = 0
+                block_number = (block_number + 1) % 4
+                blocks_counter += 1
+                if blocks_counter == 50:
+                    if wrong_blocks_counter > 35:
+                        if verbose:
+                            print(f"  RDS sync lost at bit {i}")
+                        synced = False
+                        presync = False
+                    blocks_counter = 0
+                    wrong_blocks_counter = 0
+
+    # Extract PI code
+    pi_code = None
+    if groups:
+        pi_code = (groups[0][0] << 8) | groups[0][1]
+
+    return {
+        "groups": groups,
+        "pi_code": pi_code,
+        "n_bits": len(bits),
+        "n_symbols": N_s,
+        "sync_bit_index": sync_bit_index,
+        "mm_indices": mm_indices,
+        "synced": synced,
+    }
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -470,6 +688,8 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--compare", action="store_true",
                         help="Compare RDS sync with pilot sync events")
+    parser.add_argument("--decode", action="store_true",
+                        help="Run full RDS decode (PySDR chain)")
     args = parser.parse_args()
 
     if not args.input:
@@ -479,7 +699,24 @@ def main():
     if iq.dtype != np.complex64:
         iq = iq.astype(np.complex64)
 
-    process_iq(iq, verbose=args.verbose, compare=args.compare)
+    if args.decode:
+        print("=" * 60)
+        print("Full RDS Decode (PySDR chain)")
+        print("=" * 60)
+        result = decode_rds_pysdr(iq, verbose=args.verbose)
+        print(f"\nGroups decoded: {len(result['groups'])}")
+        if result['pi_code']:
+            print(f"PI code: 0x{result['pi_code']:04X}")
+        print(f"Bits: {result['n_bits']}")
+        print(f"Still synced: {result['synced']}")
+        if result['groups']:
+            print("\nDecoded groups:")
+            for g in result['groups']:
+                pi = (g[0] << 8) | g[1]
+                gt = (g[2] >> 4) & 0xF
+                print(f"  PI=0x{pi:04X} type={gt}")
+    else:
+        process_iq(iq, verbose=args.verbose, compare=args.compare)
 
 
 if __name__ == "__main__":
