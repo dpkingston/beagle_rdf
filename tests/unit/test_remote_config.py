@@ -442,3 +442,207 @@ def test_fetch_poll_post_empty_heartbeat_when_none_set(httpx_mock) -> None:
     assert req.method == "POST"
     body = json.loads(req.content)
     assert body == {}
+
+
+# ---------------------------------------------------------------------------
+# RemoteConfigFetcher._fetch_poll: response code handling
+# ---------------------------------------------------------------------------
+
+def test_fetch_poll_304_returns_none(httpx_mock) -> None:
+    """304 Not Modified is the normal long-poll timeout response."""
+    httpx_mock.add_response(status_code=304)
+    assert _make_fetcher()._fetch_poll(wait_s=10) is None
+
+
+def test_fetch_poll_200_unchanged_version_returns_none(httpx_mock) -> None:
+    """A 200 with the same config_version we already have is a no-op."""
+    httpx_mock.add_response(json=_server_payload(version=0), status_code=200)
+    fetcher = _make_fetcher()
+    assert fetcher._current_version == 0
+    assert fetcher._fetch_poll(wait_s=10) is None
+
+
+def test_fetch_poll_500_raises_transient(httpx_mock) -> None:
+    """5xx must raise so the poll loop applies exponential backoff."""
+    from beagle_node.config.remote import _TransientPollError
+    httpx_mock.add_response(status_code=500)
+    with pytest.raises(_TransientPollError, match="HTTP 500"):
+        _make_fetcher()._fetch_poll(wait_s=10)
+
+
+def test_fetch_poll_503_raises_transient(httpx_mock) -> None:
+    """503 Service Unavailable (e.g. uvicorn still starting) -> backoff."""
+    from beagle_node.config.remote import _TransientPollError
+    httpx_mock.add_response(status_code=503)
+    with pytest.raises(_TransientPollError, match="HTTP 503"):
+        _make_fetcher()._fetch_poll(wait_s=10)
+
+
+def test_fetch_poll_4xx_raises_transient(httpx_mock) -> None:
+    """4xx (e.g. wrong secret) is also non-retriable; back off rather
+    than tight-loop while operator notices."""
+    from beagle_node.config.remote import _TransientPollError
+    httpx_mock.add_response(status_code=401)
+    with pytest.raises(_TransientPollError, match="HTTP 401"):
+        _make_fetcher()._fetch_poll(wait_s=10)
+
+
+def test_fetch_poll_unparseable_json_raises_transient(httpx_mock) -> None:
+    """A 200 with garbage body should not crash the poll loop."""
+    from beagle_node.config.remote import _TransientPollError
+    httpx_mock.add_response(status_code=200, content=b"not json")
+    with pytest.raises(_TransientPollError, match="unparseable"):
+        _make_fetcher()._fetch_poll(wait_s=10)
+
+
+def test_fetch_poll_transport_error_propagates(httpx_mock) -> None:
+    """TransportError still propagates (the loop already handles it)."""
+    httpx_mock.add_exception(httpx.ConnectError("connection refused"))
+    with pytest.raises(httpx.ConnectError):
+        _make_fetcher()._fetch_poll(wait_s=10)
+
+
+# ---------------------------------------------------------------------------
+# RemoteConfigFetcher._poll_loop: exponential backoff behaviour
+# ---------------------------------------------------------------------------
+
+def _drive_poll_loop(
+    fetcher: RemoteConfigFetcher,
+    poll_outcomes: list,
+    max_iterations: int = 20,
+):
+    """Run _poll_loop in the foreground with mocked _fetch_poll, capturing
+    the sequence of stop_event.wait() calls so the test can inspect the
+    backoff schedule.
+
+    poll_outcomes : list of values to return from successive _fetch_poll
+        calls.  Each entry is either:
+          - a NodeConfig (treated as "new config arrived")
+          - None         (treated as "304 / no change")
+          - an Exception instance (raised by _fetch_poll)
+        The loop terminates after the list is exhausted (the test makes the
+        next call set the stop event).
+    """
+    from beagle_node.config import remote as remote_module
+
+    waits: list[float] = []
+    iteration = {"n": 0}
+
+    def _fake_fetch_poll(wait_s):
+        i = iteration["n"]
+        iteration["n"] += 1
+        if i >= len(poll_outcomes):
+            fetcher._stop_event.set()
+            return None
+        outcome = poll_outcomes[i]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def _fake_wait(timeout):
+        waits.append(timeout)
+        return fetcher._stop_event.is_set()
+
+    # No-op random so backoff is deterministic
+    real_uniform = remote_module.random.uniform
+    remote_module.random.uniform = lambda a, b: (a + b) / 2
+
+    fetcher._fetch_poll = _fake_fetch_poll  # type: ignore[assignment]
+    fetcher._stop_event.wait = _fake_wait    # type: ignore[assignment]
+
+    try:
+        # Cap the loop in case of a bug -- forcibly stop after max_iterations
+        # by counting waits.
+        original_wait = _fake_wait
+
+        def _capped_wait(timeout):
+            r = original_wait(timeout)
+            if iteration["n"] >= max_iterations:
+                fetcher._stop_event.set()
+            return r
+
+        fetcher._stop_event.wait = _capped_wait  # type: ignore[assignment]
+        fetcher._poll_loop(on_update=lambda c: None)
+    finally:
+        remote_module.random.uniform = real_uniform
+
+    return waits, iteration["n"]
+
+
+def test_poll_loop_backs_off_on_transient_error() -> None:
+    """A run of 5xx errors should produce a strictly increasing backoff
+    sequence (1, 2, 4, 8, ...) up to the cap."""
+    from beagle_node.config.remote import _TransientPollError
+
+    fetcher = _make_fetcher()
+    # 6 consecutive errors, then the 7th call exhausts the script and the
+    # helper sets the stop event (so the loop exits after one extra trip).
+    outcomes = [_TransientPollError("HTTP 503") for _ in range(6)]
+    waits, n_calls = _drive_poll_loop(fetcher, outcomes)
+
+    # First wait is the initial jitter (uniform 0..5 -> 2.5 with our patch).
+    # The remaining waits are the backoff sleeps after each error.
+    assert n_calls == 7
+    backoff_waits = waits[1:]   # skip the initial jitter
+    assert len(backoff_waits) >= 6
+    # Strictly increasing for the first few entries (until the 120s cap).
+    # Initial 1.0s, doubled each step: 1, 2, 4, 8, 16, 32 ...
+    assert backoff_waits[0] == pytest.approx(1.0, abs=0.01)
+    assert backoff_waits[1] == pytest.approx(2.0, abs=0.01)
+    assert backoff_waits[2] == pytest.approx(4.0, abs=0.01)
+    assert backoff_waits[3] == pytest.approx(8.0, abs=0.01)
+    assert backoff_waits[4] == pytest.approx(16.0, abs=0.01)
+    assert backoff_waits[5] == pytest.approx(32.0, abs=0.01)
+
+
+def test_poll_loop_backoff_caps_at_max() -> None:
+    """After enough errors the backoff plateau at _BACKOFF_MAX_S."""
+    from beagle_node.config.remote import _TransientPollError
+
+    fetcher = _make_fetcher()
+    # 10 errors -> 1, 2, 4, 8, 16, 32, 64, 120, 120, 120
+    outcomes = [_TransientPollError("HTTP 503") for _ in range(10)]
+    waits, _ = _drive_poll_loop(fetcher, outcomes)
+    backoff_waits = waits[1:]
+    # The last few entries should all equal _BACKOFF_MAX_S (120s).
+    assert backoff_waits[-1] == pytest.approx(120.0, abs=0.01)
+    assert backoff_waits[-2] == pytest.approx(120.0, abs=0.01)
+
+
+def test_poll_loop_resets_backoff_after_success() -> None:
+    """A successful poll between errors should reset the backoff to the
+    initial value, so the next failure starts at 1s again."""
+    from beagle_node.config.remote import _TransientPollError
+
+    fetcher = _make_fetcher()
+    # error, error, error (1, 2, 4), success, error (back to 1)
+    outcomes = [
+        _TransientPollError("HTTP 503"),
+        _TransientPollError("HTTP 503"),
+        _TransientPollError("HTTP 503"),
+        None,                              # 304 / no change -> resets backoff
+        _TransientPollError("HTTP 503"),
+    ]
+    waits, _ = _drive_poll_loop(fetcher, outcomes)
+    backoff_waits = waits[1:]
+    # 1, 2, 4 (errors) ... no wait after the success (loop continues
+    # immediately) ... 1 (next error, reset)
+    assert backoff_waits[0] == pytest.approx(1.0, abs=0.01)
+    assert backoff_waits[1] == pytest.approx(2.0, abs=0.01)
+    assert backoff_waits[2] == pytest.approx(4.0, abs=0.01)
+    assert backoff_waits[3] == pytest.approx(1.0, abs=0.01)
+
+
+def test_poll_loop_backs_off_on_transport_error() -> None:
+    """httpx.TransportError takes the same backoff path as _TransientPollError."""
+    fetcher = _make_fetcher()
+    outcomes = [
+        httpx.ConnectError("connection refused"),
+        httpx.ConnectError("connection refused"),
+        httpx.ConnectError("connection refused"),
+    ]
+    waits, _ = _drive_poll_loop(fetcher, outcomes)
+    backoff_waits = waits[1:]
+    assert backoff_waits[0] == pytest.approx(1.0, abs=0.01)
+    assert backoff_waits[1] == pytest.approx(2.0, abs=0.01)
+    assert backoff_waits[2] == pytest.approx(4.0, abs=0.01)

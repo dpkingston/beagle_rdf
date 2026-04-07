@@ -42,6 +42,13 @@ from beagle_node.config.schema import NodeConfig
 logger = logging.getLogger(__name__)
 
 
+class _TransientPollError(Exception):
+    """Raised when the server returns a transient HTTP error (5xx) or a
+    response we cannot parse.  The poll loop catches this and applies
+    exponential backoff so a momentary server problem (e.g. uvicorn still
+    starting up) does not turn into a hot retry loop on the node."""
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap config schema
 # ---------------------------------------------------------------------------
@@ -249,7 +256,15 @@ class RemoteConfigFetcher:
         clock source, location, etc.) so the server receives both a config
         poll and a heartbeat in a single round trip.
 
-        Returns a NodeConfig if the version advanced, None on timeout (304) or error.
+        Return values:
+          NodeConfig - the server returned a new config; caller should apply it
+          None       - normal "no change" response (HTTP 304 or 200 with the
+                       same version we already have); caller loops immediately
+
+        Raises:
+          httpx.TransportError - network problem; caller backs off
+          _TransientPollError  - HTTP 5xx, 4xx, or unparseable response;
+                                 caller backs off
         """
         url = (
             f"{self._base}/api/v1/nodes/{self._bs.node_id}/config"
@@ -266,11 +281,26 @@ class RemoteConfigFetcher:
         if resp.status_code == 304:
             return None  # no change within wait window
 
-        if resp.status_code != 200:
-            logger.warning("Config poll returned HTTP %d", resp.status_code)
-            return None
+        if 500 <= resp.status_code < 600:
+            # Server-side problem (5xx) - probably uvicorn still starting
+            # up after a restart, or a transient DB lock.  Back off.
+            raise _TransientPollError(
+                f"server returned HTTP {resp.status_code}"
+            )
 
-        payload = resp.json()
+        if resp.status_code != 200:
+            # 4xx is a client/auth problem - the node_id, secret, or URL
+            # is wrong.  Hot-retrying will not fix this; back off so the
+            # logs don't fill up while waiting for an operator to notice.
+            raise _TransientPollError(
+                f"server returned HTTP {resp.status_code}"
+            )
+
+        try:
+            payload = resp.json()
+        except Exception as exc:
+            raise _TransientPollError(f"unparseable JSON response: {exc}") from exc
+
         new_version = int(payload.get("config_version", 0))
         if new_version <= self._current_version:
             return None
@@ -288,11 +318,24 @@ class RemoteConfigFetcher:
         self._current_version = new_version
         return config
 
+    # Backoff parameters (class-level so unit tests can monkeypatch).
+    _BACKOFF_INITIAL_S: float = 1.0
+    _BACKOFF_MAX_S: float = 120.0
+    _BACKOFF_FACTOR: float = 2.0
+
     def _poll_loop(self, on_update: Callable[[NodeConfig], None]) -> None:
-        """Background thread: long-poll for config changes."""
+        """Background thread: long-poll for config changes.
+
+        Backoff strategy:
+        - Successful poll (new config or no-change/304) resets backoff.
+        - Transport error or HTTP 4xx/5xx triggers exponential backoff
+          starting at _BACKOFF_INITIAL_S, doubling each consecutive failure
+          up to _BACKOFF_MAX_S.  +/-25 percent of jitter is applied each step
+          so a fleet of nodes that all started polling against a downed
+          server doesn't reconverge into a synchronized retry storm.
+        """
         wait_s = max(10, min(int(self._bs.config_poll_interval_s), 120))
-        backoff_s = 10.0
-        max_backoff_s = 120.0
+        backoff_s = self._BACKOFF_INITIAL_S
 
         # Initial jitter: stagger nodes so they don't all poll in lockstep
         # after a simultaneous server restart or network recovery.
@@ -303,15 +346,39 @@ class RemoteConfigFetcher:
             jittered_wait = int(wait_s * random.uniform(0.9, 1.1))
             try:
                 new_config = self._fetch_poll(jittered_wait)
+            except (httpx.TransportError, _TransientPollError) as exc:
+                # Symmetric +/-25% jitter centred on the current backoff so
+                # the mean delay matches the nominal exponential schedule.
+                jittered_backoff = backoff_s * random.uniform(0.75, 1.25)
+                logger.warning(
+                    "Config poll error, retrying in %.1fs (backoff=%.1fs): %s",
+                    jittered_backoff, backoff_s, exc,
+                )
+                if self._stop_event.wait(jittered_backoff):
+                    return  # stop requested during backoff sleep
+                backoff_s = min(backoff_s * self._BACKOFF_FACTOR, self._BACKOFF_MAX_S)
+                continue
             except Exception as exc:
-                jittered_backoff = backoff_s * random.uniform(0.8, 1.2)
-                logger.warning("Config poll error, retrying in %.0fs: %s",
-                               jittered_backoff, exc)
-                self._stop_event.wait(jittered_backoff)
-                backoff_s = min(backoff_s * 2, max_backoff_s)
+                # Anything else (e.g. RuntimeError from terminal auth failure
+                # raised inside fetch_initial_config-style codepaths) is logged
+                # at error level so it's visible, but we still back off rather
+                # than tight-loop.  We never re-raise from a daemon thread.
+                jittered_backoff = backoff_s * random.uniform(0.75, 1.25)
+                logger.error(
+                    "Config poll unexpected error, retrying in %.1fs: %s",
+                    jittered_backoff, exc,
+                )
+                if self._stop_event.wait(jittered_backoff):
+                    return
+                backoff_s = min(backoff_s * self._BACKOFF_FACTOR, self._BACKOFF_MAX_S)
                 continue
 
-            backoff_s = 10.0  # reset on success or normal 304
+            # Reached only on success: reset backoff.  This includes both
+            # "new config" and "no change / 304" results -- both indicate the
+            # server is healthy.
+            if backoff_s != self._BACKOFF_INITIAL_S:
+                logger.info("Config poll recovered; resetting backoff")
+                backoff_s = self._BACKOFF_INITIAL_S
 
             if new_config is not None:
                 logger.info(
