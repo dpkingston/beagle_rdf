@@ -671,10 +671,18 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return bool(config.server.google_client_id and config.server.google_client_secret)
 
     def _google_redirect_uri(request: Request) -> str:
-        """Derive the OAuth callback URL from the current request."""
+        """Derive the OAuth callback URL from the current request.
+
+        Includes the reverse-proxy root_path (e.g. /beagle) so the URL we
+        register with Google matches the actual route inside our subpath
+        deployment.  Without this, Google would redirect to
+        https://example.com/auth/oauth/google/callback (no /beagle/ prefix)
+        and Apache would route to nowhere.
+        """
         scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
         host = request.headers.get("x-forwarded-host", request.headers.get("host", ""))
-        return f"{scheme}://{host}/auth/oauth/google/callback"
+        root_path = request.scope.get("root_path", "") or ""
+        return f"{scheme}://{host}{root_path}/auth/oauth/google/callback"
 
     @app.get("/auth/oauth/google")
     async def oauth_google_redirect(request: Request) -> RedirectResponse:
@@ -797,13 +805,19 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         if user is None:
             raise HTTPException(status_code=500, detail="User creation failed")
 
+        # Reverse-proxy subpath prefix (empty when mounted at root).
+        root_path = request.scope.get("root_path", "") or ""
+
         # Check if 2FA is required
         if user.get("totp_enabled"):
             partial_token = auth_module.generate_token()
             await db_module.create_partial_session(
                 registry_db, partial_token, user["user_id"], time.time() + 300.0
             )
-            return RedirectResponse(url=f"/map?pending_2fa={partial_token}", status_code=302)
+            return RedirectResponse(
+                url=f"{root_path}/map?pending_2fa={partial_token}",
+                status_code=302,
+            )
 
         # Create full session
         lifetime_s = config.server.session_lifetime_hours * 3600.0
@@ -816,7 +830,10 @@ def create_app(config: ServerFullConfig) -> FastAPI:
 
         _logger.info("OAuth login: username=%s provider=google", user["username"])
         # Redirect to /map with token - JS will pick it up from the URL fragment
-        return RedirectResponse(url=f"/map?oauth_token={session_token}", status_code=302)
+        return RedirectResponse(
+            url=f"{root_path}/map?oauth_token={session_token}",
+            status_code=302,
+        )
 
     @app.get("/auth/oauth/accounts")
     async def oauth_list_accounts(
@@ -1161,6 +1178,10 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         heatmap_cells = await db_module.fetch_heatmap_cells(
             database, cell_size_m=cfg.map.heatmap_cell_m
         )
+        # If launched with --root-path /beagle, all absolute URLs in the
+        # rendered HTML/JS need that prefix.  Starlette stores it in the
+        # request scope; "" means mounted at the document root.
+        root_path = request.scope.get("root_path", "") or ""
         loop = asyncio.get_event_loop()
         html = await loop.run_in_executor(
             None,
@@ -1177,6 +1198,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 google_oauth_enabled=bool(
                     config.server.google_client_id and config.server.google_client_secret
                 ),
+                root_path=root_path,
             ),
         )
         return HTMLResponse(content=html)

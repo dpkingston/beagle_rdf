@@ -410,7 +410,7 @@ _PANEL_HTML = """
     <button class="tdoa-btn" id="tdoa-login-btn">Login</button>
     <div id="tdoa-google-login" style="display:none;margin-top:10px;text-align:center">
       <div style="color:#7a9bbf;font-size:10px;margin:6px 0">or</div>
-      <a href="/auth/oauth/google" class="tdoa-btn" style="display:inline-block;text-decoration:none;text-align:center;width:100%;box-sizing:border-box">Sign in with Google</a>
+      <a id="tdoa-google-login-link" href="/auth/oauth/google" class="tdoa-btn" style="display:inline-block;text-decoration:none;text-align:center;width:100%;box-sizing:border-box">Sign in with Google</a>
     </div>
   </div>
 </div>
@@ -520,6 +520,27 @@ if (typeof TDOA === 'undefined') {
     console.error('[Beagle] TDOA data block not found - panel disabled');
     return;
 }
+
+/* - URL prefix helper -
+ * When the server is mounted under a subpath by an upstream reverse proxy
+ * (e.g. Apache exposing Beagle as https://example.com/beagle/), TDOA.rootPath
+ * holds that prefix ("/beagle") and we prepend it to every absolute path the
+ * page issues.  When mounted at the root, TDOA.rootPath is "" and _u() is
+ * a no-op.  Always pass paths beginning with "/" to _u(); never call it on
+ * already-absolute (http://...) URLs. */
+function _u(path) {
+    var prefix = (TDOA && TDOA.rootPath) ? TDOA.rootPath : '';
+    return prefix + path;
+}
+
+/* - Patch any static absolute hrefs in _PANEL_HTML so they pick up rootPath -
+ * Currently just the Google OAuth login link.  Done once at script load. */
+(function _patchStaticLinks() {
+    var googleLink = document.getElementById('tdoa-google-login-link');
+    if (googleLink) {
+        googleLink.setAttribute('href', _u('/auth/oauth/google'));
+    }
+})();
 
 /* - Module state - */
 var currentMaxAgeS = TDOA.defaultMaxAgeS;
@@ -665,7 +686,7 @@ function loadFixes(maxAgeS) {
         clientFilterToS = 0;
     }
 
-    fetch('/map/data?max_age_s=' + encodeURIComponent(fetchMaxAgeS))
+    fetch(_u('/map/data?max_age_s=' + encodeURIComponent(fetchMaxAgeS)))
         .then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
@@ -800,7 +821,7 @@ function loadFixes(maxAgeS) {
    response simply leaves the layer transparent. */
 function loadHeatmap() {
     if (!TDOA.heatLayerId || !leafletMap) return;
-    fetch('/map/heatmap')
+    fetch(_u('/map/heatmap'))
         .then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
@@ -979,12 +1000,12 @@ function makeResetHandler(btnId, url, origLabel) {
             });
     });
 }
-makeResetHandler('tdoa-heatmap-reset-btn', '/api/v1/heatmap', 'Reset Heat Map');
+makeResetHandler('tdoa-heatmap-reset-btn', _u('/api/v1/heatmap'), 'Reset Heat Map');
 
 /* - SSE live connection --
    On new_fix: update fix layers without a full page reload. */
 function connect() {
-    var src = new EventSource('/api/v1/fixes/stream');
+    var src = new EventSource(_u('/api/v1/fixes/stream'));
     src.onopen = function () { setLive('LIVE', 'rgba(20,120,40,0.9)'); };
     src.addEventListener('new_fix', function () {
         setLive('NEW FIX', 'rgba(200,120,0,0.9)');
@@ -1126,7 +1147,7 @@ function _checkAuth() {
 
     var token = sessionStorage.getItem('tdoa_token');
     if (!token) { _showLogin(); return; }
-    fetch('/auth/me', { headers: { 'Authorization': 'Bearer ' + token } })
+    fetch(_u('/auth/me'), { headers: { 'Authorization': 'Bearer ' + token } })
         .then(function (r) {
             if (!r.ok) throw new Error('Invalid session');
             return r.json();
@@ -1162,7 +1183,7 @@ function _checkAuth() {
         if (_partialToken) {
             var code = (codeEl ? codeEl.value : '').trim();
             if (!code) { errEl.textContent = 'Enter your authentication code.'; errEl.style.display = 'block'; return; }
-            fetch('/auth/2fa/verify', {
+            fetch(_u('/auth/2fa/verify'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ partial_token: _partialToken, code: code })
@@ -1188,7 +1209,7 @@ function _checkAuth() {
         var user = (document.getElementById('tdoa-login-user') || {}).value || '';
         var pass = (document.getElementById('tdoa-login-pass') || {}).value || '';
         if (!user || !pass) { errEl.textContent = 'Enter username and password.'; errEl.style.display = 'block'; return; }
-        fetch('/auth/login', {
+        fetch(_u('/auth/login'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: user, password: pass })
@@ -1234,7 +1255,7 @@ function _checkAuth() {
     btn.addEventListener('click', function () {
         var token = sessionStorage.getItem('tdoa_token');
         if (token) {
-            fetch('/auth/logout', {
+            fetch(_u('/auth/logout'), {
                 method: 'POST',
                 headers: { 'Authorization': 'Bearer ' + token }
             }).catch(function () {});
@@ -1375,7 +1396,7 @@ function renderNodes(nodes) {
 /* PATCH enable/disable a single node */
 window._tdoaToggle = function (btn, nodeId, enable) {
     btn.disabled = true;
-    _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), {
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), {
         method: 'PATCH',
         headers: _hdrJson(),
         body: JSON.stringify({ enabled: enable })
@@ -1405,7 +1426,7 @@ window._tdoaDelete = function (btn, nodeId) {
     }
     btn.setAttribute('data-armed', '0');
     btn.disabled = true;
-    _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), {
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), {
         method: 'DELETE',
         headers: _hdr()
     })
@@ -1420,7 +1441,7 @@ window._tdoaDelete = function (btn, nodeId) {
 
 /* Fetch node list and render */
 function loadNodes() {
-    _fetch('/map/nodes')
+    _fetch(_u('/map/nodes'))
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (data) { renderNodes(data.nodes || []); })
         .catch(function (e) { console.error('[Beagle] loadNodes error:', e); });
@@ -1476,7 +1497,7 @@ var _usersTabActive = false;
         var pending = registered.length;
         if (pending === 0) return;
         registered.forEach(function (n) {
-            _fetch('/api/v1/nodes/' + encodeURIComponent(n.node_id), {
+            _fetch(_u('/api/v1/nodes/' + encodeURIComponent(n.node_id)), {
                 method: 'PATCH',
                 headers: _hdrJson(),
                 body: JSON.stringify({ enabled: enable })
@@ -1496,7 +1517,7 @@ var _usersTabActive = false;
     if (reloadBtn) reloadBtn.addEventListener('click', function () {
         reloadBtn.disabled = true;
         reloadBtn.textContent = 'Reloading...';
-        _fetch('/api/v1/nodes/reload-configs', { method: 'POST', headers: _hdr() })
+        _fetch(_u('/api/v1/nodes/reload-configs'), { method: 'POST', headers: _hdr() })
             .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(function (data) {
                 var n = data.updated || 0;
@@ -1569,7 +1590,7 @@ if (regBtn) regBtn.addEventListener('click', function () {
         var label  = (document.getElementById('nrf-label').value || '').trim() || null;
         var errEl  = document.getElementById('nrf-error');
         if (!nodeId) { if (errEl) errEl.textContent = 'Node ID is required.'; return; }
-        _fetch('/api/v1/nodes', {
+        _fetch(_u('/api/v1/nodes'), {
             method: 'POST',
             headers: _hdrJson(),
             body: JSON.stringify({ node_id: nodeId, label: label })
@@ -1605,7 +1626,7 @@ window._tdoaRegenSecret = function (btn, nodeId) {
     }
     btn.setAttribute('data-armed', '0');
     btn.disabled = true;
-    _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId) + '/regen-secret', {
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)) + '/regen-secret', {
         method: 'POST',
         headers: _hdr()
     })
@@ -1649,7 +1670,7 @@ window._tdoaSaveLabel = function (nodeId) {
     var inp = document.querySelector('.tp-node-label-inp');
     if (!inp) return;
     var newLabel = inp.value.trim() || null;
-    _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), {
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), {
         method: 'PATCH',
         headers: _hdrJson(),
         body: JSON.stringify({ label: newLabel })
@@ -1672,7 +1693,7 @@ window._tdoaToggleDetail = function (nodeId) {
         _nodeEditing = true;
         det.style.display = '';
         /* Fetch full node details */
-        _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), { headers: _hdr() })
+        _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), { headers: _hdr() })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (node) {
             var html = '';
@@ -1758,7 +1779,7 @@ window._tdoaSaveConfig = function (nodeId) {
         try { configJson = JSON.parse(val); }
         catch (e) { alert('Invalid JSON: ' + e.message); return; }
     }
-    _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), {
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), {
         method: 'PATCH',
         headers: _hdrJson(),
         body: JSON.stringify({ config_json: configJson })
@@ -1784,7 +1805,7 @@ window._tdoaSaveCarrier = function (nodeId) {
         alert('Hold and release must be >= 1'); return;
     }
     /* Read current config_json, merge carrier block, PATCH */
-    _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), { headers: _hdr() })
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), { headers: _hdr() })
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function (node) {
         var cfg = {};
@@ -1796,7 +1817,7 @@ window._tdoaSaveCarrier = function (nodeId) {
         cfg.carrier.offset_db = offset;
         cfg.carrier.min_hold_windows = hold;
         cfg.carrier.min_release_windows = release;
-        return _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), {
+        return _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), {
             method: 'PATCH',
             headers: _hdrJson(),
             body: JSON.stringify({ config_json: cfg })
@@ -1827,7 +1848,7 @@ var _selectedGroupId = null;
 var _groupEditing = false;  /* suppress auto-refresh while forms are open */
 
 function loadGroups() {
-    fetch('/map/groups')
+    fetch(_u('/map/groups'))
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (data) { renderGroups(data.groups || []); })
         .catch(function (e) { console.error('[Beagle] loadGroups error:', e); });
@@ -1965,7 +1986,7 @@ window._tdoaAssignNode = function () {
     var sel = document.getElementById('tdoa-grp-assign-select');
     if (!sel || !sel.value || !_selectedGroupId) return;
     var nodeId = sel.value;
-    _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), {
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), {
         method: 'PATCH',
         headers: _hdrJson(),
         body: JSON.stringify({ freq_group_id: _selectedGroupId })
@@ -1991,7 +2012,7 @@ window._tdoaDeleteGroup = function (btn, groupId) {
     }
     btn.setAttribute('data-armed', '0');
     btn.disabled = true;
-    _fetch('/api/v1/groups/' + encodeURIComponent(groupId), {
+    _fetch(_u('/api/v1/groups/' + encodeURIComponent(groupId)), {
         method: 'DELETE',
         headers: _hdr()
     })
@@ -2006,7 +2027,7 @@ window._tdoaDeleteGroup = function (btn, groupId) {
 
 /* Unassign a node from its group */
 window._tdoaUnassignNode = function (nodeId) {
-    _fetch('/api/v1/nodes/' + encodeURIComponent(nodeId), {
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), {
         method: 'PATCH',
         headers: _hdrJson(),
         body: JSON.stringify({ freq_group_id: null })
@@ -2135,7 +2156,7 @@ window._tdoaSaveGroup = function (isNew) {
     var desc = (document.getElementById('gf-desc').value || '').trim();
     if (desc) body.description = desc;
     if (isNew) body.group_id = groupId;
-    var url = isNew ? '/api/v1/groups' : '/api/v1/groups/' + encodeURIComponent(groupId);
+    var url = isNew ? _u('/api/v1/groups') : _u('/api/v1/groups/' + encodeURIComponent(groupId));
     var method = isNew ? 'POST' : 'PATCH';
     _fetch(url, { method: method, headers: _hdrJson(), body: JSON.stringify(body) })
     .then(function (r) {
@@ -2167,7 +2188,7 @@ setInterval(function () { if (_groupTabActive && !_groupEditing) loadGroups(); }
 var _usersEditing = false;
 
 function loadUsers() {
-    _fetch('/auth/users', { headers: _hdr() })
+    _fetch(_u('/auth/users'), { headers: _hdr() })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (users) { renderUsers(users); })
         .catch(function (e) { console.error('[Beagle] loadUsers error:', e); });
@@ -2218,7 +2239,7 @@ function renderUsers(users) {
 
 /* Change user role */
 window._tdoaChangeRole = function (userId, newRole) {
-    _fetch('/auth/users/' + encodeURIComponent(userId), {
+    _fetch(_u('/auth/users/' + encodeURIComponent(userId)), {
         method: 'PATCH',
         headers: _hdrJson(),
         body: JSON.stringify({ role: newRole })
@@ -2246,7 +2267,7 @@ window._tdoaResetPw = function (btn, userId) {
     row.querySelector('.ton').addEventListener('click', function () {
         var pw = inp.value;
         if (pw.length < 8) { alert('Password must be at least 8 characters.'); return; }
-        _fetch('/auth/users/' + encodeURIComponent(userId), {
+        _fetch(_u('/auth/users/' + encodeURIComponent(userId)), {
             method: 'PATCH',
             headers: _hdrJson(),
             body: JSON.stringify({ password: pw })
@@ -2275,7 +2296,7 @@ window._tdoaDeleteUser = function (btn, userId) {
     }
     btn.setAttribute('data-armed', '0');
     btn.disabled = true;
-    _fetch('/auth/users/' + encodeURIComponent(userId), {
+    _fetch(_u('/auth/users/' + encodeURIComponent(userId)), {
         method: 'DELETE',
         headers: _hdr()
     })
@@ -2301,7 +2322,7 @@ window._tdoaDisable2fa = function (btn, userId) {
     }
     btn.setAttribute('data-armed', '0');
     btn.disabled = true;
-    _fetch('/auth/2fa/disable', {
+    _fetch(_u('/auth/2fa/disable'), {
         method: 'POST',
         headers: _hdrJson(),
         body: JSON.stringify({ user_id: userId })
@@ -2342,7 +2363,7 @@ window._tdoaDisable2fa = function (btn, userId) {
             var errEl = document.getElementById('uf-error');
             if (!username) { errEl.textContent = 'Username is required.'; return; }
             if (password.length < 8) { errEl.textContent = 'Password must be at least 8 characters.'; return; }
-            _fetch('/auth/register', {
+            _fetch(_u('/auth/register'), {
                 method: 'POST',
                 headers: _hdrJson(),
                 body: JSON.stringify({ username: username, password: password, role: role })
@@ -2373,7 +2394,7 @@ window._tdoaDisable2fa = function (btn, userId) {
             return;
         }
         if (!_currentUser) return;
-        _fetch('/auth/users/' + encodeURIComponent(_currentUser.user_id || ''), {
+        _fetch(_u('/auth/users/' + encodeURIComponent(_currentUser.user_id || '')), {
             method: 'PATCH',
             headers: _hdrJson(),
             body: JSON.stringify({ password: pw })
@@ -2408,6 +2429,7 @@ def _render_control_panel(
     auth_token: str = "",
     user_auth: str = "token",
     google_oauth_enabled: bool = False,
+    root_path: str = "",
 ) -> str:
     """
     Return the HTML/CSS/JS control panel to inject before </body>.
@@ -2426,6 +2448,10 @@ def _render_control_panel(
         "authToken": auth_token,
         "userAuth": user_auth,
         "googleOAuthEnabled": google_oauth_enabled,
+        # URL prefix when proxied under a subpath (e.g. "/beagle"); empty
+        # when mounted at the document root.  All absolute API/auth/map
+        # URLs in the JS are prefixed with this value via the _u() helper.
+        "rootPath": root_path,
     })
     # Escape </ to prevent accidental </script> tag termination inside the data block.
     tdoa_data = tdoa_data.replace("</", r"<\/")
@@ -2799,6 +2825,7 @@ def build_map(
     auth_token: str = "",
     user_auth: str = "token",
     google_oauth_enabled: bool = False,
+    root_path: str = "",
 ) -> str:
     """
     Build a Folium map and return the HTML as a string.
@@ -2878,6 +2905,7 @@ def build_map(
         auth_token=auth_token,
         user_auth=user_auth,
         google_oauth_enabled=google_oauth_enabled,
+        root_path=root_path,
     )
     m.get_root().header.add_child(_BrancaElement("<title>Beagle</title>\n" + _FAVICON_HTML))
     m.get_root().html.add_child(_BrancaElement(panel))
