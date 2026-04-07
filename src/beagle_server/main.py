@@ -50,7 +50,30 @@ def main(argv: list[str] | None = None) -> None:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log verbosity (default INFO)",
     )
+    parser.add_argument(
+        "--root-path",
+        metavar="PATH",
+        default="",
+        help=(
+            "URL path prefix at which the app is mounted by an upstream "
+            "reverse proxy.  Set this when Apache/nginx exposes Beagle under "
+            "a subpath like https://example.com/beagle/ so absolute URLs "
+            "(OAuth callbacks, redirects) are generated with the prefix.  "
+            "Must start with '/' and have no trailing '/'.  "
+            "Empty (default) = mounted at the root."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    # Validate --root-path: must start with '/' and not end with '/'.
+    # Empty string is the documented "no prefix" value.
+    if args.root_path:
+        if not args.root_path.startswith("/"):
+            parser.error("--root-path must start with '/'")
+        if args.root_path.endswith("/") and args.root_path != "/":
+            parser.error("--root-path must not end with '/' (got %r)" % args.root_path)
+        if args.root_path == "/":
+            args.root_path = ""
 
     try:
         config: ServerFullConfig = load_config(args.config)
@@ -171,6 +194,10 @@ def main(argv: list[str] | None = None) -> None:
         # the plain HTTP localhost connection from the proxy.
         proxy_headers=True,
         forwarded_allow_ips="127.0.0.1",
+        # Mount path when proxied under a subpath (e.g. Apache exposing
+        # Beagle as https://example.com/beagle/).  Empty when mounted
+        # at the root.  See --root-path help text.
+        root_path=args.root_path,
         # Allow 2 s for open connections (SSE streams) to drain on first
         # Ctrl+C before force-closing them.  Without this, a second Ctrl+C
         # is required and produces a noisy CancelledError traceback.
