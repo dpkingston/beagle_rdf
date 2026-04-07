@@ -64,6 +64,26 @@ def test_update_fields(state):
     assert snap["sdr_overflows"] == 1
 
 
+def test_sync_corr_peak_optional(state):
+    """sync_corr_peak is omitted from snapshot until set."""
+    snap = state.snapshot()
+    assert "sync_corr_peak" not in snap
+
+
+def test_sync_corr_peak_round_trip(state):
+    state.update(sync_corr_peak=0.7042)
+    snap = state.snapshot()
+    assert snap["sync_corr_peak"] == 0.7042
+
+
+def test_sync_corr_peak_none_does_not_clear(state):
+    """Calling update() without sync_corr_peak preserves the prior value."""
+    state.update(sync_corr_peak=0.5)
+    state.update(events_submitted=10)
+    snap = state.snapshot()
+    assert snap["sync_corr_peak"] == 0.5
+
+
 def test_degraded_when_events_dropped(state):
     # Fake enough uptime to leave "starting"
     state.start_time -= 40.0

@@ -170,10 +170,25 @@ class NodePipeline:
         self._target_sample_count: int = 0
         self.sync_event_count: int = 0   # total SyncEvents detected
 
+        # Latest sync detector telemetry (updated each time process_sync_buffer
+        # produces an event).  Exposed for health reporting.
+        self._latest_corr_peak: float = 0.0
+        self._latest_sample_rate_correction: float = 1.0
+
     @property
     def carrier_detector(self) -> CarrierDetector:
         """Access the live carrier detector (for health reporting and threshold updates)."""
         return self._carrier_det
+
+    @property
+    def latest_corr_peak(self) -> float:
+        """Most recent SyncEvent.corr_peak (signal quality, 0-1)."""
+        return self._latest_corr_peak
+
+    @property
+    def latest_sample_rate_correction(self) -> float:
+        """Most recent SyncEvent.sample_rate_correction (crystal calibration factor)."""
+        return self._latest_sample_rate_correction
 
     # ------------------------------------------------------------------
     # Buffer processing
@@ -219,6 +234,10 @@ class NodePipeline:
         for se in sync_events:
             logger.debug("SyncEvent sample=%d corr=%.3f", se.sample_index, se.corr_peak)
             self._delta.feed_sync(se)
+        if sync_events:
+            last_se = sync_events[-1]
+            self._latest_corr_peak = last_se.corr_peak
+            self._latest_sample_rate_correction = last_se.sample_rate_correction
 
         self._sync_sample_count = raw_start + len(iq)
         return []   # measurements arrive via process_target_buffer / on_measurement

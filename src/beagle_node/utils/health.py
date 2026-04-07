@@ -20,6 +20,7 @@ Response schema
   "events_dropped":       0,
   "queue_depth":          0,
   "crystal_correction":   1.000012,
+  "sync_corr_peak":       0.7042,    # latest SyncEvent quality (0-1); RDS pilot ~0.7
   "sdr_overflows":        0,
   "backlog_drains":       0,
   "clock_source":         "chrony",
@@ -82,6 +83,8 @@ class HealthState:
         self.noise_floor_db: float | None = None
         self.onset_threshold_db: float | None = None
         self.offset_threshold_db: float | None = None
+        # Sync detector quality (latest SyncEvent.corr_peak; 0-1).
+        self.sync_corr_peak: float | None = None
 
     def record_event(self) -> None:
         with self._lock:
@@ -108,6 +111,7 @@ class HealthState:
         noise_floor_db: float | None = None,
         onset_threshold_db: float | None = None,
         offset_threshold_db: float | None = None,
+        sync_corr_peak: float | None = None,
     ) -> None:
         with self._lock:
             # Update last_sync_time if new sync events have arrived
@@ -128,6 +132,8 @@ class HealthState:
                 self.onset_threshold_db = onset_threshold_db
             if offset_threshold_db is not None:
                 self.offset_threshold_db = offset_threshold_db
+            if sync_corr_peak is not None:
+                self.sync_corr_peak = sync_corr_peak
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -184,6 +190,8 @@ class HealthState:
                 result["onset_threshold_db"] = round(self.onset_threshold_db, 1)
             if self.offset_threshold_db is not None:
                 result["offset_threshold_db"] = round(self.offset_threshold_db, 1)
+            if self.sync_corr_peak is not None:
+                result["sync_corr_peak"] = round(self.sync_corr_peak, 4)
             return result
 
 

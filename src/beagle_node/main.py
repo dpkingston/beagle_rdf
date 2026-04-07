@@ -617,6 +617,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             events_submitted=reporter.events_submitted,
                             events_dropped=reporter.events_dropped,
                             queue_depth=reporter.queue_depth,
+                            crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
                             backlog_drains=receiver.backlog_drain_count,
                             clock_source=_clock.source,
@@ -625,6 +626,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
                             offset_threshold_db=pipeline.carrier_detector.offset_threshold_db,
+                            sync_corr_peak=pipeline.latest_corr_peak,
                         )
             elif config.sdr_mode == "rspduo" and hasattr(receiver, "paired_stream"):
                 # RSPduo dual-tuner: master=sync, slave=target.  Both buffers
@@ -665,6 +667,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             events_submitted=reporter.events_submitted,
                             events_dropped=reporter.events_dropped,
                             queue_depth=reporter.queue_depth,
+                            crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
                             backlog_drains=receiver.backlog_drain_count,
                             clock_source=_clock.source,
@@ -673,6 +676,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
                             offset_threshold_db=pipeline.carrier_detector.offset_threshold_db,
+                            sync_corr_peak=pipeline.latest_corr_peak,
                         )
 
             else:
@@ -704,6 +708,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             events_submitted=reporter.events_submitted,
                             events_dropped=reporter.events_dropped,
                             queue_depth=reporter.queue_depth,
+                            crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
                             clock_source=_clock.source,
                             clock_uncertainty_ns=_clock.rms_offset_ns,
@@ -711,6 +716,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
                             offset_threshold_db=pipeline.carrier_detector.offset_threshold_db,
+                            sync_corr_peak=pipeline.latest_corr_peak,
                         )
 
     except KeyboardInterrupt:
