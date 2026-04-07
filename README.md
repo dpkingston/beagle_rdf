@@ -346,6 +346,9 @@ python -m beagle_node --config config/node.yaml --mock --mock-duration 30
 
 ### 5 - Check health
 
+The node exposes a JSON status endpoint on its health port (`8080` by default,
+or whatever `health_port` is set to in `node.yaml`):
+
 ```bash
 curl http://localhost:8080/health
 ```
@@ -356,11 +359,30 @@ curl http://localhost:8080/health
   "node_id": "seattle-north-01",
   "uptime_s": 42.3,
   "events_submitted": 7,
+  "sync_events": 49832,
+  "sync_corr_peak": 0.7042,
+  "crystal_correction": 1.0000098,
   "clock_source": "gps_1pps",
-  "clock_uncertainty_ns": 456,
-  "crystal_correction": 1.0000432
+  "clock_uncertainty_ns": 456
 }
 ```
+
+For a live, formatted view that polls the endpoint each second and shows
+derived metrics (sync event rate, deltas), use `watch_node_health.py`:
+
+```bash
+# Local node:
+python3 scripts/watch_node_health.py
+
+# Remote node (any reachable host):
+python3 scripts/watch_node_health.py --host dpk-tdoa1.local --port 8080
+```
+
+It groups the fields into Configuration / Sync / Carrier-Target / Hardware-Clock
+sections, colour-codes status (green = healthy, yellow = marginal, red =
+degraded), and computes the sync event rate from successive snapshots.
+Press Ctrl-C to exit.  See the `scripts/watch_node_health.py` entry under
+[Scripts](#scripts) for full options.
 
 ---
 
@@ -884,6 +906,56 @@ python3 scripts/verify_clock.py --samples 50000 --show-chrony
 | < 100 usec | Good - NTP class |
 | < 1 ms | Fair - event association still works |
 | > 1 ms | Poor - check system load |
+
+---
+
+#### `scripts/watch_node_health.py`
+Live, formatted view of a running node's `/health` endpoint.  Polls each
+second by default and computes derived metrics (sync event rate, deltas)
+from successive snapshots.  Works against any node by hostname; the script
+itself has no SDR or pipeline dependencies, so you can run it from a laptop
+to watch a remote field node over the network.
+
+```bash
+# Local node:
+python3 scripts/watch_node_health.py
+
+# Remote node on the LAN:
+python3 scripts/watch_node_health.py --host dpk-tdoa1.local --port 8080
+
+# One snapshot, then exit:
+python3 scripts/watch_node_health.py --host dpk-tdoa1.local --once
+
+# Raw JSON (useful for jq pipelines or logging):
+python3 scripts/watch_node_health.py --host dpk-tdoa1.local --json
+```
+
+Output groups:
+
+| Section | Fields shown |
+|---------|--------------|
+| Header | node_id, status (ok / starting / degraded), uptime, degraded reasons |
+| Configuration | sdr_mode, sample_rate, sync_station + frequency, target channels |
+| Sync | events count + delta, **rate/s** (derived), last_sync age, **corr_peak**, **crystal ppm** |
+| Carrier / Target | last_event age, events submitted/dropped + delta, queue_depth, noise_floor, thresholds |
+| Hardware / Clock | sdr_overflows, backlog_drains, clock_source, clock uncertainty |
+
+Colour coding: green = healthy, yellow = marginal, red = degraded or
+significant deltas.  Healthy RDS sync shows `rate ~1188/s`, `corr_peak >= 0.5`,
+and `crystal` within +/-50 ppm and stable.
+
+Options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `localhost` | Node hostname or IP |
+| `--port` | `8080` | Health server port (`health_port` from `node.yaml`) |
+| `--interval` | `1.0` | Poll interval in seconds |
+| `--no-clear` | off | Append each snapshot instead of clearing the screen (good for piping to a log file) |
+| `--once` | off | Print one snapshot and exit |
+| `--json` | off | Print raw JSON instead of formatted output |
+
+Press Ctrl-C to exit interactive mode.
 
 ---
 
