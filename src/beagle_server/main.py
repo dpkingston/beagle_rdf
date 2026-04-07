@@ -164,6 +164,13 @@ def main(argv: list[str] | None = None) -> None:
         port=port,
         log_level=args.log_level.lower(),
         log_config=_uvicorn_log_config,
+        # When fronted by a reverse proxy on localhost (e.g. Apache or
+        # nginx terminating TLS), trust the X-Forwarded-Proto / -For
+        # headers so absolute URLs (OAuth callbacks, redirects) are
+        # generated with the original scheme and client IP rather than
+        # the plain HTTP localhost connection from the proxy.
+        proxy_headers=True,
+        forwarded_allow_ips="127.0.0.1",
         # Allow 2 s for open connections (SSE streams) to drain on first
         # Ctrl+C before force-closing them.  Without this, a second Ctrl+C
         # is required and produces a noisy CancelledError traceback.
