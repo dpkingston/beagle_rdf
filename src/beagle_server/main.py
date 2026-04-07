@@ -61,22 +61,40 @@ def main(argv: list[str] | None = None) -> None:
     host = args.host or config.server.host
     port = args.port or config.server.port
 
-    # Configure the application logger before uvicorn starts.
-    # Uvicorn's dictConfig leaves the root logger at WARNING, which would
-    # silence our _logger.info() calls in api.py.  Configuring the package
-    # logger explicitly (propagate=False) avoids duplicate output.
-    _app_log = logging.getLogger("beagle_server")
-    _app_log.setLevel(args.log_level)
-    if not _app_log.handlers:
-        _h = logging.StreamHandler()
-        _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s  %(message)s"))
-        _app_log.addHandler(_h)
-        _app_log.propagate = False
+    # ------------------------------------------------------------------
+    # Logging configuration
+    # ------------------------------------------------------------------
+    # Goal: every log line - ours, uvicorn's, and any third-party library's
+    # - is prefixed with a timestamp and the logger name.  We achieve this
+    # by:
+    #   1. Configuring the root logger with a StreamHandler + formatter so
+    #      anything that propagates (third-party libs) inherits the format.
+    #   2. Passing the same formatter to uvicorn via its dictConfig log_config
+    #      argument so uvicorn.error and uvicorn.access also get it.
+    #
+    # Without (2), uvicorn replaces the root config when it starts and its
+    # own handlers use a format with no timestamp -- the symptom users see
+    # as "some log lines lack timestamps".
+    _LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s  %(message)s"
+    _LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+
+    # Root logger: catches third-party libraries (httpx, sqlite, etc.).
+    _root_handler = logging.StreamHandler()
+    _root_handler.setFormatter(logging.Formatter(_LOG_FORMAT, _LOG_DATEFMT))
+    _root = logging.getLogger()
+    # Replace any existing handlers so we don't double-print after a reload.
+    for _h in list(_root.handlers):
+        _root.removeHandler(_h)
+    _root.addHandler(_root_handler)
+    _root.setLevel(args.log_level)
+
+    # Our package logger inherits the root handler via propagation.  We only
+    # need to set its level explicitly so DEBUG calls in beagle_server.* are
+    # visible when --log-level DEBUG is passed.
+    logging.getLogger("beagle_server").setLevel(args.log_level)
 
     # Suppress high-frequency heartbeat endpoints from uvicorn's access log at
     # INFO level; still visible when --log-level DEBUG is passed.
-    # Note: uvicorn's access handler has level=NOTSET so we cannot simply demote
-    # the record - we must suppress it outright at INFO and allow it only at DEBUG.
     _show_debug_access = args.log_level.upper() == "DEBUG"
 
     class _HeartbeatAccessFilter(logging.Filter):
@@ -89,7 +107,54 @@ def main(argv: list[str] | None = None) -> None:
                     return False
             return True
 
-    logging.getLogger("uvicorn.access").addFilter(_HeartbeatAccessFilter())
+    # uvicorn's dictConfig: route all uvicorn loggers through our formatter.
+    # disable_existing_loggers=False so the root config above survives the
+    # uvicorn import.
+    _uvicorn_log_config: dict = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "beagle": {
+                "format": _LOG_FORMAT,
+                "datefmt": _LOG_DATEFMT,
+            },
+        },
+        "filters": {
+            "heartbeat_filter": {
+                "()": _HeartbeatAccessFilter,
+            },
+        },
+        "handlers": {
+            "default": {
+                "class": "logging.StreamHandler",
+                "formatter": "beagle",
+                "stream": "ext://sys.stderr",
+            },
+            "access": {
+                "class": "logging.StreamHandler",
+                "formatter": "beagle",
+                "stream": "ext://sys.stdout",
+                "filters": ["heartbeat_filter"],
+            },
+        },
+        "loggers": {
+            "uvicorn": {
+                "handlers": ["default"],
+                "level": args.log_level,
+                "propagate": False,
+            },
+            "uvicorn.error": {
+                "handlers": ["default"],
+                "level": args.log_level,
+                "propagate": False,
+            },
+            "uvicorn.access": {
+                "handlers": ["access"],
+                "level": args.log_level,
+                "propagate": False,
+            },
+        },
+    }
 
     app = create_app(config)
 
@@ -98,6 +163,7 @@ def main(argv: list[str] | None = None) -> None:
         host=host,
         port=port,
         log_level=args.log_level.lower(),
+        log_config=_uvicorn_log_config,
         # Allow 2 s for open connections (SSE streams) to drain on first
         # Ctrl+C before force-closing them.  Without this, a second Ctrl+C
         # is required and produces a noisy CancelledError traceback.

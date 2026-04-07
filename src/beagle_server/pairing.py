@@ -120,6 +120,34 @@ class EventPairer:
         self._groups: dict[tuple, _Group] = {}
 
     # ------------------------------------------------------------------
+    # Logging helpers
+    # ------------------------------------------------------------------
+
+    def _fmt_key(self, key: tuple) -> str:
+        """Render a group key as a human-readable string for log messages.
+
+        key = (channel_bucket, event_type, sync_tx_id, t_sync_anchor_ns)
+        Returns e.g.  "443.4750MHz onset KUOW_94.9 T_sync=1775510456.424"
+        """
+        if len(key) < 4:
+            return repr(key)
+        channel_bucket, event_type, sync_tx_id, t_sync_anchor_ns = key
+        channel_mhz = (channel_bucket * self._freq_tol) / 1e6
+        # T_sync as fractional seconds since epoch (truncated to ms for brevity)
+        t_sync_s = t_sync_anchor_ns / 1e9
+        return (
+            f"{channel_mhz:.4f}MHz {event_type} {sync_tx_id} "
+            f"T_sync={t_sync_s:.3f}"
+        )
+
+    @staticmethod
+    def _fmt_nodes(events: dict[str, dict[str, Any]] | list[dict[str, Any]]) -> str:
+        """Render the unique node IDs in a group for log messages."""
+        items = events.values() if isinstance(events, dict) else events
+        node_ids = sorted({e.get("node_id", "?") for e in items})
+        return ",".join(node_ids) if node_ids else "(none)"
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -143,7 +171,10 @@ class EventPairer:
             full_key = (*base_key, t_sync_ns)
             grp = _Group(key=full_key, t_sync_anchor_ns=t_sync_ns)
             self._groups[full_key] = grp
-            logger.debug("New event group: %s", full_key)
+            logger.debug(
+                "New event group [%s] first node=%s",
+                self._fmt_key(full_key), event.get("node_id", "?"),
+            )
 
         grp.events[event["event_id"]] = event
 
@@ -219,17 +250,27 @@ class EventPairer:
             if not node_in_group:
                 n = round(delta / _T_SYNC_NS)
                 if n != 0 and abs(delta - n * _T_SYNC_NS) <= self._half_window_ns:
+                    logger.debug(
+                        "Sync-period disambiguation: node=%s joining "
+                        "group [%s] (existing nodes=%s) with n=%+d "
+                        "(delta=%.3f ms)",
+                        node_id, self._fmt_key(grp.key),
+                        self._fmt_nodes(grp.events), n, delta / 1e6,
+                    )
                     return grp
         return None
 
     def _evict_expired(self) -> None:
         now = time.time()
         stale = [
-            k for k, g in self._groups.items()
+            (k, g) for k, g in self._groups.items()
             if now - g.first_received_at > self._expiry_s
         ]
-        for k in stale:
-            logger.debug("Evicting expired group: %s", k)
+        for k, g in stale:
+            logger.debug(
+                "Evicting expired group [%s] nodes=%s",
+                self._fmt_key(k), self._fmt_nodes(g.events),
+            )
             del self._groups[k]
 
     async def _schedule_fix(self, key: tuple) -> None:
@@ -243,20 +284,25 @@ class EventPairer:
         node_ids = {e["node_id"] for e in events}
         if len(node_ids) < self._min_nodes:
             logger.info(
-                "Group %s has only %d node(s) after delivery buffer "
-                "(need %d for a fix) - skipping",
-                key, len(node_ids), self._min_nodes,
+                "Group [%s] has only %d node(s) after delivery buffer "
+                "(need %d for a fix) - skipping; nodes=%s",
+                self._fmt_key(key), len(node_ids), self._min_nodes,
+                self._fmt_nodes(events),
             )
             return
 
         logger.info(
-            "Group %s ready: %d events from %d nodes - running fix",
-            key, len(events), len(node_ids),
+            "Group [%s] ready: %d events from %d nodes - running fix; nodes=%s",
+            self._fmt_key(key), len(events), len(node_ids),
+            self._fmt_nodes(events),
         )
         try:
             await self._on_ready(events)
         except Exception:
-            logger.exception("Fix computation failed for group %s", key)
+            logger.exception(
+                "Fix computation failed for group [%s] nodes=%s",
+                self._fmt_key(key), self._fmt_nodes(events),
+            )
 
     # ------------------------------------------------------------------
     # Testing helpers
