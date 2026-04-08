@@ -117,6 +117,12 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     app.state.heartbeats: dict[str, dict[str, Any]] = {}  # node_id -> heartbeat info
     app.state.known_nodes: dict[str, dict[str, Any]] = {}  # node_id -> cached registry row
     app.state.map_geojson_cache: dict[float, dict] = {}   # max_age_s -> GeoJSON; cleared on new fix
+    # Per-node config-file reload status for UI surfacing.  Updated each
+    # time the long-poll handler stats the file.  See
+    # db.maybe_reload_node_config() for the result-dict shape; we also add
+    # a "checked_at" timestamp.  Bounded in size by the number of nodes,
+    # so no eviction policy needed.
+    app.state.config_reload_status: dict[str, dict[str, Any]] = {}
     # Per-node sliding window rate limiter: node_id -> deque of timestamps
     app.state.node_event_times: dict[str, collections.deque] = {}
 
@@ -1409,6 +1415,63 @@ def create_app(config: ServerFullConfig) -> FastAPI:
 
         from fastapi.responses import Response
 
+        # Auto-reload from disk (once per request, before entering the
+        # long-poll loop): if the operator has edited the node's config
+        # file on disk since we last stat'd it, re-read, validate, and
+        # update config_json + bump config_version BEFORE the version
+        # comparison below decides whether to return immediately or hold
+        # the long-poll.  This delivers config edits to nodes within one
+        # poll cycle (~120 s worst case) without any manual reload step.
+        # The file is the source of truth: if both the file and an API
+        # PATCH have changed config_json, the file wins on the next poll.
+        # On any reload error (missing file, parse failure, schema
+        # validation failure) we leave the existing cached config in
+        # place and surface the status in app.state.config_reload_status
+        # for the Nodes panel UI to display.  See
+        # db.maybe_reload_node_config() for details.
+        node_for_reload = await db_module.fetch_node(registry_db, node_id)
+        if node_for_reload is not None:
+            try:
+                reload_result = await db_module.maybe_reload_node_config(
+                    registry_db, dict(node_for_reload),
+                    changed_by="auto-reload",
+                )
+            except Exception as exc:
+                # Defensive: never let a reload bug break the poll.
+                _logger.exception(
+                    "Unexpected error reloading config for %s: %s",
+                    node_id, exc,
+                )
+                reload_result = {
+                    "node_id": node_id,
+                    "status": "error",
+                    "message": f"internal: {exc}",
+                }
+            # Cache for /map/nodes UI surfacing.  Only log on state
+            # transition (status changed since last poll) so a permanent
+            # error doesn't spam the log on every poll.
+            prev = request.app.state.config_reload_status.get(node_id, {})
+            now_ts = time.time()
+            new_state = {**reload_result, "checked_at": now_ts}
+            if reload_result["status"] != prev.get("status"):
+                if reload_result["status"] == "updated":
+                    _logger.info(
+                        "Config auto-reload: %s updated to v%d",
+                        node_id, reload_result.get("new_version"),
+                    )
+                elif reload_result["status"] in ("missing", "parse_error",
+                                                 "validation_error", "error"):
+                    _logger.warning(
+                        "Config auto-reload: %s -> %s: %s",
+                        node_id, reload_result["status"],
+                        reload_result.get("message", ""),
+                    )
+            request.app.state.config_reload_status[node_id] = new_state
+            # Invalidate the event-ingest cache so the new enabled state
+            # / config takes effect on the next event POST.
+            if reload_result["status"] == "updated":
+                request.app.state.known_nodes.pop(node_id, None)
+
         deadline = time.monotonic() + wait
         try:
             while True:
@@ -1786,7 +1849,18 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         event_by_id: dict[str, dict[str, Any]] = {e["node_id"]: e for e in event_summary}
         registered_ids: set[str] = {n["node_id"] for n in registered}
         heartbeats: dict[str, dict[str, Any]] = request.app.state.heartbeats
+        reload_status: dict[str, dict[str, Any]] = request.app.state.config_reload_status
         seen_ids: set[str] = set()
+
+        def _config_status_summary(rs: dict[str, Any] | None) -> dict[str, Any] | None:
+            """Trim the in-memory reload-status entry for client consumption."""
+            if not rs:
+                return None
+            return {
+                "status": rs.get("status"),
+                "message": rs.get("message"),
+                "checked_at": rs.get("checked_at"),
+            }
 
         result: list[dict[str, Any]] = []
         for n in registered:
@@ -1803,6 +1877,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             n["noise_floor_db"] = hb.get("noise_floor_db") if hb else None
             n["onset_threshold_db"] = hb.get("onset_threshold_db") if hb else None
             n["offset_threshold_db"] = hb.get("offset_threshold_db") if hb else None
+            n["config_reload"] = _config_status_summary(reload_status.get(n["node_id"]))
             seen_ids.add(n["node_id"])
             result.append(n)
 

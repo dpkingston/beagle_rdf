@@ -619,20 +619,151 @@ async def update_node_config_file_meta(
     await db.commit()
 
 
-async def reload_node_configs(db: aiosqlite.Connection) -> list[dict[str, Any]]:
-    """Stat config files for all nodes and reload any that have changed.
+async def maybe_reload_node_config(
+    db: aiosqlite.Connection,
+    node_row: dict[str, Any],
+    *,
+    changed_by: str = "auto-reload",
+) -> dict[str, Any]:
+    """Stat one node's config_file_path and reload it if it has changed.
 
-    For each node with a config_file_path, stats the file and compares its
-    mtime to config_file_mtime.  If the file is newer (or mtime was never
-    recorded), re-reads the file, updates config_json, bumps config_version,
-    and records the new mtime.
+    Behaviour:
+      - If config_file_path is NULL/empty: skip, return status "skipped".
+      - If the file does not exist: return status "missing".  config_json
+        and config_file_mtime are left untouched.
+      - If stat() raises: return status "error".
+      - If the file's mtime is unchanged from config_file_mtime: return
+        status "unchanged".
+      - If the file is newer: read, parse (YAML or JSON), validate against
+        NodeConfig.model_validate(), and update config_json + bump
+        config_version + record new mtime + write a history row.  Return
+        status "updated".
+      - If reading or parsing fails OR validation fails: return status
+        "parse_error" or "validation_error".  config_json and
+        config_file_mtime are LEFT UNCHANGED so the next call retries
+        automatically once the operator fixes the file.
 
-    Returns a list of dicts describing what changed:
-      [{"node_id": ..., "new_version": ..., "status": "updated"|"unchanged"|"missing"|"error"}, ...]
+    The validation step uses beagle_node.config.schema.NodeConfig so that
+    structurally valid YAML with the wrong field names (or missing required
+    fields) is rejected at reload time rather than being delivered to the
+    node.
+
+    Parameters
+    ----------
+    node_row : dict
+        A node row from the nodes table containing at least: node_id,
+        config_file_path, config_file_mtime, config_version.
+
+    Returns
+    -------
+    dict with keys:
+      node_id : str
+      status  : "skipped"|"missing"|"unchanged"|"updated"|"parse_error"|"validation_error"|"error"
+      message : str (only present on error states; brief human-readable detail)
+      new_version : int (only present on "updated")
+      path : str (only present on "missing")
     """
     import json as _json
     from pathlib import Path as _Path
 
+    node_id = node_row["node_id"]
+    file_path = node_row.get("config_file_path")
+
+    if not file_path:
+        return {"node_id": node_id, "status": "skipped"}
+
+    fpath = _Path(file_path)
+    old_mtime = node_row.get("config_file_mtime")
+
+    if not fpath.exists():
+        return {
+            "node_id": node_id,
+            "status": "missing",
+            "path": str(fpath),
+            "message": f"config file not found: {fpath}",
+        }
+
+    try:
+        current_mtime = fpath.stat().st_mtime
+    except OSError as exc:
+        return {
+            "node_id": node_id,
+            "status": "error",
+            "message": f"stat failed: {exc}",
+        }
+
+    if old_mtime is not None and current_mtime <= old_mtime:
+        return {"node_id": node_id, "status": "unchanged"}
+
+    # File is newer -- read, parse, validate.
+    # IMPORTANT: on any failure below we deliberately do NOT update
+    # config_file_mtime, so the next call retries automatically once the
+    # operator fixes the file.  (Without this, an editor that briefly
+    # writes a partial file during save would permanently block updates
+    # until the operator saved a second time.)
+    try:
+        text = fpath.read_text()
+        if fpath.suffix.lower() in (".yaml", ".yml"):
+            import yaml  # type: ignore[import]
+            obj = yaml.safe_load(text)
+        else:
+            obj = _json.loads(text)
+    except Exception as exc:
+        return {
+            "node_id": node_id,
+            "status": "parse_error",
+            "message": f"parse error: {exc}",
+        }
+
+    # Schema validation: reject configs that the node would itself reject.
+    # Lazy import to keep beagle_server importable in test contexts that
+    # don't have beagle_node installed (and to make the dependency
+    # explicit at the call site).
+    try:
+        from beagle_node.config.schema import NodeConfig
+        NodeConfig.model_validate(obj)
+    except Exception as exc:
+        return {
+            "node_id": node_id,
+            "status": "validation_error",
+            "message": f"NodeConfig validation failed: {exc}",
+        }
+
+    config_json = _json.dumps(obj)
+    new_version = node_row["config_version"] + 1
+    await db.execute(
+        "UPDATE nodes SET config_json = ?, config_version = ?, "
+        "config_file_mtime = ? WHERE node_id = ?",
+        (config_json, new_version, current_mtime, node_id),
+    )
+    await db.execute(
+        """
+        INSERT INTO node_config_history
+            (node_id, version, config_json, changed_by, changed_at, diff_note)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (node_id, new_version, config_json, changed_by,
+         time.time(), f"reloaded from {fpath}"),
+    )
+    await db.commit()
+    return {
+        "node_id": node_id,
+        "status": "updated",
+        "new_version": new_version,
+    }
+
+
+async def reload_node_configs(db: aiosqlite.Connection) -> list[dict[str, Any]]:
+    """Stat config files for all nodes and reload any that have changed.
+
+    Iterates over every node with a non-NULL config_file_path and calls
+    maybe_reload_node_config() for each.  This is the fleet-wide entry
+    point used by the (now-removed) "Reload Configs" UI button and by
+    the POST /api/v1/nodes/reload-configs endpoint.
+
+    Returns a list of result dicts (one per node), in the same shape as
+    maybe_reload_node_config()'s return value.
+    """
     async with db.execute(
         "SELECT node_id, config_file_path, config_file_mtime, config_version "
         "FROM nodes WHERE config_file_path IS NOT NULL AND config_file_path != ''"
@@ -641,59 +772,10 @@ async def reload_node_configs(db: aiosqlite.Connection) -> list[dict[str, Any]]:
 
     results: list[dict[str, Any]] = []
     for node in nodes:
-        node_id = node["node_id"]
-        fpath = _Path(node["config_file_path"])
-        old_mtime = node["config_file_mtime"]
-
-        if not fpath.exists():
-            results.append({"node_id": node_id, "status": "missing",
-                            "path": str(fpath)})
-            continue
-
-        try:
-            current_mtime = fpath.stat().st_mtime
-        except OSError as exc:
-            results.append({"node_id": node_id, "status": "error",
-                            "error": str(exc)})
-            continue
-
-        if old_mtime is not None and current_mtime <= old_mtime:
-            results.append({"node_id": node_id, "status": "unchanged"})
-            continue
-
-        # File is newer -- reload it
-        try:
-            text = fpath.read_text()
-            if fpath.suffix.lower() in (".yaml", ".yml"):
-                import yaml  # type: ignore[import]
-                obj = yaml.safe_load(text)
-            else:
-                obj = _json.loads(text)
-            config_json = _json.dumps(obj)
-        except Exception as exc:
-            results.append({"node_id": node_id, "status": "error",
-                            "error": f"parse error: {exc}"})
-            continue
-
-        new_version = node["config_version"] + 1
-        await db.execute(
-            "UPDATE nodes SET config_json = ?, config_version = ?, "
-            "config_file_mtime = ? WHERE node_id = ?",
-            (config_json, new_version, current_mtime, node_id),
+        result = await maybe_reload_node_config(
+            db, node, changed_by="reload-configs",
         )
-        await db.execute(
-            """
-            INSERT INTO node_config_history
-                (node_id, version, config_json, changed_by, changed_at, diff_note)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (node_id, new_version, config_json, "reload-configs",
-             time.time(), f"reloaded from {fpath}"),
-        )
-        results.append({"node_id": node_id, "status": "updated",
-                        "new_version": new_version})
-
-    await db.commit()
+        results.append(result)
     return results
 
 

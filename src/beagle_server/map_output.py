@@ -320,6 +320,12 @@ _PANEL_CSS = """<style>
 .tp-margin-good { color: #2ecc71; }
 .tp-margin-warn { color: #f1c40f; }
 .tp-margin-bad  { color: #e74c3c; }
+/* --- Per-node config-file reload error badge --- */
+.tp-config-err {
+    color: #ffd6d6; background: rgba(180, 35, 35, 0.55);
+    font-size: 10px; line-height: 1.5; margin-top: 2px;
+    padding: 2px 6px; border-radius: 3px; cursor: help;
+}
 /* --- Carrier threshold form in detail panel --- */
 .tp-carrier-form { margin: 6px 0 4px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,.06); }
 .tp-carrier-form label { display: inline-block; color: #7a9bbf; font-size: 10px; width: 110px; }
@@ -473,7 +479,6 @@ _PANEL_HTML = """
       <button class="tdoa-btn-sm ton" id="tdoa-enable-all-btn">Enable All</button>
       <button class="tdoa-btn-sm toff" id="tdoa-disable-all-btn">Disable All</button>
       <button class="tdoa-btn-sm ton" id="tdoa-register-node-btn">+ Register</button>
-      <button class="tdoa-btn-sm" id="tdoa-reload-configs-btn">Reload Configs</button>
     </div>
     <div id="tdoa-node-reg-area" style="display:none"></div>
     <div id="tdoa-node-list">
@@ -1407,6 +1412,22 @@ function renderNodes(nodes) {
         html += '<br>Last: ' + _esc(age);
         if (n.last_ip) { html += ' &bull; ' + _esc(n.last_ip); }
         html += '</div>';
+        /* Config-file reload status badge -- only shown for nodes whose
+         * config came from a file on disk and is currently in an error or
+         * missing state.  "ok" / "unchanged" / "updated" / "skipped" are
+         * the healthy outcomes and don't need a badge.  See
+         * db.maybe_reload_node_config(). */
+        var cr = n.config_reload;
+        if (cr && (cr.status === 'missing' || cr.status === 'parse_error' ||
+                   cr.status === 'validation_error' || cr.status === 'error')) {
+            var badgeLabel = (cr.status === 'missing') ? 'config file missing'
+                           : (cr.status === 'parse_error') ? 'config parse error'
+                           : (cr.status === 'validation_error') ? 'config schema invalid'
+                           : 'config reload error';
+            var badgeMsg = cr.message || '';
+            html += '<div class="tp-config-err" title="' + _esc(badgeMsg) + '">'
+                  + '&#9888; ' + _esc(badgeLabel) + '</div>';
+        }
         /* Carrier threshold status row */
         if (n.noise_floor_db != null && n.onset_threshold_db != null) {
             var margin = (n.onset_threshold_db - n.noise_floor_db).toFixed(1);
@@ -1562,25 +1583,13 @@ var _usersTabActive = false;
     if (enableAllBtn)  enableAllBtn.addEventListener('click',  function () { setBulk(true);  });
     if (disableAllBtn) disableAllBtn.addEventListener('click', function () { setBulk(false); });
 
-    /* Reload Configs button */
-    var reloadBtn = document.getElementById('tdoa-reload-configs-btn');
-    if (reloadBtn) reloadBtn.addEventListener('click', function () {
-        reloadBtn.disabled = true;
-        reloadBtn.textContent = 'Reloading...';
-        _fetch(_u('/api/v1/nodes/reload-configs'), { method: 'POST', headers: _hdr() })
-            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-            .then(function (data) {
-                var n = data.updated || 0;
-                reloadBtn.textContent = n > 0 ? n + ' updated' : 'No changes';
-                setTimeout(function () { reloadBtn.textContent = 'Reload Configs'; reloadBtn.disabled = false; }, 3000);
-                if (n > 0) loadNodes();
-            })
-            .catch(function (e) {
-                console.error('[Beagle] reload-configs error:', e);
-                reloadBtn.textContent = 'Error';
-                setTimeout(function () { reloadBtn.textContent = 'Reload Configs'; reloadBtn.disabled = false; }, 3000);
-            });
-    });
+    /* Note: the "Reload Configs" button used to live here.  It is no
+     * longer needed -- the server now stats each node's config_file_path
+     * on every config poll and reloads automatically if the file has
+     * changed.  Updates propagate to a node within one poll cycle (up to
+     * ~120 s).  See db.maybe_reload_node_config().  The
+     * POST /api/v1/nodes/reload-configs endpoint is preserved for tests
+     * and any external automation that depends on it. */
 })();
 
 /* Auto-refresh nodes every 30 s when the nodes tab is active.

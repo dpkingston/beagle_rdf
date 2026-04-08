@@ -8,6 +8,7 @@
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
 - [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
 - [manage_nodes: add group-update command](#manage_nodes-add-group-update-command)
+- [Review functioning of frequency groups](#review-functioning-of-frequency-groups)
 
 **Completed**
 - [✓ Web UI: User Management, Login, 2FA, Google OAuth](#web-ui-user-management-login-2fa-google-oauth)
@@ -168,6 +169,51 @@ Usage example:
 scripts/manage_nodes.py group-update Magnolia \
     --sync-station-lat 47.61576 --sync-station-lon -122.30919
 ```
+
+---
+
+### Review functioning of frequency groups
+
+The freq-group overlay in `api.py:get_node_config` silently replaces a
+node's per-node `sync_signal.primary_station` with values from the
+`node_freq_groups` table whenever the node is assigned to a group.  Two
+incidents to date have been confused by this:
+
+1. **Stale Magnolia coords (2026-04-06)**.  Operator updated the per-node
+   YAML in `remote_configs/<node>.yaml`; the node was still assigned to a
+   freq group whose row carried older KUOW coordinates; the freq-group
+   row silently overrode the per-node config in the API response.
+   Effect: nodes kept reporting the stale coordinates and only the
+   colocated_pair_test scatter alerted us.
+
+2. **No `manage_nodes group-update` command**: see the entry above.  The
+   only ways to fix freq-group coordinates today are direct SQL UPDATE
+   on `tdoa_registry.db` or HTTP PATCH via the web UI; both require
+   manually bumping `config_version` and writing a `node_config_history`
+   row to make the long-poll wake up.
+
+3. **No reload-from-file path**: per-node configs are now auto-reloaded
+   from `config_file_path` on every poll (see commit history for the
+   "config auto-reload" change).  Freq groups have no such mechanism --
+   they only exist in the registry DB.
+
+**Goals of the review:**
+
+- Decide whether the freq-group concept is still pulling its weight now
+  that per-node configs are file-driven and auto-reloaded.  If the same
+  outcome can be achieved by editing N per-node files (and the
+  auto-reload picks them up), the freq-group table may be redundant for
+  the deployment scale we have.
+- If we keep freq groups, decide whether they should also be
+  file-backed (so the operator's source of truth is files everywhere
+  instead of "files for nodes, DB for groups").
+- If we keep them DB-only, build the `manage_nodes group-update`
+  command and document the override semantics clearly so the next
+  incident is less surprising.
+
+This is a design review, not a single change.  Pick it up after the
+auto-reload work has been in production for a few days and we can see
+how the operational story actually feels.
 
 ---
 

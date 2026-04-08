@@ -1003,17 +1003,40 @@ changes pushed via `set-config` are picked up automatically (see below).
 
 ### Pushing config updates
 
-Nodes in bootstrap mode long-poll the server for config changes.  To update a
-running node's config:
+Nodes in bootstrap mode long-poll the server for config changes, and the
+server **auto-reloads each node's config file from disk on every poll**.
+To update a running node's config, just edit its file in
+`remote_configs/<node_id>.yaml` (the path you registered with `set-config
+--config-file`) and save it.  No `manage_nodes` command needed, no UI
+button to click.
 
 ```bash
-# Edit the config file, then push it:
-python3 scripts/manage_nodes.py --db data/tdoa_registry.db set-config seattle-north-01 \
-    --config-file configs/seattle-north-01.yaml
+# Edit the file in place
+$EDITOR remote_configs/seattle-north-01.yaml
+# That's it -- the next config poll picks it up.
 ```
 
-The node picks up the new config within seconds (long-poll returns immediately
-when the version increments).  The behaviour depends on what changed:
+The new config propagates to the node within **one poll cycle**, which is
+the long-poll wait time configured in the node's `bootstrap.yaml`.  The
+default is 60 seconds; the cap is 120 seconds; in practice the node sees
+the change within ~1 second of saving the file because the long-poll
+returns immediately when `config_version` increments.
+
+**Source-of-truth rule**: when both the file on disk and an API edit
+(`PATCH /api/v1/nodes/{node_id}` or `manage_nodes set-config`) have
+modified `config_json`, **the file wins on the next poll**.  API edits to
+fields that come from the file will be reverted on the next config poll.
+If you edit the file and want to verify the change took effect, watch the
+Nodes panel in the UI: any reload error (file missing, YAML parse failure,
+schema validation failure) is surfaced as a red badge on the node's row.
+
+Schema validation: the file is validated against `NodeConfig.model_validate()`
+before being stored.  YAML files with the wrong field names or missing
+required fields are rejected at reload time, the previous good config is
+left in place, and the error is shown in the Nodes panel.
+
+The behaviour after the new config reaches the node depends on what
+changed:
 
 | Changed fields | Behaviour |
 |----------------|-----------|
@@ -1022,6 +1045,13 @@ when the version increments).  The behaviour depends on what changed:
 
 No manual intervention is needed in either case.  The systemd unit
 (`etc/beagle-node.service`) has `Restart=on-failure` which covers exit code 75.
+
+> **About the `POST /api/v1/nodes/reload-configs` endpoint**: this used
+> to be wired to a "Reload Configs" button in the Nodes panel that
+> walked all nodes' config files at once.  The button was removed when
+> per-poll auto-reload landed -- it became a vestigial way of doing what
+> the polls now do continuously.  The endpoint itself is preserved for
+> tests and any external automation that depends on it.
 
 ### Available commands
 
