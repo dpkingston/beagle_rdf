@@ -567,6 +567,12 @@ var windowMode  = false;  /* true when a fixed [fromS, toS] window is active */
 var windowFromS = 0;      /* window start: Unix seconds */
 var windowToS   = 0;      /* window end:   Unix seconds */
 
+/* SSE health flag: true while the EventSource is connected.  Used by the
+ * fallback /map/data poll timer to skip the request when SSE is already
+ * delivering live updates -- the SSE 'new_fix' handler calls loadFixes()
+ * directly, so the timer is only needed when SSE is offline. */
+var _sseHealthy = false;
+
 /* - Helper: set element text, no-op if element missing - */
 function setText(id, val) {
     var el = document.getElementById(id);
@@ -742,6 +748,7 @@ function loadFixes(maxAgeS) {
                           fillOpacity: 0.85, weight: 1 }
                     ).bindPopup(popupHtml, { maxWidth: 320 })
                      .bindTooltip(f.properties.tooltip);
+                    layer._beagleComputedAt = f.properties.computed_at;
                     layer.addTo(leafletMap);
                     _fixLayers.push(layer);
                     if (f.properties.computed_at > newestFixTs) {
@@ -754,6 +761,7 @@ function loadFixes(maxAgeS) {
                     layer = L.polyline(latlngs,
                         { color: '#e74c3c', weight: 1.5, opacity: 0.6 }
                     ).bindTooltip(f.properties.tooltip);
+                    layer._beagleComputedAt = f.properties.computed_at;
                     layer.addTo(leafletMap);
                     _fixLayers.push(layer);
                 } else if (f.properties.feature_type === 'lop') {
@@ -768,6 +776,7 @@ function loadFixes(maxAgeS) {
                         { color: '#e0a020', weight: 2.0, opacity: lopOpacity,
                           dashArray: '8 5' }
                     ).bindTooltip(f.properties.tooltip);
+                    layer._beagleComputedAt = f.properties.computed_at;
                     if (_lopVisible) { layer.addTo(leafletMap); }
                     _lopLayers.push(layer);
                 } else if (f.properties.feature_type === 'node') {
@@ -956,8 +965,42 @@ window.addEventListener('load', function () {
     /* Initial fix layer load */
     loadFixes(currentMaxAgeS);
 
-    /* Periodic refresh so node markers appear without waiting for a fix */
-    setInterval(function () { loadFixes(currentMaxAgeS); }, 15000);
+    /* Fallback /map/data poll: only fires when SSE is offline.  When SSE
+       is healthy the new_fix handler keeps the map fresh on its own.
+       This timer is the safety net for when SSE has dropped. */
+    setInterval(function () {
+        if (!_sseHealthy) {
+            loadFixes(currentMaxAgeS);
+        }
+    }, 15000);
+
+    /* Slow client-side aging: every 120s, walk the existing fix/LOP
+       layers and remove any whose computed_at has passed the current
+       max-age window.  No HTTP fetch -- this lets an idle map drop
+       stale fixes without re-polling /map/data.
+       Skipped in window mode (the user pinned a fixed time range) and
+       when currentMaxAgeS == 0 ("show all"). */
+    setInterval(function () {
+        if (windowMode || currentMaxAgeS <= 0 || !leafletMap) return;
+        var cutoffSec = (Date.now() / 1000) - currentMaxAgeS;
+        function _ageOut(arr) {
+            var keep = [];
+            for (var i = 0; i < arr.length; i++) {
+                var layer = arr[i];
+                /* _beagleComputedAt is set by loadFixes() when the layer
+                   is created.  Layers without it (e.g. node markers) are
+                   never aged out by this timer. */
+                if (layer._beagleComputedAt && layer._beagleComputedAt < cutoffSec) {
+                    leafletMap.removeLayer(layer);
+                } else {
+                    keep.push(layer);
+                }
+            }
+            return keep;
+        }
+        _fixLayers = _ageOut(_fixLayers);
+        _lopLayers = _ageOut(_lopLayers);
+    }, 120000);
 });
 
 /* - Reset buttons: two-click confirmation to avoid blocked confirm() - */
@@ -1003,16 +1046,23 @@ function makeResetHandler(btnId, url, origLabel) {
 makeResetHandler('tdoa-heatmap-reset-btn', _u('/api/v1/heatmap'), 'Reset Heat Map');
 
 /* - SSE live connection --
-   On new_fix: update fix layers without a full page reload. */
+   On new_fix: update fix layers without a full page reload.  The
+   _sseHealthy flag is read by the fallback /map/data poll timer to
+   suppress the timer when SSE is already pushing live updates. */
 function connect() {
     var src = new EventSource(_u('/api/v1/fixes/stream'));
-    src.onopen = function () { setLive('LIVE', 'rgba(20,120,40,0.9)'); };
+    src.onopen = function () {
+        _sseHealthy = true;
+        setLive('LIVE', 'rgba(20,120,40,0.9)');
+    };
     src.addEventListener('new_fix', function () {
+        _sseHealthy = true;
         setLive('NEW FIX', 'rgba(200,120,0,0.9)');
         loadFixes(currentMaxAgeS);
         loadHeatmap();
     });
     src.onerror = function () {
+        _sseHealthy = false;
         src.close();
         setLive('OFFLINE', 'rgba(155,40,40,0.9)');
         setTimeout(connect, 5000);
@@ -1533,8 +1583,10 @@ var _usersTabActive = false;
     });
 })();
 
-/* Auto-refresh nodes every 10 s when the nodes tab is active */
-setInterval(function () { if (_nodeTabActive && !_nodeEditing) loadNodes(); }, 10000);
+/* Auto-refresh nodes every 30 s when the nodes tab is active.
+   Node state changes infrequently; the longer interval reduces server
+   load and the operator can manually refresh by reopening the tab. */
+setInterval(function () { if (_nodeTabActive && !_nodeEditing) loadNodes(); }, 30000);
 
 /* ================================================================
    Node management: register, regen secret, label edit, detail panel
@@ -2178,8 +2230,9 @@ if (cgBtn) cgBtn.addEventListener('click', function () { _renderGroupForm(null);
 /* Also load groups on startup so _groupLookup() is available for node cards */
 loadGroups();
 
-/* Auto-refresh groups every 10 s when the groups tab is active */
-setInterval(function () { if (_groupTabActive && !_groupEditing) loadGroups(); }, 10000);
+/* Auto-refresh groups every 30 s when the groups tab is active.
+   Groups change rarely (admin actions only); 30 s is plenty. */
+setInterval(function () { if (_groupTabActive && !_groupEditing) loadGroups(); }, 30000);
 
 /* ================================================================
    Users tab (admin-only, userdb mode)
@@ -2413,8 +2466,9 @@ window._tdoaDisable2fa = function (btn, userId) {
     });
 })();
 
-/* Auto-refresh users every 10 s when the users tab is active */
-setInterval(function () { if (_usersTabActive && !_usersEditing) loadUsers(); }, 10000);
+/* Auto-refresh users every 30 s when the users tab is active.
+   User accounts change rarely; 30 s is plenty. */
+setInterval(function () { if (_usersTabActive && !_usersEditing) loadUsers(); }, 30000);
 
 })();
 </script>"""
