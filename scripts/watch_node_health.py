@@ -236,15 +236,13 @@ def render(snapshot: dict, prev: dict | None, prev_time: float | None,
 
     lines.append("")
 
-    # Hardware / clock
+    # Hardware
     sdr_overflows = snapshot.get("sdr_overflows", 0)
     backlog_drains = snapshot.get("backlog_drains", 0)
-    clock_source = snapshot.get("clock_source", "?")
-    clock_unc = snapshot.get("clock_uncertainty_ns", 0)
     prev_overflows = prev.get("sdr_overflows") if prev else None
     prev_backlog = prev.get("backlog_drains") if prev else None
 
-    lines.append(f"{BOLD}Hardware / Clock{RESET}")
+    lines.append(f"{BOLD}Hardware{RESET}")
     of_str = fmt_int_with_delta(sdr_overflows, prev_overflows)
     if sdr_overflows > 0:
         of_str = f"{YELLOW}{of_str}{RESET}"
@@ -253,7 +251,6 @@ def render(snapshot: dict, prev: dict | None, prev_time: float | None,
     if backlog_drains > 0:
         bd_str = f"{YELLOW}{bd_str}{RESET}"
     lines.append(f"  backlog_drains {bd_str}")
-    lines.append(f"  clock          {clock_source}  uncertainty={clock_unc} ns")
 
     return "\n".join(lines)
 

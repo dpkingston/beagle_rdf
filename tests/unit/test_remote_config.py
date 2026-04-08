@@ -409,10 +409,10 @@ def test_set_heartbeat_data_returns_copy() -> None:
 def test_set_heartbeat_data_overwrites_previous() -> None:
     fetcher = _make_fetcher()
     fetcher.set_heartbeat_data({"noise_floor_db": -55.0})
-    fetcher.set_heartbeat_data({"noise_floor_db": -60.0, "clock_source": "gps_1pps"})
+    fetcher.set_heartbeat_data({"noise_floor_db": -60.0, "sdr_mode": "rspduo"})
     hb = fetcher._get_heartbeat_data()
     assert hb["noise_floor_db"] == -60.0
-    assert hb["clock_source"] == "gps_1pps"
+    assert hb["sdr_mode"] == "rspduo"
 
 
 # ---------------------------------------------------------------------------

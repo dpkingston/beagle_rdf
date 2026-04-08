@@ -195,8 +195,6 @@ def _make_event_payload(
         "noise_floor_db": -60.0,
         "snr_db": 25.0,
         "sync_corr_peak": 0.9,
-        "clock_source": "ntp",
-        "clock_uncertainty_ns": 5000,
         "node_software_version": "test",
         "iq_snippet_b64": _make_node_snippet_b64(sync_delta),
         "channel_sample_rate_hz": float(_SNIPPET_RATE_HZ),

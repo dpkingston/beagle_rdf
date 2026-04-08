@@ -423,9 +423,7 @@ curl http://localhost:8080/health
   "events_submitted": 7,
   "sync_events": 49832,
   "sync_corr_peak": 0.7042,
-  "crystal_correction": 1.0000098,
-  "clock_source": "gps_1pps",
-  "clock_uncertainty_ns": 456
+  "crystal_correction": 1.0000098
 }
 ```
 
@@ -1259,7 +1257,7 @@ Output groups:
 | Configuration | sdr_mode, sample_rate, sync_station + frequency, target channels |
 | Sync | events count + delta, **rate/s** (derived), last_sync age, **corr_peak**, **crystal ppm** |
 | Carrier / Target | last_event age, events submitted/dropped + delta, queue_depth, noise_floor, thresholds |
-| Hardware / Clock | sdr_overflows, backlog_drains, clock_source, clock uncertainty |
+| Hardware | sdr_overflows, backlog_drains |
 
 Colour coding: green = healthy, yellow = marginal, red = degraded or
 significant deltas.  Healthy RDS sync shows `rate ~1188/s`, `corr_peak >= 0.5`,
@@ -1957,7 +1955,6 @@ Clock
 | No measurements after carrier present | Onset threshold wrong | Run Step 3 (`check_target.py`) to calibrate thresholds |
 | Large path-delay residual | Wrong FCC coordinates or wrong node location | Verify GPS coords at deployment site |
 | Fix error > 2 km | Clock error or SDR drift | Run Steps 2-3; adjust `calibration_offset_ns` |
-| Health shows `clock_source: unknown` | Chrony not running | `sudo systemctl start chrony` |
 
 ---
 

@@ -275,7 +275,6 @@ def _make_event_payload(
     onset_time_ns: int,
     sync_delta_ns: int,
     corr_peak: float,
-    ntp_sigma_ns: float,
 ) -> dict[str, Any]:
     return {
         "schema_version": "1.4",
@@ -298,8 +297,6 @@ def _make_event_payload(
         "event_type": event_type,
         "onset_time_ns": onset_time_ns,
         "sync_corr_peak": round(corr_peak, 4),
-        "clock_source": "ntp",
-        "clock_uncertainty_ns": int(ntp_sigma_ns),
         "node_software_version": "mock-1.0",
         "iq_snippet_b64": _make_synthetic_iq_snippet(event_type=event_type),
         "channel_sample_rate_hz": _MOCK_SAMPLE_RATE_HZ,
@@ -370,7 +367,6 @@ def synthesise_onset(
                 onset_time_ns=onset_time_ns,
                 sync_delta_ns=sync_delta_ns,
                 corr_peak=corr_peak,
-                ntp_sigma_ns=error_model.ntp_sigma_ns,
             ),
             true_sync_delta_ns=true_sync_delta_ns,
             true_onset_time_ns=true_onset_time_ns,
@@ -446,7 +442,6 @@ def synthesise_offset(
                 onset_time_ns=onset_time_ns,
                 sync_delta_ns=sync_delta_ns,
                 corr_peak=corr_peak,
-                ntp_sigma_ns=error_model.ntp_sigma_ns,
             ),
             true_sync_delta_ns=true_sync_delta_ns,
             true_onset_time_ns=true_offset_time_ns,
@@ -595,7 +590,6 @@ def send_heartbeats(
             "latitude_deg": node.latitude_deg,
             "longitude_deg": node.longitude_deg,
             "sdr_mode": "freq_hop",
-            "clock_source": "ntp",
             "software_version": "mock-1.0",
         }
         try:

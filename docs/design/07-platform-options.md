@@ -238,9 +238,9 @@ termination via Let's Encrypt.  The node's `reporter.server_url` should be
 
 GPS is used on the node for `onset_time_ns` (rough absolute timestamp for event
 association across nodes) and, in `two_sdr` mode, for GPS 1PPS injection.
-In `freq_hop` and `rspduo` modes, GPS discipline is optional - NTP with
-`clock_source: ntp` works for event association (nodes only need to agree on
-absolute time to within +/-200 ms).
+In `freq_hop` and `rspduo` modes, GPS discipline is optional - chrony with NTP
+sources works for event association (nodes only need to agree on absolute time
+to within +/-200 ms).
 
 | Module | Interface | 1PPS | Price | Notes |
 |--------|-----------|------|-------|-------|

@@ -108,11 +108,6 @@ class CarrierEvent(BaseModel):
     sync_corr_peak: float = 0.0
     """FM pilot cross-correlation peak at the paired SyncEvent (0-1)."""
 
-    # Clock metadata -------------------------------------------------------
-    clock_source: Literal["gps_1pps", "ntp", "unknown"] = "unknown"
-    clock_uncertainty_ns: int = 0
-    """Chrony-reported RMS offset uncertainty (nanoseconds)."""
-
     node_software_version: str = ""
 
     iq_snippet_b64: str

@@ -1153,7 +1153,6 @@ async def fetch_node_snr_stats(
       event_count, last_event_age_s,
       corr_peak_mean, corr_peak_min, corr_peak_p10,
       snr_db_mean, snr_db_min, snr_db_p10,   (peak_power_db - noise_floor_db)
-      clock_source, clock_uncertainty_ns       (from most recent event)
     """
     async with db.execute(
         """
@@ -1161,9 +1160,6 @@ async def fetch_node_snr_stats(
                corr_peak,
                CAST(json_extract(raw_json, '$.peak_power_db')   AS REAL)    AS peak_power_db,
                CAST(json_extract(raw_json, '$.noise_floor_db')  AS REAL)    AS noise_floor_db,
-               json_extract(raw_json, '$.clock_source')                     AS clock_source,
-               CAST(json_extract(raw_json, '$.clock_uncertainty_ns') AS INTEGER)
-                                                                             AS clock_uncertainty_ns,
                received_at
         FROM events
         WHERE received_at >= ?
@@ -1212,8 +1208,6 @@ async def fetch_node_snr_stats(
             "corr_peak_mean": round(sum(corr_peaks) / n, 3),
             "corr_peak_min": round(corr_peaks[0], 3),
             "corr_peak_p10": round(corr_peaks[p10_idx], 3),
-            "clock_source": latest["clock_source"],
-            "clock_uncertainty_ns": latest["clock_uncertainty_ns"],
         }
         if snr_vals:
             entry["snr_db_mean"] = round(sum(snr_vals) / snr_n, 1)

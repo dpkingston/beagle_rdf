@@ -995,7 +995,6 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             "latitude_deg": body.get("latitude_deg"),
             "longitude_deg": body.get("longitude_deg"),
             "sdr_mode": body.get("sdr_mode"),
-            "clock_source": body.get("clock_source"),
             "noise_floor_db": body.get("noise_floor_db"),
             "onset_threshold_db": body.get("onset_threshold_db"),
             "offset_threshold_db": body.get("offset_threshold_db"),
@@ -1390,8 +1389,8 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         beyond V.  Returns HTTP 304 if the timeout expires with no update.
 
         POST requests carry heartbeat telemetry in the JSON body (noise_floor_db,
-        onset_threshold_db, offset_threshold_db, clock_source, sdr_mode, location,
-        etc.).  This merges the config poll and heartbeat into a single round trip.
+        onset_threshold_db, offset_threshold_db, sdr_mode, location, etc.).
+        This merges the config poll and heartbeat into a single round trip.
         GET requests still work for backward compatibility or admin tools.
 
         The node authenticates with X-Node-ID + Bearer <secret>.
@@ -1421,7 +1420,6 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 "latitude_deg": body_lat,
                 "longitude_deg": body_lon,
                 "sdr_mode": body.get("sdr_mode"),
-                "clock_source": body.get("clock_source"),
                 "noise_floor_db": body.get("noise_floor_db"),
                 "onset_threshold_db": body.get("onset_threshold_db"),
                 "offset_threshold_db": body.get("offset_threshold_db"),

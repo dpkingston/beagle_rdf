@@ -1268,15 +1268,13 @@ POST /api/v1/nodes/{node_id}/heartbeat
   "events_submitted": 1240,
   "events_dropped": 0,
   "queue_depth": 2,
-  "sdr_overflows": 0,
-  "clock_source": "gps_1pps",
-  "clock_offset_ns": 42
+  "sdr_overflows": 0
 }
 ```
 
 Server records in `nodes.last_seen_at` and a `node_heartbeats` table.
 Map control panel gains a "Nodes" tab showing per-node status (online/offline,
-config version, clock quality, event rate).
+config version, event rate).
 
 ---
 

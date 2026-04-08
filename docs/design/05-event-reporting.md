@@ -50,9 +50,6 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
   "snr_db":          23.8,
   "sync_corr_peak":   0.84,
 
-  "clock_source":   "gps_1pps",
-  "clock_uncertainty_ns": 800,
-
   "node_software_version": "0.1.0",
 
   "iq_snippet_b64":        "<base64-encoded int8 IQ>",
@@ -108,13 +105,6 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 | `noise_floor_db` | float | Estimated noise floor (dBFS) |
 | `snr_db` | float | Signal-to-noise ratio (dB) |
 | `sync_corr_peak` | float | FM pilot cross-correlation quality at the matched SyncEvent (0-1).  Values below ~0.3 indicate a weak or noisy pilot. |
-
-#### Clock quality
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `clock_source` | enum | `"gps_1pps"`, `"ntp"`, `"unknown"` - source of the kernel clock used for `onset_time_ns` |
-| `clock_uncertainty_ns` | int | Chrony-reported RMS offset uncertainty (nanoseconds) |
 
 #### IQ cross-correlation (required)
 
@@ -234,9 +224,7 @@ summary of pipeline state.  Relevant fields:
   "events_submitted":    148,
   "events_dropped":      0,
   "queue_depth":         0,
-  "sdr_overflows":       0,
-  "clock_source":        "gps_1pps",
-  "clock_uncertainty_ns": 850
+  "sdr_overflows":       0
 }
 ```
 

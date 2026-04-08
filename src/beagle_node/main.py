@@ -406,16 +406,6 @@ def run(args: argparse.Namespace | None = None) -> int:
     health.set_config(sample_rate_hz=receiver.config.sample_rate_hz)
 
     # ------------------------------------------------------------------
-    # Clock status (chrony)
-    # ------------------------------------------------------------------
-    from beagle_node.utils.chrony import ChronyStatus, read_chrony_status
-    _clock: ChronyStatus = read_chrony_status()
-    logger.info(
-        "Initial clock status: source=%s uncertainty_ns=%d stratum=%d",
-        _clock.source, _clock.rms_offset_ns, _clock.stratum,
-    )
-
-    # ------------------------------------------------------------------
     # Pipeline
     # ------------------------------------------------------------------
     from beagle_node.pipeline.pipeline import NodePipeline, PipelineConfig
@@ -510,8 +500,6 @@ def run(args: argparse.Namespace | None = None) -> int:
             peak_power_db=m.onset_power_db,
             noise_floor_db=m.noise_floor_db,
             sync_corr_peak=m.corr_peak,
-            clock_source=_clock.source,
-            clock_uncertainty_ns=_clock.rms_offset_ns,
             node_software_version="0.1.0",
             iq_snippet_b64=base64.b64encode(m.iq_snippet).decode(),
             channel_sample_rate_hz=_target_sample_rate_hz,
@@ -579,8 +567,6 @@ def run(args: argparse.Namespace | None = None) -> int:
     logger.info("Entering main SDR loop")
     exit_code = 0
     sample_count = 0
-    _last_chrony_refresh: float = 0.0
-    _CHRONY_INTERVAL_S: float = 30.0
     _last_heartbeat: float = 0.0
     _HEARTBEAT_INTERVAL_S: float = 30.0
 
@@ -619,14 +605,10 @@ def run(args: argparse.Namespace | None = None) -> int:
                     adc_pos += block_n
                     sample_count += len(iq_buf)
 
-                    # Refresh chrony + update health every ~1 second worth of samples
+                    # Update health + heartbeat every ~1 second worth of samples
                     if sample_count % (int(receiver.config.sample_rate_hz) or 2_048_000) < len(iq_buf):
                         now = time.monotonic()
-                        if now - _last_chrony_refresh >= _CHRONY_INTERVAL_S:
-                            _clock = read_chrony_status()
-                            _last_chrony_refresh = now
                         if now - _last_heartbeat >= _HEARTBEAT_INTERVAL_S:
-                            _heartbeat_payload["clock_source"] = _clock.source
                             _heartbeat_payload["noise_floor_db"] = pipeline.carrier_detector.noise_floor_db
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
@@ -643,8 +625,6 @@ def run(args: argparse.Namespace | None = None) -> int:
                             crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
                             backlog_drains=receiver.backlog_drain_count,
-                            clock_source=_clock.source,
-                            clock_uncertainty_ns=_clock.rms_offset_ns,
                             sync_event_count=pipeline.sync_event_count,
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
@@ -668,11 +648,7 @@ def run(args: argparse.Namespace | None = None) -> int:
 
                     if sample_count % (int(receiver.config.sample_rate_hz) or 2_000_000) < len(sync_buf):
                         now = time.monotonic()
-                        if now - _last_chrony_refresh >= _CHRONY_INTERVAL_S:
-                            _clock = read_chrony_status()
-                            _last_chrony_refresh = now
                         if now - _last_heartbeat >= _HEARTBEAT_INTERVAL_S:
-                            _heartbeat_payload["clock_source"] = _clock.source
                             _heartbeat_payload["noise_floor_db"] = pipeline.carrier_detector.noise_floor_db
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
@@ -693,8 +669,6 @@ def run(args: argparse.Namespace | None = None) -> int:
                             crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
                             backlog_drains=receiver.backlog_drain_count,
-                            clock_source=_clock.source,
-                            clock_uncertainty_ns=_clock.rms_offset_ns,
                             sync_event_count=pipeline.sync_event_count,
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
@@ -711,14 +685,10 @@ def run(args: argparse.Namespace | None = None) -> int:
                     pipeline.process_target_buffer(iq_buf)
                     sample_count += len(iq_buf)
 
-                    # Refresh chrony + update health every ~1 second worth of samples
+                    # Update health + heartbeat every ~1 second worth of samples
                     if sample_count % (int(receiver.config.sample_rate_hz) or 2_048_000) < len(iq_buf):
                         now = time.monotonic()
-                        if now - _last_chrony_refresh >= _CHRONY_INTERVAL_S:
-                            _clock = read_chrony_status()
-                            _last_chrony_refresh = now
                         if now - _last_heartbeat >= _HEARTBEAT_INTERVAL_S:
-                            _heartbeat_payload["clock_source"] = _clock.source
                             _heartbeat_payload["noise_floor_db"] = pipeline.carrier_detector.noise_floor_db
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
@@ -733,8 +703,6 @@ def run(args: argparse.Namespace | None = None) -> int:
                             queue_depth=reporter.queue_depth,
                             crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
-                            clock_source=_clock.source,
-                            clock_uncertainty_ns=_clock.rms_offset_ns,
                             sync_event_count=pipeline.sync_event_count,
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
