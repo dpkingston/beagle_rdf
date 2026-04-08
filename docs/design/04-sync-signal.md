@@ -1,4 +1,4 @@
-# Beagle Sync Signal: FM Stereo Pilot
+# Beagle Sync Signal: FM RDS Bit Transitions
 
 ## Why FM Broadcast?
 
@@ -11,40 +11,102 @@ Beagle needs each node to produce a timing reference that is:
 3. **Passively receivable** - no special infrastructure, no active transmitter.
 4. **Location-known** - the reference transmitter's geographic position must be
    known accurately for path-delay correction.
+5. **Cross-node identifiable** - every node must agree on *which* event is the
+   "same" event.
 
-FM broadcast fits all four requirements.  Every radio in the coverage area receives
-the same broadcast simultaneously (modulo propagation delay, which is correctable).
-The stereo pilot tone at exactly **19,000.000 Hz** is locked to the station's
-frequency standard, which is in turn traceable to GPS/UTC.  FCC license data
-documents each transmitter's location to ~100 m.
+FM broadcast fits all five requirements.  Every radio in the coverage area
+receives the same broadcast simultaneously (modulo propagation delay, which is
+correctable).  The stereo pilot at exactly **19,000.000 Hz** is locked to the
+station's frequency standard, which is in turn traceable to GPS/UTC.  And the
+**RDS data signal** modulated on the 57 kHz subcarrier provides
+unambiguously-identifiable bit transitions at 1187.5 Hz that all nodes can
+agree on.
+
+The fifth requirement is what changed Beagle's design from pilot
+zero-crossings to RDS bit transitions -- see the next section.
 
 ---
 
-## The 19 kHz FM Stereo Pilot Tone
+## Why RDS bit transitions instead of pilot zero-crossings?
 
-FM stereo broadcasts contain a **pilot tone at exactly 19 kHz** that receivers use
-to detect and decode the stereo subcarrier.  Properties relevant to Beagle:
+Beagle previously used the FM stereo pilot tone (19 kHz) directly as the sync
+event source.  Each node located the nearest pilot zero-crossing within an
+arbitrary 7 ms window and emitted that as a `SyncEvent`.
+
+This approach **passes all the standard sub-microsecond tests** for a single
+node: the pilot is at exactly 19 kHz, locked to a precision frequency
+standard, and easy to extract via narrow bandpass + complex correlation.
+Within a single node's clock domain, the pilot phase converges to better
+than 1 usec.
+
+But when you put two nodes side-by-side and compute cross-node
+`sync_delta_A - sync_delta_B`, the result is wrong by an unbounded multiple
+of the pilot period (52.6 usec per cycle).  The reason is brutal in
+hindsight: **pilot zero-crossings are pairwise indistinguishable**.  Every
+zero-crossing is the same waveform feature.  Two nodes whose buffer windows
+are not aligned (which is always the case in practice -- the buffer grid
+starts at SDR startup, and SDRs start at different times) lock to different
+zero-crossings, separated by some integer number of pilot cycles, with no
+mechanism to figure out which is "the same one".
+
+The geometric correction the server applies (path-delay differences from
+FCC station coordinates) is much smaller than 52.6 usec, so it cannot
+disambiguate.  The result for non-co-located node pairs in production was
+fixes scattered across thousands of microseconds, often landing at the
+search boundary.
+
+**RDS solves this**.  The RDS data stream is BPSK modulation on the 57 kHz
+subcarrier (third harmonic of the pilot, phase-locked to it by the
+NRSC-4-B / IEC 62106 standard) at exactly **1187.5 bps = pilot/16**.  Bit
+boundaries are deterministic features of the broadcast signal, anchored to
+the data content -- when nodes A and B identify "the bit transition at
+T_sync", they are *unambiguously* referring to the same physical event.
+
+The bit period is 842 usec, comfortably larger than the maximum geometric
+TDOA for a 100 km baseline (333 usec), so cross-node disambiguation via
+`n = round((raw_ns + path_correction_ns) / 842,105)` is unique.
+
+> **The pilot is not abandoned**, just demoted.  The `RDSSyncDetector` still
+> extracts the 19 kHz pilot internally on a parallel path, feeds the
+> unwrapped pilot phase into `CrystalCalibrator`, and uses the resulting
+> sample-rate correction when converting sample indices to nanoseconds.
+> The pilot is now a *frequency reference* (used to measure the SDR's true
+> sample rate) rather than a *timing reference*.
+
+---
+
+## RDS signal characteristics
 
 | Property | Value |
 |----------|-------|
-| Frequency | 19,000.000 Hz (+/-<0.1 Hz, locked to FCC-licensed frequency standard) |
-| Level | typically -20 to -15 dBc relative to mono audio |
-| Phase continuity | continuous sinusoid for the life of the broadcast |
-| Coverage | city-wide (typically 20-60 km radius from a mountaintop transmitter) |
-| Availability | 24/7 for major commercial stations |
+| Subcarrier | 57,000 Hz (= 3 x pilot, phase-locked by spec) |
+| Modulation | BPSK (DSB-SC, 100% modulation depth) |
+| Bit rate | **1187.5 bps = 19000 / 16** (exact, locked to pilot) |
+| Bit period | **842.105 microseconds** |
+| Bandwidth | +/- 2.4 kHz around 57 kHz |
+| Group structure | 4 x 26-bit blocks (16 data + 10 CRC) per group; ~11 groups/sec |
+| Injection level | typically -11 dB relative to pilot |
+| Coverage | city-wide; same as pilot |
+| Availability | nearly all NPR affiliates and commercial FM stations carry RDS |
+| Standards | NRSC-4-B (US, "RBDS"), IEC 62106 (international) |
 
-The pilot is present in the demodulated FM audio as a clean sinusoid.  A 10 ms
-cross-correlation window at 256 kHz contains 2560 samples with 190 complete cycles
-of the 19 kHz sinusoid, giving excellent signal energy even at moderate FM SNR.
+The bit clock is **exactly** pilot/16 and phase-coherent by spec.  All nodes
+receiving the same station see the same bit transitions at the same physical
+time (plus propagation delay).
 
 ### Timing precision
 
-The phase of a 19 kHz sinusoid changes by 2pi x 19,000 ~ 119,380 rad/s.  A 1 usec
-timing error corresponds to a phase error of 0.12 rad (~ 7 deg), which is resolvable
-from a cross-correlation over even a few cycles.  In practice, a 10 ms window
-with good SNR achieves sub-microsecond timing repeatability.  The CrystalCalibrator
-(see [03-timing-model.md](03-timing-model.md)) removes the dominant RTL-SDR crystal
-error, leaving pilot phase measurement as the primary uncertainty at <1 usec.
+The recovered bit timing comes from a Mueller-Muller timing-recovery loop with
+sub-sample interpolation.  On synthetic FM IQ with a clean RDS signal, the
+inter-bit interval jitter is < 0.01 usec.  On a live RSPduo capture of KUOW
+94.9 (Seattle), the measured jitter is ~0.06 usec.  The SyncEvent
+`sample_index` is a **float** carrying full sub-sample precision, propagated
+end-to-end through the server's TDOA calculation.
+
+Per-event timing precision is therefore not the limiting factor in Beagle's
+overall accuracy budget; the carrier detector's 1 ms power window
+(~290 usec uniform-noise sigma) dominates.  See
+[03-timing-model.md](03-timing-model.md) for the full error budget.
 
 ---
 
@@ -67,13 +129,21 @@ correction error - negligible for the system's overall accuracy target.
 
 ### Selecting a station
 
-- Prefer stations with transmitters **distant from the node by different amounts
-  across your node network** - this maximises the path-delay correction variation
-  and makes calibration cross-checks more sensitive.
-- Prefer stations with **strong local signal** (corr_peak consistently >0.6).
-  Set `min_corr_peak: 0.3` in `sync_signal` as a minimum quality threshold.
+- **Verify the station carries RDS.**  Run `verify_rds_sync.py` against a
+  candidate station and confirm the event rate reaches ~1188/s after the
+  M&M warmup.  Nearly all NPR affiliates and most commercial FM stations
+  in the US carry RDS, but check before committing.  Stations that broadcast
+  in mono only (no stereo, no pilot, no RDS) are unusable.
+- Prefer stations with transmitters **distant from the node by different
+  amounts across your node network** - this maximises the path-delay
+  correction variation and makes calibration cross-checks more sensitive.
+- Prefer stations with **strong local signal** (`PilotCor` consistently
+  >0.6).  Set `min_corr_peak: 0.3` in `sync_signal` as a minimum quality
+  threshold.
 - For urban nodes with strong multipath, the narrow 100 Hz BPF in the pilot
-  extractor significantly reduces multipath effects.
+  extractor significantly reduces multipath effects.  RDS itself is fairly
+  robust to multipath thanks to the BPSK + CRC structure (the M&M loop will
+  drop out if multipath is severe, but most urban environments are fine).
 - All nodes in a deployment **must use the same primary station** for their
   `sync_delta_ns` measurements to be comparable.
 
@@ -187,8 +257,15 @@ or time-multiplexed processing).  It is planned for a future sprint.
 ## Minimum Correlation Peak Threshold
 
 The `min_corr_peak` parameter in `sync_signal` sets the minimum acceptable
-cross-correlation quality for a `SyncEvent` to be used in a measurement.  The
-filtering happens in `DeltaComputer.feed_sync()`.
+**internal pilot correlation quality** for a `SyncEvent` to be accepted by
+`DeltaComputer.feed_sync()`.
+
+> Note: with the RDS sync detector, `corr_peak` is the quality of the
+> *parallel pilot extraction path* used for crystal calibration, not the
+> RDS bit detection itself.  Both run on the same audio stream.  If the
+> pilot is too weak to extract reliably, the RDS bit recovery is also
+> almost certainly compromised, so this single threshold serves both
+> functions.
 
 | corr_peak range | Condition | Action |
 |-----------------|-----------|--------|
@@ -205,8 +282,9 @@ filtering happens in `DeltaComputer.feed_sync()`.
 
 Setting `min_corr_peak` too high increases the risk of gaps in the sync event
 stream (see [02-signal-processing.md](02-signal-processing.md), Stage 5).  The
-`max_sync_age_samples` of 80 ms (~ 8 sync periods) provides headroom for up to
-8 consecutive filtered sync events before a carrier measurement is dropped.
+`max_sync_age_samples` of 80 ms (~ 95 RDS bit periods) provides headroom for
+up to ~95 consecutive filtered sync events before a carrier measurement is
+dropped.
 
 ---
 
@@ -224,21 +302,35 @@ Check `corr_peak` values in the log at startup.  Values consistently above 0.5
 indicate a healthy pilot.  Values below 0.3 suggest gain adjustment or station
 selection is needed.
 
-### FM stereo requirement
+### FM stereo + RDS requirement
 
-The pilot tone is part of FM **stereo** broadcasts.  Nearly all commercial music
-stations broadcast in stereo.  News/talk stations occasionally broadcast in mono
-(no pilot tone).  If `corr_peak` is consistently near zero despite a strong FM
-signal, the station may be mono - select a different station.
+The pilot tone and RDS subcarrier are both part of FM **stereo** broadcasts.
+Nearly all commercial music stations broadcast in stereo with RDS.  News/talk
+stations and very small low-power stations occasionally broadcast in mono (no
+pilot, no RDS) or in stereo without RDS.  Symptoms:
 
-### Propagation delay at node startup
+- `corr_peak` consistently near zero despite a strong FM signal -> the
+  station may be mono.
+- `corr_peak` good (~0.7) but the RDS event rate is far below 1188/s ->
+  the station has stereo but no RDS.
 
-On startup, the pipeline begins emitting SyncEvents within the first 10 ms of SDR
-data.  However, the very first sync event has no prior SyncEvent for
-CrystalCalibrator to compute a correction, so `sample_rate_correction = 1.0` for
-the first event.  The calibrator converges to a stable estimate within ~1 second
-(100 sync windows).  Carrier events in the first second may have slightly larger
-crystal error contributions (~1-2 usec additional uncertainty).
+In either case, select a different station.
+
+### Startup latency
+
+On startup, the RDS sync detector takes ~50 ms (50 symbols * 842 usec) for
+the M&M timing loop to converge before it begins emitting SyncEvents.  This
+warmup is configurable via the `RDSSyncDetector(warmup_symbols=...)`
+constructor argument; the default of 50 is generous for typical signal
+quality.
+
+In parallel, the internal pilot extraction path runs from the very first
+audio buffer.  However, the first sync event has no prior phase
+measurement for CrystalCalibrator to compute a correction from, so
+`sample_rate_correction = 1.0` for the first event.  The calibrator converges
+to a stable estimate within ~1 second (100 pilot windows).  Carrier events in
+the first ~1 second may have slightly larger crystal error contributions
+(~1-2 usec additional uncertainty).
 
 ---
 

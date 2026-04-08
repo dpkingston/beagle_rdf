@@ -11,10 +11,12 @@ Beagle is a Time Difference of Arrival (TDOA) radio direction finding system usi
 |  Node (Raspberry Pi 5 + SDR + GPS)                          |
 |                                                             |
 |  +----------+    +---------------------------------------+  |
-|  | SDR sync |--->| FM pilot (19 kHz) sync event detector |  |
-|  | (FM band)|    +-----------------+---------------------+  |
-|  +----------+                      | SyncEvent               |
-|                                    v                         |
+|  | SDR sync |--->| RDS bit-transition sync detector      |  |
+|  | (FM band)|    | (FM demod -> -57 kHz shift -> LPF     |  |
+|  +----------+    |  -> M&M timing -> Costas -> bit edge) |  |
+|                  +-----------------+---------------------+  |
+|                                    | SyncEvent               |
+|                                    v  (~1188/sec)            |
 |  +----------+    +-------------------------------------+    |
 |  |SDR target|--->| LMR carrier detect + DeltaComputer  |    |
 |  |(LMR band)|    +-------------+-----------------------+    |
@@ -37,12 +39,12 @@ Beagle is a Time Difference of Arrival (TDOA) radio direction finding system usi
 
 ## Node Data Flow
 
-1. **SDR capture** - Two SDRs (or one freq-hopping) capture IQ samples continuously
-2. **Decimation** - Band-pass filter + downsample to working rate (~48 kHz)
+1. **SDR capture** - Two SDRs (or one shared dual-tuner like the RSPduo) capture IQ samples continuously
+2. **Decimation** - Band-pass filter + downsample to working rate (256 kHz sync, 64 kHz target)
 3. **FM demodulation** - Discriminator demod on the sync channel (FM station)
-4. **Pilot extraction** - 19 kHz bandpass + cross-correlation -> `SyncEvent` every 10 ms
-5. **Carrier detection** - Power-threshold state machine on the target channel -> `CarrierOnset`
-6. **Delta computation** - `sync_delta_ns = target_onset_sample - sync_event_sample) / sample_rate`
+4. **RDS sync extraction** - Frequency shift the demodulated audio by -57 kHz, lowpass, decimate, run a Mueller-Muller timing-recovery loop and Costas phase tracker, and emit a `SyncEvent` at every recovered RDS bit boundary (~1188/sec, exactly pilot/16 = 1187.5 Hz)
+5. **Carrier detection** - Power-threshold state machine on the target channel -> `CarrierOnset` / `CarrierOffset`
+6. **Delta computation** - `sync_delta_ns = (target_onset_sample - sync_event_sample) * 1e9 / sample_rate`
 7. **Event reporting** - Serialize `CarrierEvent` -> HTTP POST to aggregation server
 
 ## TDOA Measurement Model
@@ -51,7 +53,7 @@ Beagle is a Time Difference of Arrival (TDOA) radio direction finding system usi
 
 ```
 sync_delta_ns = (sample index of LMR carrier onset
-               - sample index of preceding FM pilot sync event)
+               - sample index of preceding RDS bit-transition sync event)
                x (1,000,000,000 / sample_rate_hz)
 ```
 
@@ -91,16 +93,23 @@ SDR mode and the SoapySDRPlay3 plugin.  See
 
 For development: a single RTL-SDR dongle using `librtlsdr-2freq` frequency hopping is sufficient.
 
-## Sync Signal: FM Stereo Pilot Tone
+## Sync Signal: FM RDS Bit Transitions
 
 Each node uses a Seattle FM broadcast station as a timing reference:
 
-- **KISW 99.9 MHz** (primary, used in earlier experiments)
-- **KUOW 94.9 MHz** (secondary, for calibration cross-check)
+- **KUOW 94.9 MHz** (primary; carries RDS, used in 2026-04 deployment)
+- **KISW 99.9 MHz** (secondary, for calibration cross-check)
 
-The FM stereo pilot at exactly 19,000 Hz (locked to the station's frequency standard) provides 38,000 timing events per second with sub-microsecond precision via phase interpolation.
+The RDS data signal modulated on the 57 kHz subcarrier (3 x pilot,
+phase-locked by spec) carries a 1187.5 bps BPSK data stream whose **bit
+boundaries are deterministic features of the broadcast** -- every node
+identifies the same bit transition as the same physical event.  Bit
+boundaries occur every 842 microseconds; the recovered timing has
+sub-microsecond jitter (~0.06 usec on a healthy live signal).
 
-See [04-sync-signal.md](04-sync-signal.md) for details.
+See [04-sync-signal.md](04-sync-signal.md) for the full discussion of why
+RDS bit transitions are used instead of the simpler-looking pilot
+zero-crossings.
 
 ## Aggregation Server Interface
 

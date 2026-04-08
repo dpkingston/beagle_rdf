@@ -14,16 +14,42 @@ sync_delta_ns = (N_target - N_sync) x 1_000_000_000 / sample_rate_hz
 
 Where:
 - `N_target` = sample index of the LMR carrier onset detection
-- `N_sync`   = sample index of the most recent FM pilot sync event before the onset
+- `N_sync`   = sample index of the most recent **RDS bit-transition sync
+  event** before the onset (one event per ~842 usec; emitted by
+  `RDSSyncDetector` -- see [02-signal-processing.md](02-signal-processing.md))
 - `sample_rate_hz` = the SDR's nominal sample rate, corrected by crystal calibration
 
 Both sample indices must be from **the same continuous ADC clock** (see SDR Modes below).
 
+## Sync events: RDS bit transitions, not pilot zero-crossings
+
+Beagle uses **RDS bit transitions** as sync events, not raw pilot zero-crossings.
+The reason is the only one that matters for TDOA: pilot zero-crossings are
+physically indistinguishable -- every node tuned to the same FM station sees
+the same pilot waveform but locks to a *different* zero-crossing chosen by
+its arbitrary buffer alignment.  The result is an unresolvable
+`N x 52.6 usec` cross-node ambiguity in `sync_delta` subtraction that no
+amount of calibration can fix.
+
+The RDS data signal modulated on the 57 kHz subcarrier is **phase-locked to
+the pilot by spec** (NRSC-4-B / IEC 62106) at exactly `pilot/16 = 1187.5 Hz`.
+Bit boundaries are deterministic features of the broadcast signal, so every
+node identifies the **same** bit transition as the same physical event.  The
+RDS bit period of 842 usec is comfortably larger than the maximum geometric
+TDOA for a 100 km baseline (333 usec), so cross-node disambiguation is
+unambiguous.
+
 ## Sample Rate Crystal Calibration
 
-RTL-SDR crystal accuracy is typically 50-100 ppm uncalibrated. Over a 200 ms sync window, this introduces 10-20 usec of timing error. The FM stereo pilot eliminates this error.
+RTL-SDR crystal accuracy is typically 50-100 ppm uncalibrated. Over a 200 ms
+sync window, this introduces 10-20 usec of timing error. The FM stereo pilot
+(still extracted internally by `RDSSyncDetector`) eliminates this error.
 
-The FM pilot at exactly 19,000.000 Hz is locked to the broadcast station's precision frequency standard (traceable to GPS/UTC). We track the unwrapped phase of the pilot across consecutive 10 ms sync windows:
+The FM pilot at exactly 19,000.000 Hz is locked to the broadcast station's
+precision frequency standard (traceable to GPS/UTC).  Even though the *sync
+events themselves* now come from the RDS bit clock, the detector also runs a
+pilot extraction path in parallel (19 kHz BPF + complex correlation in 10 ms
+windows) and tracks the unwrapped pilot phase across windows:
 
 ```
 expected_phase_advance = 2pi x 19000 x 0.010 = 380pi rad per 10 ms window
@@ -31,13 +57,18 @@ measured_phase_advance = cross_correlation_angle(window_N+1) - cross_correlation
 correction_factor      = measured_phase_advance / expected_phase_advance
 ```
 
-A rolling median over the last 100 windows (~1 second) gives a stable correction that is applied to all `sync_delta_ns` calculations:
+A rolling median over the last 100 windows (~1 second) gives a stable
+correction.  The current correction factor is attached to every `SyncEvent`
+emitted by `RDSSyncDetector` (in the `sample_rate_correction` field) and
+applied by `DeltaComputer` when converting sample indices to nanoseconds:
 
 ```
-sync_delta_ns_corrected = sync_delta_ns x correction_factor
+corrected_rate = nominal_rate * sample_rate_correction
+sync_delta_ns  = round(delta_samples * 1e9 / corrected_rate)
 ```
 
-After calibration, crystal error is reduced to <1 ppm, cutting timing error to <0.2 usec over 200 ms.
+After calibration, crystal error is reduced to <1 ppm, cutting timing error
+to <0.2 usec over 200 ms.
 
 ## SDR Operating Modes
 
@@ -130,36 +161,43 @@ Even though `sync_delta_ns` is the precise TDOA measurement, we still include `o
 
 ## Error Budget
 
-For `freq_hop` mode (most common initial deployment):
+For `rspduo` mode (the production deployment as of 2026-04):
 
-| Error source | Magnitude | Corrected by |
-|-------------|-----------|-------------|
-| Crystal rate (100 ppm, 200 ms) | 20 usec raw | FM pilot crystal calibration -> <0.2 usec |
-| Pilot phase measurement | <1 usec | - |
-| Carrier onset detection | ~window/2 = 5 ms | Dual-threshold hold reduces onset jitter; acceptable since TDOA uses first-onset |
-| Filter group delay | Deterministic | Subtracted in calibration_offset_ns |
-| Total after calibration | ~1-5 usec | - |
+| Error source | Magnitude | Notes |
+|-------------|-----------|-------|
+| RDS bit-transition timing (M&M loop) | < 0.1 usec | Measured ~0.06 usec on KUOW 94.9 |
+| Crystal calibration residual | < 0.1 usec | RSPduo TCXO at <10 ppm before correction |
+| Carrier detector window quantisation | ~290 usec per node, ~410 usec for the difference | Dominant error in current production |
+| RSPduo interleave offset | Deterministic; subtracted by `pipeline_offset_ns` | ~250 ns at 2 MSPS, calibrated empirically |
+| Cross-node sync_delta std (observed) | **~256 usec** | Live measurement, 2026-04-06 colocated_pair_test |
+| **Position uncertainty (250 km^2 search)** | **~80 km radius worst case** | Currently dominated by carrier detector; sub-100 m would require improving carrier onset timing |
 
-At 5 usec: position uncertainty ~ 1.5 km, meets the neighborhood-level goal.
+The headline number from the live colocated pair test on dpk-tdoa1 vs.
+dpk-tdoa2 (RSPduo, KUOW 94.9 sync, 2026-04-06): mean +70 usec, std 256 usec
+on the onset path; mean +20 usec, std 228 usec on the offset path.  This is
+~14x better than the earlier pilot-based system (which scattered by ~3500
+usec from the cross-node ambiguity).
 
-For `rspduo` mode:
+For `freq_hop` mode (RTL-SDR with `librtlsdr-2freq`):
 
-| Error source | Magnitude |
-|-------------|-----------|
-| Interleave offset correction | Deterministic; subtracted by `pipeline_offset_ns` |
-| Pilot phase measurement | <1 usec |
-| Crystal calibration residual | <0.1 usec |
-| **Total** | **~1-2 usec -> ~300-600 m position** |
+> Status as of 2026-04: the RDS sync detector requires continuous M&M timing
+> recovery, which is incompatible with the gap-handling needed for freq_hop's
+> alternating sync/target blocks (~16 ms each, where the sync block is too
+> short to converge the M&M loop from cold).  freq_hop mode has been left in
+> the codebase but does not currently produce reliable RDS sync events; see
+> the discussion in [docs/research/rds-sync-implementation-plan.md](../research/rds-sync-implementation-plan.md)
+> for the proposed pilot-locked-bit-prediction approach that would restore it.
 
-For `two_sdr` + 1PPS injection:
+For `two_sdr` + 1PPS injection (legacy mode, untested with RDS):
 
 | Error source | Magnitude |
 |-------------|-----------|
 | GPS 1PPS jitter | <100 ns |
 | 1PPS spike detection | ~0.5 usec at 2 MSPS |
-| Pilot phase measurement | <1 usec |
-| Crystal calibration residual | <0.1 usec |
-| **Total** | **~1 usec -> ~300 m position** |
+| RDS bit-transition timing | < 0.1 usec |
+| Crystal calibration residual | < 0.1 usec |
+| Carrier detector window quantisation | ~290 usec |
+| **Total** | dominated by carrier detector (~290 usec) |
 
 ## Node-Server Measurement Contract
 
@@ -203,11 +241,14 @@ produce **uniformly constructed measurements**.
 
 ### What the server may assume
 
-- `sync_delta_ns` is the time from the most recent FM pilot zero-crossing
-  to the carrier edge, measured on a single continuous sample clock,
-  corrected for crystal rate error.  It may span multiple pilot periods
-  (freq_hop mode); the server reduces it modulo the pilot period (7 ms)
-  for event grouping.
+- `sync_delta_ns` is the time from the most recent **RDS bit-transition sync
+  event** to the carrier edge, measured on a single continuous sample clock,
+  corrected for crystal rate error.  It may span multiple RDS bit periods;
+  the server reduces it modulo the bit period (`1e9 / 1187.5 = 842,105 ns`)
+  for event grouping and disambiguates cross-node sample counts via
+  `n = round((raw_ns + path_correction_ns) / 842,105)`.  The disambiguation
+  is unambiguous because `T_sync / 2 = 421 usec >> max_TDOA ~= 333 usec` for a
+  100 km baseline.
 - `onset_time_ns` is the wall-clock time of the carrier edge, suitable for
   coarse event association (+/-200 ms window).
 - `iq_snippet_b64` contains a center-anchored IQ capture of the carrier
@@ -220,8 +261,9 @@ produce **uniformly constructed measurements**.
   `settling_samples`, or `pipeline_offset_ns`.
 - That all nodes use the same sample rate (resampling is the server's
   responsibility for cross-correlation).
-- That `sync_delta_ns` is within one pilot period (it may span many;
-  modular reduction is applied at pairing time).
+- That `sync_delta_ns` is within one RDS bit period (it may span many;
+  modular reduction is applied at pairing time, and geometric disambiguation
+  is applied during TDOA computation).
 
 ---
 

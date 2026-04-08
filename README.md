@@ -7,9 +7,12 @@ using low-cost RTL-SDR hardware.
 The system has two components:
 
 - **Nodes** - Raspberry Pi (or other Linux system) + SDR receivers deployed at fixed locations.  Each
-  node listens for LMR carrier events and measures their timing relative to an
-  FM broadcast pilot tone used as a shared clock reference.  Nodes POST their
-  measurements to the central server. 
+  node listens for LMR carrier events and measures their timing relative to a
+  reference signal extracted from an FM broadcast (RDS bit transitions on the
+  57 kHz subcarrier).  All nodes receiving the same FM station see the same
+  bit transitions at the same physical instant, providing a shared timing
+  reference without GPS hardware at the node.  Nodes POST their
+  measurements to the central server.
 
 - **Aggregation Server** - A central server (laptop, Pi, or cloud VM typically running Linux) that
   collects measurements from all nodes, computes hyperbolic position fixes, and
@@ -59,6 +62,7 @@ for registering nodes, pushing configs, and monitoring health.
 
 ### Server
 - [Aggregation Server](#aggregation-server) - config, startup, live map, controls
+- [TLS and reverse-proxy deployment](#tls-and-reverse-proxy-deployment) - Apache subdomain or subpath
 - [Mock Event Generator](#mock-event-generator-demo-without-hardware) - test without hardware
 - [Node Management](#node-management) - register nodes, push configs
 
@@ -81,15 +85,22 @@ location.  The challenge is measuring those sub-microsecond arrival-time
 differences with inexpensive, unsynchronised hardware.
 
 Beagle solves the synchronisation problem without GPS hardware at each node by
-using the FM stereo pilot tone (19,000 Hz exactly) as a shared timing beacon.
-Every FM broadcast station transmits this tone locked to a GPS-traceable
-frequency standard.  Each node continuously cross-correlates the pilot against
-a reference template, producing a `SyncEvent` timestamp every 10 ms with
-sub-microsecond precision.  When a land mobile radio (LMR) carrier is detected,
-the node records `sync_delta_ns = target_onset_sample - sync_event_sample`,
-expressed in nanoseconds on the local sample clock.  Because both measurements
-use the same unbroken ADC clock, the absolute clock offset cancels out entirely
--- only the interval between two events on that clock matters.
+extracting timing pulses from a shared FM broadcast.  Every FM stereo station
+transmits a **19 kHz pilot tone** locked to a GPS-traceable frequency standard,
+and modulated on the **57 kHz RDS subcarrier** (3 x pilot) is a 1187.5 bps BPSK
+data stream whose **bit boundaries are phase-locked to the pilot by spec**.
+Beagle's `RDSSyncDetector` recovers those bit-boundary timestamps and emits a
+`SyncEvent` for each one.  Because the bit clock is a deterministic feature of
+the broadcast (not an arbitrary zero-crossing), every node tuned to the same
+station identifies the **same** bit transition as the same physical event --
+the fundamental ambiguity of pilot zero-crossings (which are all identical and
+indistinguishable across nodes) is eliminated.
+
+When a land mobile radio (LMR) carrier is detected, the node records
+`sync_delta_ns = target_onset_sample - sync_event_sample`, expressed in
+nanoseconds on the local sample clock.  Because both measurements use the same
+unbroken ADC clock, the absolute clock offset cancels out entirely -- only the
+interval between two events on that clock matters.
 
 The aggregation server collects `sync_delta_ns` reports from all nodes,
 corrects for the known FM transmitter-to-node propagation delay (computed from
@@ -99,33 +110,50 @@ the squared residuals across all node pairs to produce a latitude/longitude fix,
 which is logged to SQLite and displayed on a live Folium map.
 
 ```
-   FM broadcast station (19 kHz pilot)       LMR transmitter
-            |                                       |
-   SDR (sync channel)                    SDR (target channel)
-            |  decimated IQ                         |  decimated IQ
-            v                                       v
-   FMPilotSyncDetector                     CarrierDetector
-            |                                       |
-            |  SyncEvent (every 10 ms)              |  CarrierOnset
-            |                                       |
-            +-----------> DeltaComputer <-----------+
-                                |
-                                v
-                    sync_delta_ns = target_onset - sync_event
-                         (same ADC clock - offset cancels)
-                                |
-                                v
-                         EventReporter  -->  HTTP POST /api/v1/events
-                                                       |
-                                                       v
-                                           Aggregation Server
-                                      pair events * correct path delay
-                                      solve hyperbolic fix * update map
+   FM broadcast station                           LMR transmitter
+   (19 kHz pilot + 57 kHz RDS)                            |
+            |                                             |
+   SDR (sync channel)                            SDR (target channel)
+            |  decimated IQ                              |  decimated IQ
+            v                                             v
+   RDSSyncDetector                                CarrierDetector
+   (FM demod -> -57 kHz shift                            |
+    -> LPF -> M&M timing                                  |
+    -> Costas -> bit boundary)                            |
+            |                                             |
+            |  SyncEvent (every ~842 usec,                |  CarrierOnset
+            |  one per RDS bit transition)                |
+            +---------------> DeltaComputer <-------------+
+                                    |
+                                    v
+                       sync_delta_ns = target_onset - sync_event
+                            (same ADC clock - offset cancels)
+                                    |
+                                    v
+                            EventReporter  -->  HTTP POST /api/v1/events
+                                                          |
+                                                          v
+                                              Aggregation Server
+                                         pair events * correct path delay
+                                         solve hyperbolic fix * update map
 ```
+
+**Why RDS instead of just the pilot tone?**  Earlier versions of Beagle used
+the 19 kHz pilot zero-crossings as sync events.  This appeared to work for
+co-located test pairs but failed for any real geometry: zero-crossings happen
+every 52.6 microseconds and are *physically indistinguishable*, so different
+nodes locked to different ones, producing an unresolvable `N x 52.6 usec`
+ambiguity in the cross-node `sync_delta` subtraction.  RDS bit transitions
+happen every 842 microseconds (1187.5 Hz = pilot/16) and are anchored to a
+data signal, so all nodes agree on which transition is which.  The resulting
+disambiguation period (842 usec) comfortably exceeds the maximum geometric
+TDOA for a 100 km baseline (~333 usec), so disambiguation is unambiguous.
 
 **Further reading:**
 
-- Knapp & Carter (1976) - [The Generalized Correlation Method for Estimation of Time Delay](https://www.semanticscholar.org/paper/The-generalized-correlation-method-for-estimation-Knapp-Carter/29c74aad1986ff2e907e084820e990a0544e743a) - foundational cross-correlation technique underlying the FM pilot detector
+- Knapp & Carter (1976) - [The Generalized Correlation Method for Estimation of Time Delay](https://www.semanticscholar.org/paper/The-generalized-correlation-method-for-estimation-Knapp-Carter/29c74aad1986ff2e907e084820e990a0544e743a) - foundational cross-correlation technique
+- NRSC-4-B / IEC 62106 - the RBDS / RDS standard (1187.5 bps BPSK, CRC-10, block sync)
+- [PySDR: RDS chapter](https://pysdr.org/content/rds.html) - the Mueller-Muller + Costas chain Beagle's RDS decoder is built on
 - Chan & Ho (1994) - [A Simple and Efficient Estimator for Hyperbolic Location](https://www.semanticscholar.org/paper/A-simple-and-efficient-estimator-for-hyperbolic-Chan-Ho/fc51fb822024805533ff9eef4f7e486b38437109) - the closed-form TDOA solver this system is based on
 - Howland, Maksimiuk & Reitsma (2005) - [FM Radio Based Bistatic Radar](https://www.theiet.org/media/11278/fm-radio-based-bistatic-radar.pdf) - demonstrates FM broadcasts as passive location reference signals
 - Abramson (2020) - [Thesis: Locating Transmitters with TDOA and RTL-SDRs](https://www.rtl-sdr.com/thesis-on-locating-transmitters-with-tdoa-and-rtl-sdrs/) - end-to-end RTL-SDR TDOA system with source and tooling
@@ -291,21 +319,55 @@ This is the **only** file the node needs locally.  The operating config is
 fetched from the server on startup and updated automatically whenever the
 server config changes.
 
-### 2 - Verify hardware and pilot detection
+**Optional fields** in `bootstrap.yaml`:
 
-The verification script depends on your SDR hardware:
+| Field | Default | Notes |
+|---|---|---|
+| `config_cache_path` | `/var/cache/beagle/node_config.json` | Last fetched config is written here so the node can start offline using the cached copy if the server is unreachable |
+| `config_poll_interval_s` | `60.0` | Long-poll interval in seconds.  Capped at 120 (server limit).  Larger = fewer connection cycles, lower NAT/firewall churn.  Lower = no benefit; the server only responds early when there's actually a config change |
+| `register_on_start` | `true` | Whether to call `POST /api/v1/nodes/register` on startup to update `last_seen_at` |
 
-**RTL-SDR (`freq_hop` mode)** - confirm FM pilot detection before a full run:
+**Failure handling**: when the server is unreachable or returns an error
+(connection refused, HTTP 5xx, HTTP 4xx auth failure), the node retries with
+**exponential backoff** -- 1 s, 2 s, 4 s, 8 s, ..., capped at 120 s, with
++/-25% jitter.  The backoff resets to 1 s on the first successful poll
+(including a normal `304 Not Modified` response).  This means a brief server
+restart causes one or two retry warnings in the node log, then a clean
+recovery; a sustained outage spaces out retries gracefully without flooding
+the log or hammering the server.
+
+### 2 - Verify hardware and RDS sync detection
+
+Before running the full pipeline, confirm your SDR can demodulate the chosen
+FM station and the `RDSSyncDetector` can lock onto its RDS bit stream:
+
 ```bash
-python3 scripts/verify_sync.py --config config/node.yaml --duration 10
+python3 scripts/verify_rds_sync.py --config config/node.yaml --duration 30
 ```
-Expected: steady sync event rate, mean `corr_peak` >= 0.5.
 
-**RSPduo (`rspduo` mode)** - end-to-end dual-tuner pipeline test:
+Expected after the ~50 ms warm-up:
+- **Event rate ~1188/s** (one per RDS bit transition; the exact rate is
+  pilot/16 = 1187.5 Hz)
+- **Pilot `corr_peak` >= 0.5** (the RDS detector still extracts the pilot
+  internally for crystal calibration, even though it's not the sync source)
+- **Crystal correction** stable, drifting < 10 ppm over 30 s
+- **Bit interval jitter < 5 usec** (sub-microsecond after the M&M timing loop
+  has converged)
+
+If the rate is much below 1188/s, the chosen station probably doesn't carry
+RDS -- pick a different station.  In the US, almost all NPR affiliates and
+most commercial stations carry RDS; verify with the
+[FCC FM Query](https://www.fcc.gov/media/radio/fm-query) or the station's
+website.
+
+**RSPduo end-to-end pipeline test** (for the `rspduo` SDR mode, exercises both
+tuners simultaneously):
+
 ```bash
-python3 scripts/verify_rspduo.py --sync-freq 99.9e6 --target-freq 462.5625e6
+python3 scripts/verify_rspduo.py --sync-freq 94.9e6 --target-freq 443.475e6
 ```
-Expected: sync rate >= 95/s, 0 overflows, measurements produced when an LMR
+
+Expected: sync rate ~1188/s, 0 overflows, measurements produced when an LMR
 transmission is present.  See [docs/setup-rspduo-debian.md](docs/setup-rspduo-debian.md)
 for installation and setup of the SDRplay API and SoapySDRPlay3.
 
@@ -599,6 +661,221 @@ endpoints.
 
 ---
 
+## TLS and reverse-proxy deployment
+
+By default `beagle-server` listens on plain HTTP at the host/port from
+`config/server.yaml` (typically `0.0.0.0:8765`).  This is fine for a private
+LAN demo but **must not be used over the public internet**: admin session
+cookies, login passwords, and node bootstrap secrets would all be sent in
+the clear.
+
+For internet-facing deployments, terminate TLS at a reverse proxy (Apache,
+nginx, Caddy) that already has a cert -- typically the same vhost that's
+already serving your main site.  Beagle's app supports this directly:
+
+- `--root-path /<prefix>` makes FastAPI generate absolute URLs
+  (OAuth callbacks, Location headers, internal redirects) with the subpath
+  prefix the proxy is using.
+- `proxy_headers=True` and `forwarded_allow_ips="127.0.0.1"` (already set in
+  `beagle_server/main.py`) make uvicorn trust `X-Forwarded-Proto` and
+  `X-Forwarded-For` from a localhost proxy, so `request.url.scheme` reports
+  `https` even though the proxy connects to uvicorn over plain HTTP on the
+  loopback interface.
+
+Two common Apache deployment topologies are documented below.  Both assume
+the proxy and Beagle run on the same host, with Beagle bound to
+`127.0.0.1:8765` so it cannot be reached directly from the network.
+
+**Required Apache modules** (enable once):
+```bash
+sudo a2enmod proxy proxy_http headers ssl rewrite
+sudo systemctl reload apache2
+```
+
+### Option 1 - Subdomain (cleanest)
+
+Put Beagle on its own subdomain like `https://beagle.example.com/`.  Requires
+a DNS A record for the subdomain pointing at the same host, plus the cert
+expanded to cover the new name (e.g. `certbot --expand -d example.com -d
+beagle.example.com`).
+
+Save as `/etc/apache2/sites-available/beagle.conf`:
+
+```apache
+# HTTP: redirect to HTTPS, preserving path and query
+<VirtualHost *:80>
+    ServerName beagle.example.com
+    RewriteEngine On
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+    ErrorLog  ${APACHE_LOG_DIR}/beagle-http-error.log
+    CustomLog ${APACHE_LOG_DIR}/beagle-http-access.log combined
+</VirtualHost>
+
+# HTTPS: terminate TLS, proxy to uvicorn on localhost
+<VirtualHost *:443>
+    ServerName beagle.example.com
+
+    SSLEngine on
+    SSLCertificateFile      /etc/letsencrypt/live/example.com/fullchain.pem
+    SSLCertificateKeyFile   /etc/letsencrypt/live/example.com/privkey.pem
+    Include                 /etc/letsencrypt/options-ssl-apache.conf
+
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Port  "443"
+    ProxyPreserveHost On
+    ProxyRequests     Off
+
+    # Server-Sent Events stream: must NOT be buffered, must allow long timeouts
+    <Location "/api/v1/fixes/stream">
+        ProxyPass         "http://127.0.0.1:8765/api/v1/fixes/stream" flushpackets=on connectiontimeout=10 timeout=3600 keepalive=on
+        ProxyPassReverse  "http://127.0.0.1:8765/api/v1/fixes/stream"
+        Header always set X-Accel-Buffering "no"
+        Header always set Cache-Control "no-cache"
+    </Location>
+
+    # General API, auth, map, health
+    ProxyPass         "/api/"   "http://127.0.0.1:8765/api/"   keepalive=on
+    ProxyPassReverse  "/api/"   "http://127.0.0.1:8765/api/"
+    ProxyPass         "/auth/"  "http://127.0.0.1:8765/auth/"  keepalive=on
+    ProxyPassReverse  "/auth/"  "http://127.0.0.1:8765/auth/"
+    ProxyPass         "/map"    "http://127.0.0.1:8765/map"    keepalive=on
+    ProxyPassReverse  "/map"    "http://127.0.0.1:8765/map"
+    ProxyPass         "/health" "http://127.0.0.1:8765/health" keepalive=on
+    ProxyPassReverse  "/health" "http://127.0.0.1:8765/health"
+
+    RedirectMatch ^/$ /map
+
+    ErrorLog  ${APACHE_LOG_DIR}/beagle-error.log
+    CustomLog ${APACHE_LOG_DIR}/beagle-access.log combined
+</VirtualHost>
+```
+
+Then enable and start:
+```bash
+sudo a2ensite beagle
+sudo apache2ctl configtest
+sudo systemctl reload apache2
+```
+
+Launch Beagle (no `--root-path` needed for subdomain):
+```bash
+env/bin/beagle-server --config config/server.yaml
+```
+
+Set `server.host: 127.0.0.1` in `config/server.yaml` so Beagle's port is
+unreachable from outside the host.
+
+### Option 2 - Subpath under an existing site
+
+Mount Beagle under a path on your main vhost, e.g.
+`https://example.com/beagle/`.  No DNS or cert changes needed -- you reuse
+the existing main vhost.
+
+**Important:** when using a subpath, you must launch Beagle with
+`--root-path /beagle` so FastAPI generates absolute URLs with the prefix.
+Without it, OAuth callbacks and the rendered map page will fetch
+`/api/v1/...` (no prefix), which Apache will route to the main vhost and
+return 404 or 405.
+
+Add this snippet **inside** your existing `<VirtualHost *:443>` for
+`example.com`:
+
+```apache
+# Beagle TDOA aggregation server - subpath under /beagle/
+# Upstream: uvicorn on 127.0.0.1:8765 (launched with --root-path /beagle)
+
+RequestHeader set X-Forwarded-Proto "https"
+RequestHeader set X-Forwarded-Port  "443"
+
+ProxyPreserveHost On
+ProxyRequests     Off
+
+# SSE stream first (most-specific match)
+<Location "/beagle/api/v1/fixes/stream">
+    ProxyPass         "http://127.0.0.1:8765/api/v1/fixes/stream" flushpackets=on connectiontimeout=10 timeout=3600 keepalive=on
+    ProxyPassReverse  "http://127.0.0.1:8765/api/v1/fixes/stream"
+    Header always set X-Accel-Buffering "no"
+    Header always set Cache-Control "no-cache"
+</Location>
+
+ProxyPass         "/beagle/api/"   "http://127.0.0.1:8765/api/"   keepalive=on
+ProxyPassReverse  "/beagle/api/"   "http://127.0.0.1:8765/api/"
+ProxyPass         "/beagle/auth/"  "http://127.0.0.1:8765/auth/"  keepalive=on
+ProxyPassReverse  "/beagle/auth/"  "http://127.0.0.1:8765/auth/"
+ProxyPass         "/beagle/map"    "http://127.0.0.1:8765/map"    keepalive=on
+ProxyPassReverse  "/beagle/map"    "http://127.0.0.1:8765/map"
+ProxyPass         "/beagle/health" "http://127.0.0.1:8765/health" keepalive=on
+ProxyPassReverse  "/beagle/health" "http://127.0.0.1:8765/health"
+
+RedirectMatch ^/beagle/?$ /beagle/map
+```
+
+Reload Apache:
+```bash
+sudo apache2ctl configtest
+sudo systemctl reload apache2
+```
+
+Launch Beagle **with the matching root-path**:
+```bash
+env/bin/beagle-server --config config/server.yaml --root-path /beagle
+```
+
+Set `server.host: 127.0.0.1` in `config/server.yaml`.
+
+### Verification
+
+After deploying either option, test from a separate machine:
+
+```bash
+# Health endpoint (Option 1)
+curl -s https://beagle.example.com/health
+
+# Health endpoint (Option 2)
+curl -s https://example.com/beagle/health
+
+# HTTP redirect to HTTPS (Option 1 only)
+curl -sI http://beagle.example.com/health    # expect 301
+
+# SSE stream stays open and pushes events
+curl -N https://beagle.example.com/api/v1/fixes/stream
+# (or https://example.com/beagle/api/v1/fixes/stream for Option 2)
+
+# Confirm the cleartext port is now closed
+curl -m 5 http://example.com:8765/health      # expect connection refused
+```
+
+If the OAuth login flow fails after deployment (Google rejecting the
+redirect URI), check that:
+1. `proxy_headers=True` is in effect (it is by default in `main.py`)
+2. The redirect URI registered in your Google OAuth client matches what
+   the server is generating: `https://beagle.example.com/auth/oauth/google/callback`
+   (Option 1) or `https://example.com/beagle/auth/oauth/google/callback`
+   (Option 2 -- note the `/beagle/` prefix; this only works correctly if
+   you launched Beagle with `--root-path /beagle`)
+
+### Migrating nodes after enabling the proxy
+
+Each node's `bootstrap.yaml` must be updated to use the new HTTPS URL:
+
+```yaml
+# Before:
+server_url: "http://example.com:8765"
+
+# After (Option 1):
+server_url: "https://beagle.example.com"
+
+# After (Option 2):
+server_url: "https://example.com/beagle"
+```
+
+Restart `beagle-node` after editing.  The new HTTPS connection automatically
+picks up the cert validation; if you used a self-signed cert during testing,
+you'll need to either install a real cert or set `httpx`'s `verify=False`
+(not currently exposed in `BootstrapConfig` -- file an issue if you need it).
+
+---
+
 ## Mock Event Generator (demo without hardware)
 
 `scripts/mock_event_generator.py` synthesises realistic `CarrierEvent` POSTs
@@ -628,23 +905,25 @@ in `server.yaml` (default 10 s).
 
 ### Explore timing accuracy vs. hardware mode
 
-The `--pilot-sigma-us` flag sets the 1-sigma FM pilot timing noise, which
-directly determines TDOA and position accuracy:
+The `--pilot-sigma-us` flag (named for historical reasons; it now models the
+combined per-event sync timing noise from the RDS detector + carrier detector
+quantisation) sets the 1-sigma sync timing noise, which directly determines
+TDOA and position accuracy:
 
 ```bash
-# Uncalibrated RTL-SDR crystal (100 ppm * 200 ms window) - expect ~6 km error
+# Uncalibrated RTL-SDR crystal + carrier detector quantisation - expect ~6 km error
 python3 scripts/mock_event_generator.py \
     --scenario scripts/mock_scenario_seattle.yaml \
     --delivery-buffer-s 10 \
     --pilot-sigma-us 20.0
 
-# RTL-SDR TCXO + FM pilot calibration - expect ~500-1500 m error (default)
+# Typical RDS sync (RSPduo) - expect ~500-1500 m error (default)
 python3 scripts/mock_event_generator.py \
     --scenario scripts/mock_scenario_seattle.yaml \
     --delivery-buffer-s 10 \
     --pilot-sigma-us 2.0
 
-# two_sdr mode with GPS 1PPS injection - expect ~100-400 m error
+# Best case (GPS 1PPS) - expect ~100-400 m error
 python3 scripts/mock_event_generator.py \
     --scenario scripts/mock_scenario_seattle.yaml \
     --delivery-buffer-s 10 \
@@ -818,20 +1097,32 @@ All scripts accept `--help` for full option descriptions.
 
 ### Signal verification
 
-#### `scripts/verify_sync.py`
-Live FM pilot detection display.  Run this first to confirm the sync chain
-is working before attempting a full freq_hop run.
+#### `scripts/verify_rds_sync.py`
+Live RDS sync detection display, using the same `RDSSyncDetector` class the
+production node pipeline runs.  Reports event rate, internal pilot correlation
+quality, crystal calibration drift, and bit-interval jitter.  Run this first
+to confirm the sync chain is working before attempting a full pipeline run.
 
 ```bash
-python3 scripts/verify_sync.py --config config/node.yaml --duration 10
+python3 scripts/verify_rds_sync.py --config config/node.yaml --duration 30
 ```
 
-Without a config file (bare RTL-SDR, SoapySDR path):
+Without a config file (bare SoapySDR path -- works with any SoapySDR-supported
+device):
 ```bash
-python3 scripts/verify_sync.py --device "driver=rtlsdr" --freq 99.9e6 --gain 0 --duration 10
+python3 scripts/verify_rds_sync.py --device "driver=sdrplay" --freq 94.9e6 --gain auto --duration 30
 ```
 
-Pass criteria: steady sync event rate, corr_peak >= 0.5.
+Pass criteria after warm-up: event rate ~1188/s, `PilotCor` >= 0.5,
+crystal drift < 10 ppm, bit interval jitter < 5 usec.  See
+[Step 2 of Calibration](#step-2---verify-rds-sync-detection-bit-timing-and-crystal-calibration)
+for full pass criteria and example output.
+
+> **Note**: Earlier versions of Beagle used `scripts/verify_sync.py`, which
+> exercises the standalone `FMPilotSyncDetector` class.  That script still
+> works as a low-level diagnostic for debugging the pilot extraction subsystem,
+> but it does **not** test the production sync path.  Use `verify_rds_sync.py`
+> for all normal verification.
 
 ---
 
@@ -1195,33 +1486,46 @@ settling_samples set to: _____
 
 ---
 
-### Step 2 - Verify FM Pilot Detection and Crystal Calibration
+### Step 2 - Verify RDS Sync Detection, Bit Timing, and Crystal Calibration
 
-**Goal:** Confirm the sync chain produces clean SyncEvents and the
+**Goal:** Confirm the sync chain produces clean SyncEvents at the RDS bit
+rate, that the M&M timing loop has sub-microsecond jitter, and that the
 CrystalCalibrator converges to a stable correction factor.
 
 ```bash
-python3 scripts/verify_sync.py --config config/node.yaml --duration 60
+python3 scripts/verify_rds_sync.py --config config/node.yaml --duration 60
 ```
 
-The same run covers both checks: pilot quality is visible from the first
-few rows; crystal convergence requires ~60 s.
+The same run covers all three checks: event rate and pilot quality are
+visible from the first few rows; crystal convergence requires ~30 s; the
+bit-interval jitter summary requires the full run.
 
-**Pilot detection - pass criteria (read from first 10 s of output):**
-- Event rate: **>= 95 events / 10 s** (ideally ~120, one per ~8 ms window)
-- Mean `corr_peak` >= **0.5** for a well-received station
-- Values stable row-to-row (no sudden drops)
+**RDS sync detection - pass criteria (read from first ~5 s of output):**
+- Event rate: **~1188 / s** (one per RDS bit transition; pilot/16 = 1187.5 Hz exactly)
+- `PilotCor` (the internal pilot correlation used for crystal calibration)
+  >= **0.5** for a well-received station
+- Power in the **-25 to -40 dBFS** range -- avoid ADC clipping near 0 dBFS
 
 **Crystal calibration - pass criteria (read from full 60 s run):**
 - `Crystal` converges within ~10 s and stays within **+/-100 ppm**
 - Drift between t=10 s and t=60 s: **< 10 ppm** (shown in summary line)
 - RSPduo values near 0 ppm (< +/-10 ppm) are normal and excellent
 
+**Bit interval jitter - pass criteria (read from summary line):**
+- Mean interval: **~210.5 samples** at 250 kHz sync rate (= 250000 / 1187.5)
+- Stdev: **< 0.1 samples** (~ 0.4 usec).  Larger values indicate the M&M
+  timing loop is unstable -- usually caused by very weak RDS or strong
+  multipath.
+
 **Tuning:**
-- If `corr_peak` is low, try a stronger FM station or increase gain.
-  KISW 99.9 MHz works well in the Seattle metro area from a rooftop.
+- If event rate is well below 1188/s, the chosen station probably doesn't
+  carry RDS.  Pick a different station -- in the US, all NPR affiliates and
+  most commercial FM stations carry RDS.  KUOW 94.9 (Seattle) is a known-good
+  reference.
+- If `PilotCor` is low, try a stronger station, increase gain, or improve the
+  antenna position.
 - If gain is too high the ADC will clip; reduce it until the IQ magnitude
-  is <= -6 dBFS RMS.
+  is between -25 and -40 dBFS.
 - `min_corr_peak` in `node.yaml` -> `sync_signal.min_corr_peak` filters out
   weak sync events.  Set it to 0.3 for normal operation.
 
@@ -1231,24 +1535,16 @@ few rows; crystal convergence requires ~60 s.
 - Values outside +/-200 ppm suggest a low-quality crystal; use a TCXO
   RTL-SDR for best accuracy; RSPduo should always be well within +/-10 ppm
 
-*RTL-SDR (standard crystal, ~50 ppm drift):*
+*RSPduo on KUOW 94.9 (24 MHz TCXO):*
 ```
-  Time    Events   Rate/s   CorPeak     Crystal     Power
-   5.0       500    100.0    0.7234   +43.2 ppm   -22.3 dBFS
-  10.0      1000    100.0    0.7198   +43.1 ppm   -21.8 dBFS
-  60.0      6000    100.0    0.7211   +43.0 ppm   -22.1 dBFS
+  Time    Events   Rate/s   PilotCor    Crystal     Power
+   5.1      5436   1186.1    0.7068    -10.4 ppm   -36.4 dBFS
+  10.2     11465   1187.4    0.7063     -9.5 ppm   -36.4 dBFS
+  30.3     34418   1189.7    0.7059     -9.4 ppm   -36.2 dBFS
 
-Crystal drift: +43.1 ppm at t~10 s -> +43.0 ppm at end  (drift=0.1 ppm  OK)
-```
-
-*RSPduo (24 MHz TCXO, < 10 ppm):*
-```
-  Time    Events   Rate/s   CorPeak     Crystal     Power
-   5.0       500    100.0    0.6978    -6.6 ppm   -28.5 dBFS
-  10.0      1000    100.0    0.6994    -2.1 ppm   -28.3 dBFS
-  60.0      6000    100.0    0.6983    -4.8 ppm   -28.4 dBFS
-
-Crystal drift: -2.1 ppm at t~10 s -> -4.8 ppm at end  (drift=2.7 ppm  OK)
+Crystal drift: -10.1 ppm at t~10 s -> -9.4 ppm at end  (drift=0.7 ppm  OK)
+Bit interval: mean=210.53 samples (expected 210.53)  stdev=0.017 samples (0.07 usec)
+OK: RDS sync detection looks good
 ```
 
 **Record result:**
@@ -1377,19 +1673,22 @@ The script prints each `TDOAMeasurement` as it arrives with columns:
 Requires the SDRplay API and SoapySDRPlay3 plugin (see Prerequisites).
 Both channels run simultaneously with no settling time or coverage gaps.
 
-Use `verify_sync.py` with the node config file (the same receiver and pipeline
-the node uses in production):
+Use `verify_rds_sync.py` with the node config file (the same receiver and
+pipeline the node uses in production):
 
 ```bash
-env/bin/python scripts/verify_sync.py \
+env/bin/python scripts/verify_rds_sync.py \
     --config config/node.yaml --duration 60
 ```
 
-This confirms FM pilot lock on the sync channel (Tuner 1).  Watch for:
-- `Rate/s` > 50/s - pilot lock confirmed (exact rate = 1000 / sync_period_ms;
-  with the default 7 ms period at 2 MHz / 8x decimation -> ~143/s)
+This confirms RDS sync lock on the sync channel (Tuner 1).  Watch for:
+- `Rate/s` ~ 1188/s after warmup -- one event per RDS bit transition
+  (1187.5 Hz = pilot/16 exactly)
+- `PilotCor` >= 0.5 (the RDS detector still extracts the pilot internally
+  for crystal calibration)
 - `Crystal` within +/-10 ppm for RSPduo (TCXO)
-- `Crystal drift` < 10 ppm in summary line
+- `Crystal drift` < 10 ppm in the summary line
+- `Bit interval` jitter < 5 usec in the summary line
 
 For the target channel, use `check_target.py` (Step 3 above).  A combined
 end-to-end measurement script that drives the full RSPduo pipeline and prints
@@ -1682,7 +1981,7 @@ pytest tests/integration/  # integration tests (no hardware)
 ```
 src/beagle_node/
 |-- sdr/           SDR receiver backends (SoapySDR, freq_hop, mock)
-|-- pipeline/      Signal processing (decimator, FM demod, pilot sync, carrier detect, delta)
+|-- pipeline/      Signal processing (decimator, FM demod, RDS sync, carrier detect, delta)
 |-- events/        CarrierEvent model + HTTP reporter
 |-- config/        Pydantic config schema, YAML loader, remote config fetcher
 |-- timing/        Clock sources + sample-index stamper

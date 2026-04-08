@@ -170,42 +170,52 @@ env/bin/python -c "import SoapySDR; print(SoapySDR.__file__)"
 
 ## 7. End-to-end test
 
-### Verify FM sync detection
+### Verify RDS sync detection
 
 ```bash
 cd ~/src/beagle_rdf
 # Using the node config (recommended -- uses the same receiver and settings as production):
-env/bin/python scripts/verify_sync.py \
+env/bin/python scripts/verify_rds_sync.py \
     --config config/node.yaml --duration 30
 
 # Or without a config file (quick check with a specific frequency and gain):
-env/bin/python scripts/verify_sync.py \
+env/bin/python scripts/verify_rds_sync.py \
     --device "driver=sdrplay" --freq 94.9e6 --gain auto --duration 30
 ```
 
-Expected output (Pi 5, outdoor discone, sync_period_ms=7.0, sync_lna_state=6):
+Expected output (Pi 5, outdoor discone, KUOW 94.9, sync_lna_state=6):
 ```
-Tuned to 99.9 MHz  gain=30 dB  rate=2.000 MSps  [rspduo]
-Pipeline: 8* decimation -> 250 kHz -> FM demod -> 19 kHz pilot detector
+Tuned to 94.9 MHz  gain=auto  rate=2.000 MSps  [rspduo]
+Pipeline: 8x decimation -> 250 kHz -> FM demod -> RDS bit-transition detector
+Expected event rate: 1188/s after warmup (~50 ms)
 Running for 30 s  (Ctrl-C to stop early)
 
-  Time    Events   Rate/s   CorPeak     Crystal     Power
-   1.0        79     78.4    0.7010      -5.6 ppm    -33.7 dBFS
-   2.0       224    142.7    0.7037      -5.3 ppm    -33.8 dBFS
+  Time    Events   Rate/s   PilotCor    Crystal     Power
+   1.0       612    608.9    0.7056    -10.3 ppm   -33.2 dBFS
+   2.0      1818   1186.5    0.7050     -8.4 ppm   -33.4 dBFS
   ...
-  30.0      4221    142.7    0.7035      -4.5 ppm    -33.8 dBFS
+  30.0     35040   1187.5    0.7050     -9.6 ppm   -33.6 dBFS
 
-Total: 4221 sync events in 31.1 s (135.8/s)
-Crystal drift: -5.2 ppm at t~10 s -> -6.1 ppm at end  (drift=0.9 ppm  OK)
-OK: Pilot detection looks good
+Total: 35040 sync events in 30.0 s (1168.0/s)
+Crystal drift: -9.0 ppm at t~10 s -> -10.0 ppm at end  (drift=1.0 ppm  OK)
+Bit interval: mean=210.53 samples (expected 210.53)  stdev=0.015 samples (0.06 usec)
+OK: RDS sync detection looks good
 ```
 
-- **Rate ~143/s** at `sync_period_ms: 7.0` (one SyncEvent per 7 ms)
-- **CorPeak > 0.65** - FM pilot lock confirmed; drop below 0.4 indicates antenna or LNA issue
+- **Rate ~1188/s** after warmup -- one event per RDS bit transition
+  (1187.5 Hz = pilot/16 exactly).  The first second is lower because of M&M
+  warmup; steady state should be > 1100/s.
+- **PilotCor > 0.65** - the RDS detector still extracts the pilot internally
+  for crystal calibration; a drop below 0.4 indicates antenna or LNA issue
 - **Crystal < +/-50 ppm** - normal for RSPduo TCXO
-- **Power -10 to -40 dBFS** - adjust `sync_lna_state` if outside this range:
+- **Bit interval stdev < 0.1 samples** (~ 0.4 usec) -- M&M timing loop is
+  stable.  Larger values indicate weak RDS or strong multipath.
+- **Power -25 to -40 dBFS** - adjust `sync_lna_state` if outside this range:
   - Too high (> -10 dBFS): increase `sync_lna_state` (more attenuation)
   - Too low (< -40 dBFS): decrease `sync_lna_state` (less attenuation)
+- **If event rate is much below 1188/s**, the chosen station probably doesn't
+  carry RDS.  Pick a different station -- nearly all NPR affiliates and most
+  commercial FM stations carry RDS.
 
 ### Check target channel
 
@@ -228,7 +238,7 @@ sdr_mode: "rspduo"
 rspduo:
   sample_rate_hz: 2000000          # 2 MHz max in dual-tuner mode
   sync_gain_db: "auto"             # AGC works well for FM sync
-  sync_lna_state: 6                # tune based on FM power in verify_sync.py
+  sync_lna_state: 6                # tune based on FM power in verify_rds_sync.py
   target_gain_db: 30               # adjust based on check_target.py calibration
   target_lna_state: 0              # max LNA gain for weak LMR signals
   master_device_args: "driver=sdrplay"
@@ -356,7 +366,7 @@ See `docs/test-results/colocated-pair-log.md` for example calibration results.
 | `--find` shows no DT entry | SoapySDRPlay3 plugin not installed | Build from source (step 3) and restart sdrplay |
 | Tuner 2 locked to Tuner 1's frequency | Driver not from `rspduo-dual-independent-tuners` branch | Rebuild from the correct branch (step 3) |
 | Both dBFS readings identical | Same root cause | See above |
-| sync_rate = 0 in verify_sync.py | Wrong sync frequency or antenna disconnected | Check `sync_signal` in node.yaml; check Antenna A connection |
+| sync_rate = 0 in verify_rds_sync.py | Wrong sync frequency or antenna disconnected | Check `sync_signal` in node.yaml; check Antenna A connection |
 | target channel noise floor only (-60 dBFS, no signal bump) | Ch1 frequency not applied | Ensure using `rspduo-dual-independent-tuners` branch |
 | overflow errors | USB bandwidth insufficient | Use a USB 3.0 port; reduce `buffer_size` to 32768 |
 | `sdrplay_api_Fail` opening second device | Attempted Master/Slave mode | Use DT mode (single device, two streams) - see section 8 |
