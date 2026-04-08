@@ -1152,6 +1152,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         request: Request,
         max_age_s: float = Query(default=-1.0, ge=-1.0),
         database: aiosqlite.Connection = Depends(get_db),
+        registry_db: aiosqlite.Connection = Depends(get_registry_db),
     ) -> JSONResponse:
         cfg: ServerFullConfig = request.app.state.config
         age = cfg.map.max_age_s if max_age_s < 0 else max_age_s
@@ -1159,12 +1160,14 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         if age not in cache:
             fixes = await db_module.fetch_fixes(database, limit=1000, max_age_s=age)
             events = await db_module.fetch_recent_events(database, limit=200)
+            registered_nodes = await db_module.fetch_all_nodes(registry_db)
             cache[age] = build_fix_geojson(
                 fixes=fixes,
                 recent_events=events,
                 max_age_s=age,
                 hyperbola_points=cfg.map.hyperbola_points,
                 heartbeats=request.app.state.heartbeats,
+                registered_nodes=registered_nodes,
             )
         return JSONResponse(content=cache[age])
 
@@ -1385,19 +1388,24 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                                 detail="node_id mismatch")
 
         client_ip = request.client.host if request.client else None
-        await db_module.update_node_seen(registry_db, node_id, client_ip)
 
         # POST body carries heartbeat telemetry - update the in-memory
-        # heartbeat store so /map/nodes reflects live carrier state.
+        # heartbeat store so /map/nodes reflects live carrier state, AND
+        # persist the location to the registry so the map can place
+        # markers immediately on page load even after a server restart.
+        body_lat: float | None = None
+        body_lon: float | None = None
         if request.method == "POST":
             try:
                 body = await request.json()
             except Exception:
                 body = {}
+            body_lat = body.get("latitude_deg")
+            body_lon = body.get("longitude_deg")
             request.app.state.heartbeats[node_id] = {
                 "node_id": node_id,
-                "latitude_deg": body.get("latitude_deg"),
-                "longitude_deg": body.get("longitude_deg"),
+                "latitude_deg": body_lat,
+                "longitude_deg": body_lon,
                 "sdr_mode": body.get("sdr_mode"),
                 "clock_source": body.get("clock_source"),
                 "noise_floor_db": body.get("noise_floor_db"),
@@ -1412,6 +1420,17 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             if hb:
                 hb["received_at"] = time.time()
                 hb["ip"] = client_ip
+
+        # Update last_seen_at + last_ip in the registry, AND persist the
+        # location if the heartbeat body included one.  Always done after
+        # the body parse so we have lat/lon to write.  Pass None for
+        # missing coordinates so a partial heartbeat (e.g. node started
+        # with location not yet configured) doesn't clobber a previously
+        # good registry value.
+        await db_module.update_node_seen(
+            registry_db, node_id, client_ip,
+            location_lat=body_lat, location_lon=body_lon,
+        )
 
         from fastapi.responses import Response
 
@@ -1867,11 +1886,34 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             n = dict(n)
             n.pop("secret_hash", None)
             n["registered"] = True
-            # Enrich with location and sdr_mode from most recent event or heartbeat
+            # Location precedence: most recent event > heartbeat > registry.
+            # The registry value (n["location_lat"]/_lon from SELECT *) is
+            # populated by the long-poll handler from each heartbeat body
+            # and survives server restarts.  Falling back to it lets the
+            # map render markers for known nodes immediately on page load,
+            # even when no events have arrived yet and the in-memory
+            # heartbeats dict is empty (e.g. right after a server restart).
             ev = event_by_id.get(n["node_id"])
             hb = heartbeats.get(n["node_id"])
-            n["location_lat"] = ev["node_lat"] if ev else (hb["latitude_deg"] if hb else None)
-            n["location_lon"] = ev["node_lon"] if ev else (hb["longitude_deg"] if hb else None)
+            registry_lat = n.get("location_lat")
+            registry_lon = n.get("location_lon")
+            if ev:
+                n["location_lat"] = ev["node_lat"]
+                n["location_lon"] = ev["node_lon"]
+            elif hb and hb.get("latitude_deg") is not None:
+                n["location_lat"] = hb["latitude_deg"]
+                n["location_lon"] = hb["longitude_deg"]
+            else:
+                n["location_lat"] = registry_lat
+                n["location_lon"] = registry_lon
+            # Distinguish "freshly known" from "registry-fallback" so the
+            # JS can render a different colour for nodes whose location
+            # came only from the persisted registry copy.
+            n["location_source"] = (
+                "event" if ev
+                else ("heartbeat" if hb and hb.get("latitude_deg") is not None
+                      else ("registry" if registry_lat is not None else "none"))
+            )
             n["sdr_mode"] = ev["sdr_mode"] if ev else (hb.get("sdr_mode") if hb else None)
             n["heartbeat_age_s"] = now - hb["received_at"] if hb else None
             n["noise_floor_db"] = hb.get("noise_floor_db") if hb else None

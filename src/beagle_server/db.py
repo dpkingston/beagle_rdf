@@ -184,6 +184,15 @@ async def open_registry_db(path: str) -> aiosqlite.Connection:
         await db.execute(
             "ALTER TABLE nodes ADD COLUMN config_file_mtime REAL"
         )
+    # Persistent node location: written from each heartbeat poll body so
+    # the map can place markers immediately on page load even after a
+    # server restart (when the in-memory heartbeats dict is empty).
+    # Both columns are nullable -- a node that has never reported in has
+    # NULL here, and the map renders nothing for it until it polls.
+    if "location_lat" not in cols:
+        await db.execute("ALTER TABLE nodes ADD COLUMN location_lat REAL")
+    if "location_lon" not in cols:
+        await db.execute("ALTER TABLE nodes ADD COLUMN location_lon REAL")
     # Idempotent migration: add TOTP columns to users if missing.
     async with db.execute("PRAGMA table_info(users)") as cur:
         user_cols = {row[1] for row in await cur.fetchall()}
@@ -549,12 +558,34 @@ async def update_node_seen(
     db: aiosqlite.Connection,
     node_id: str,
     ip: str | None,
+    location_lat: float | None = None,
+    location_lon: float | None = None,
 ) -> None:
-    """Update last_seen_at and last_ip for a node."""
-    await db.execute(
-        "UPDATE nodes SET last_seen_at = ?, last_ip = ? WHERE node_id = ?",
-        (time.time(), ip, node_id),
-    )
+    """Update last_seen_at, last_ip, and (optionally) the persistent
+    node location for a node.
+
+    location_lat / location_lon are written when the caller has fresh
+    coordinates from a heartbeat body.  Pass None (the default) to leave
+    the existing location columns alone -- this is appropriate for
+    callers that don't have a body to draw from (e.g. the bare event
+    ingest path that uses headers only).
+
+    A separate UPDATE form is used when location is supplied so that
+    NULL coordinates from a partial heartbeat (where the node didn't
+    include lat/lon for some reason) cannot accidentally clobber a
+    previously known good location.
+    """
+    if location_lat is not None and location_lon is not None:
+        await db.execute(
+            "UPDATE nodes SET last_seen_at = ?, last_ip = ?, "
+            "location_lat = ?, location_lon = ? WHERE node_id = ?",
+            (time.time(), ip, location_lat, location_lon, node_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE nodes SET last_seen_at = ?, last_ip = ? WHERE node_id = ?",
+            (time.time(), ip, node_id),
+        )
     await db.commit()
 
 

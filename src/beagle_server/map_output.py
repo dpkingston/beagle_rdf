@@ -788,13 +788,24 @@ function loadFixes(maxAgeS) {
                     var np = f.properties;
                     var nlat = f.geometry.coordinates[1];
                     var nlon = f.geometry.coordinates[0];
-                    /* Green if heartbeat within 120s, red otherwise */
+                    /* Three states:
+                     *   online   - heartbeat within last 120s         -> green
+                     *   stale    - heartbeat older than 120s          -> red
+                     *   inactive - position from registry only, no
+                     *              recent heartbeat (location_source
+                     *              == 'registry' or no heartbeat at
+                     *              all)                                -> grey
+                     */
                     var hbAge = np.heartbeat_age_s;
-                    var nodeOnline = (hbAge !== null && hbAge !== undefined && hbAge < 120);
-                    var nColor = nodeOnline ? '#1b8a2e' : '#b03030';
-                    var nFill  = nodeOnline ? '#2ecc40' : '#e74c3c';
-                    var statusText = nodeOnline ? 'online' : 'offline';
-                    if (hbAge === null || hbAge === undefined) statusText = 'no heartbeat';
+                    var src = np.location_source;
+                    var nColor, nFill, statusText;
+                    if (hbAge !== null && hbAge !== undefined && hbAge < 120) {
+                        nColor = '#1b8a2e'; nFill = '#2ecc40'; statusText = 'online';
+                    } else if (src === 'registry' || hbAge === null || hbAge === undefined) {
+                        nColor = '#5a6470'; nFill = '#9aa4b0'; statusText = 'inactive';
+                    } else {
+                        nColor = '#b03030'; nFill = '#e74c3c'; statusText = 'offline';
+                    }
                     /* Override fill with group color if assigned */
                     var grpInfo = _nodeGroupInfo(np.node_id);
                     var grpLine = '';
@@ -803,11 +814,13 @@ function loadFixes(maxAgeS) {
                         nFill  = grpInfo.color;
                         grpLine = '<br>Group: <b>' + grpInfo.label + '</b>';
                     }
+                    var lastSeenText = (np.age_s !== null && np.age_s !== undefined)
+                                       ? fmtAge(np.age_s) : 'never';
                     var nodePopup =
                         '<b>Node</b>: ' + np.node_id + '<br>' +
                         'Lat: ' + nlat.toFixed(5) + ', Lon: ' + nlon.toFixed(5) + '<br>' +
                         'Status: <b>' + statusText + '</b><br>' +
-                        'Last seen: ' + fmtAge(np.age_s) + grpLine;
+                        'Last seen: ' + lastSeenText + grpLine;
                     layer = L.circleMarker([nlat, nlon], {
                         radius: 8, color: nColor, fillColor: nFill,
                         fillOpacity: 0.8, weight: 2
@@ -2665,6 +2678,7 @@ def build_fix_geojson(
     hyperbola_points: int = 500,
     now: float | None = None,
     heartbeats: dict[str, dict[str, Any]] | None = None,
+    registered_nodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Build a GeoJSON FeatureCollection of fix markers and hyperbola arcs.
@@ -2679,6 +2693,15 @@ def build_fix_geojson(
     - The single most recent 3+-node fix (full hyperbola set)
     - All 2-node fixes (LOP arcs, styled differently by the JS)
 
+    Node markers are sourced in this order:
+      1. Most recent event for the node (event-driven, freshest)
+      2. In-memory heartbeat dict (since the current server lifetime)
+      3. Persisted location_lat/location_lon in the registry (survives
+         server restarts; updated by the long-poll handler from each
+         heartbeat body)
+    A node is rendered if any of these three sources has coordinates;
+    nodes that have never reported in are not rendered.
+
     Parameters
     ----------
     fixes : list of fix dicts from db.fetch_fixes() - newest first
@@ -2687,6 +2710,8 @@ def build_fix_geojson(
     hyperbola_points : points per hyperbola arc
     now : override for current time (tests)
     heartbeats : node_id -> heartbeat dict (from app.state.heartbeats)
+    registered_nodes : full registry rows from db.fetch_all_nodes(), used
+                       as the registry-fallback source for node markers.
     """
     if now is None:
         now = time.time()
@@ -2779,13 +2804,18 @@ def build_fix_geojson(
                 "age_s": age_s,
                 "received_at": ev["received_at"],
                 "heartbeat_age_s": hb_age,
+                "location_source": "event",
                 "tooltip": nid,
             },
         })
 
+    # Track which node_ids we've already emitted a feature for, so the
+    # registry-fallback step can skip them.
+    emitted_node_ids: set[str] = set(seen_nodes.keys())
+
     # Nodes known only from heartbeats (no events yet)
     for nid, hb in hb_map.items():
-        if nid in seen_nodes:
+        if nid in emitted_node_ids:
             continue
         lat = hb.get("latitude_deg")
         lon = hb.get("longitude_deg")
@@ -2803,9 +2833,45 @@ def build_fix_geojson(
                 "age_s": hb_age,
                 "received_at": hb["received_at"],
                 "heartbeat_age_s": hb_age,
+                "location_source": "heartbeat",
                 "tooltip": nid,
             },
         })
+        emitted_node_ids.add(nid)
+
+    # Registry-fallback: nodes registered with a known location_lat/lon
+    # but neither in recent_events nor in the in-memory heartbeats dict.
+    # Survives server restarts -- the long-poll handler persists each
+    # heartbeat's location to the nodes table on every poll.
+    for n in (registered_nodes or []):
+        nid = n["node_id"]
+        if nid in emitted_node_ids:
+            continue
+        lat = n.get("location_lat")
+        lon = n.get("location_lon")
+        if lat is None or lon is None:
+            continue
+        # Use the row's last_seen_at (also persistent across restarts)
+        # to compute heartbeat_age_s so the JS can colour the marker by
+        # how stale the persisted state is.
+        last_seen = n.get("last_seen_at")
+        hb_age = (now - last_seen) if last_seen is not None else None
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": {
+                "feature_type": "node",
+                "node_id": nid,
+                "latitude_deg": lat,
+                "longitude_deg": lon,
+                "age_s": hb_age,
+                "received_at": last_seen,
+                "heartbeat_age_s": hb_age,
+                "location_source": "registry",
+                "tooltip": nid,
+            },
+        })
+        emitted_node_ids.add(nid)
 
     fix_count = sum(
         1 for f in features if f["properties"].get("feature_type") == "fix"
