@@ -17,7 +17,7 @@ from beagle_node.events.reporter import EventReporter
 def make_event(**kwargs) -> CarrierEvent:
     defaults = dict(
         node_id="test-node",
-        node_location=NodeLocation(latitude_deg=47.6, longitude_deg=-122.3, altitude_m=50.0),
+        node_location=NodeLocation(latitude_deg=47.6, longitude_deg=-122.3),
         channel_frequency_hz=155_100_000.0,
         sync_delta_ns=5_000_000,
         sync_transmitter=SyncTransmitter(

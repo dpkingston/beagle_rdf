@@ -425,7 +425,6 @@ def run(args: argparse.Namespace | None = None) -> int:
     node_loc = NodeLocation(
         latitude_deg=config.location.latitude_deg,
         longitude_deg=config.location.longitude_deg,
-        altitude_m=config.location.altitude_m,
     )
     sync_station = config.sync_signal.primary_station
     sync_tx = SyncTransmitter(

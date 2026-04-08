@@ -388,7 +388,7 @@ def _make_node_config_freq_hop(**freq_hop_overrides):
     freq_hop_defaults.update(freq_hop_overrides)
     return NodeConfig(
         node_id="test-node",
-        location=NodeLocation(latitude_deg=47.0, longitude_deg=-122.0, altitude_m=10.0),
+        location=NodeLocation(latitude_deg=47.0, longitude_deg=-122.0),
         sdr_mode="freq_hop",
         freq_hop=FreqHopConfig(**freq_hop_defaults),
         sync_signal=SyncSignalConfig(

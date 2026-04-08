@@ -451,8 +451,6 @@ def _event_payload(node_id: str) -> dict:
         "node_location": {
             "latitude_deg": 47.7,
             "longitude_deg": -122.4,
-            "altitude_m": 50.0,
-            "uncertainty_m": 5.0,
         },
         "channel_frequency_hz": 155_100_000.0,
         "sync_delta_ns": 500_000_000,

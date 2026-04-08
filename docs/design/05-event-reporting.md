@@ -23,9 +23,7 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
   "node_id":        "seattle-north-01",
   "node_location": {
     "latitude_deg":   47.7112,
-    "longitude_deg": -122.3312,
-    "altitude_m":     85.0,
-    "uncertainty_m":   5.0
+    "longitude_deg": -122.3312
   },
 
   "channel_frequency_hz": 462562500.0,
@@ -78,8 +76,6 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 |-------|------|-------------|
 | `node_location.latitude_deg` | float | Node WGS-84 latitude |
 | `node_location.longitude_deg` | float | Node WGS-84 longitude |
-| `node_location.altitude_m` | float | Node altitude above MSL (default 0) |
-| `node_location.uncertainty_m` | float | Node location uncertainty radius (default 5 m) |
 
 #### The TDOA measurement - primary fields
 

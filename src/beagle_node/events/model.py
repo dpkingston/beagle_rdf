@@ -16,10 +16,14 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class NodeLocation(BaseModel):
+    """Geographic location of a Beagle node, embedded in every CarrierEvent.
+
+    Two-dimensional only -- the TDOA solver does not use altitude.
+    Pydantic v2's default `extra="ignore"` lets older event payloads
+    that still carry `altitude_m` / `uncertainty_m` deserialize cleanly.
+    """
     latitude_deg: float
     longitude_deg: float
-    altitude_m: float = 0.0
-    uncertainty_m: float = 5.0
 
 
 class SyncTransmitter(BaseModel):

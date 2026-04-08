@@ -58,7 +58,6 @@ _VALID_CONFIG: dict = {
     "location": {
         "latitude_deg": 47.6,
         "longitude_deg": -122.3,
-        "altitude_m": 50.0,
     },
     "sdr_mode": "freq_hop",
     "freq_hop": {},

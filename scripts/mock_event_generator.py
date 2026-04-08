@@ -95,7 +95,6 @@ class NodeDef:
     node_id: str
     latitude_deg: float
     longitude_deg: float
-    altitude_m: float = 0.0
 
 
 @dataclass
@@ -285,8 +284,6 @@ def _make_event_payload(
         "node_location": {
             "latitude_deg": node.latitude_deg,
             "longitude_deg": node.longitude_deg,
-            "altitude_m": node.altitude_m,
-            "uncertainty_m": 5.0,
         },
         "channel_frequency_hz": target.channel_hz,
         "sync_delta_ns": sync_delta_ns,
@@ -597,7 +594,6 @@ def send_heartbeats(
             "node_id": node.node_id,
             "latitude_deg": node.latitude_deg,
             "longitude_deg": node.longitude_deg,
-            "altitude_m": node.altitude_m,
             "sdr_mode": "freq_hop",
             "clock_source": "ntp",
             "software_version": "mock-1.0",

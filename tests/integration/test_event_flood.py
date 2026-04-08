@@ -70,8 +70,6 @@ def _make_event(node_id: str, node_lat: float, node_lon: float,
         "node_location": {
             "latitude_deg": node_lat,
             "longitude_deg": node_lon,
-            "altitude_m": 50.0,
-            "uncertainty_m": 5.0,
         },
         "channel_frequency_hz": channel_hz,
         "sync_delta_ns": sync_delta,

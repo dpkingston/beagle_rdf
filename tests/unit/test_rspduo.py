@@ -608,7 +608,7 @@ def test_from_config():
 
     node_cfg = NodeConfig(
         node_id="test-node",
-        location=NodeLocation(latitude_deg=47.0, longitude_deg=-122.0, altitude_m=10.0),
+        location=NodeLocation(latitude_deg=47.0, longitude_deg=-122.0),
         sdr_mode="rspduo",
         rspduo=RSPduoConfig(sample_rate_hz=2_000_000.0, buffer_size=1024, pipeline_offset_ns=250),
         sync_signal=SyncSignalConfig(

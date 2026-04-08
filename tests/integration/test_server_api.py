@@ -176,8 +176,6 @@ def _make_event_payload(
         "node_location": {
             "latitude_deg": node_lat,
             "longitude_deg": node_lon,
-            "altitude_m": 50.0,
-            "uncertainty_m": 5.0,
         },
         "channel_frequency_hz": _CHANNEL_HZ,
         "sync_delta_ns": sync_delta,

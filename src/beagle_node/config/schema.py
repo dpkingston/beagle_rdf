@@ -22,10 +22,17 @@ from pydantic import BaseModel, field_validator, model_validator
 
 
 class NodeLocation(BaseModel):
+    """Geographic location of a Beagle node.
+
+    Beagle's TDOA solver is two-dimensional (lat/lon only); altitude
+    contributes negligibly compared to the carrier-detector quantisation
+    floor and was never read by any code path.  Older configs may still
+    include `altitude_m` and `uncertainty_m` fields -- Pydantic v2's
+    default `extra="ignore"` silently drops them, so legacy configs
+    continue to load without errors.
+    """
     latitude_deg: float
     longitude_deg: float
-    altitude_m: float = 0.0
-    uncertainty_m: float = 5.0
 
 
 class FreqHopConfig(BaseModel):

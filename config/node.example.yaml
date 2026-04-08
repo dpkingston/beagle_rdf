@@ -9,8 +9,6 @@ health_port: 8080
 location:
   latitude_deg: 47.7112
   longitude_deg: -122.3312
-  altitude_m: 85.0
-  uncertainty_m: 5.0
 
 # SDR mode: freq_hop | two_sdr | single_sdr | rspduo
 # - freq_hop:   Single RTL-SDR alternates between sync and target frequencies

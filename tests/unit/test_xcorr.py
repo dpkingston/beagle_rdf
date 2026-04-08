@@ -338,7 +338,7 @@ def test_carrier_event_to_db_dict_includes_snippet():
     snippet = _encode_iq(_bandlimited_noise(640, seed=5))
     event = CarrierEvent(
         node_id="test-node",
-        node_location=NodeLocation(latitude_deg=47.6, longitude_deg=-122.3, altitude_m=50.0),
+        node_location=NodeLocation(latitude_deg=47.6, longitude_deg=-122.3),
         channel_frequency_hz=155_100_000.0,
         sync_delta_ns=3_000_000,
         sync_transmitter=SyncTransmitter(
