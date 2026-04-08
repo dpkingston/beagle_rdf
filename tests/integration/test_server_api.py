@@ -21,6 +21,7 @@ Sync TX:     47.6253, -122.3563   (KISW)
 from __future__ import annotations
 
 import base64
+import json
 import math
 import time
 
@@ -759,6 +760,86 @@ def test_group_update_bumps_member_config(client: TestClient) -> None:
     resp = client.get("/api/v1/nodes/bump-node")
     ver_after = resp.json()["config_version"]
     assert ver_after > ver_before
+
+
+def test_get_node_merged_applies_freq_group_overlay(client: TestClient) -> None:
+    """GET /api/v1/nodes/{id}?merged=1 returns the same view the long-poll
+    handler would serve to the node."""
+    # Create a node with a base config that has its own primary station and
+    # target channels - the overlay should replace BOTH from the freq group.
+    _seed_node(client, "merged-node")
+    base_cfg = {
+        "sync_signal": {
+            "primary_station": {
+                "station_id": "OLD_STATION",
+                "frequency_hz": 88_500_000.0,
+                "latitude_deg": 0.0,
+                "longitude_deg": 0.0,
+            },
+            "min_corr_peak": 0.42,   # should be preserved (not in overlay)
+        },
+        "target_channels": [
+            {"frequency_hz": 999_000_000.0, "label": "OLD"},
+        ],
+    }
+    client.patch("/api/v1/nodes/merged-node",
+                 json={"config_json": base_cfg})
+
+    # Create the group and assign the node.
+    client.post("/api/v1/groups", json=_GROUP_BODY)
+    client.patch("/api/v1/nodes/merged-node",
+                 json={"freq_group_id": "seattle-fm"})
+
+    # Raw view: per-node config still has the old values.
+    raw = client.get("/api/v1/nodes/merged-node").json()
+    raw_cfg = json.loads(raw["config_json"])
+    assert raw_cfg["sync_signal"]["primary_station"]["station_id"] == "OLD_STATION"
+    assert raw_cfg["target_channels"][0]["frequency_hz"] == 999_000_000.0
+    assert "config_merged" not in raw
+
+    # Merged view: overlay applied.
+    merged = client.get("/api/v1/nodes/merged-node?merged=1").json()
+    assert merged["config_merged"] is True
+    merged_cfg = json.loads(merged["config_json"])
+    ps = merged_cfg["sync_signal"]["primary_station"]
+    assert ps["station_id"] == "KISW_99.9"
+    assert ps["frequency_hz"] == 99_900_000.0
+    assert ps["latitude_deg"] == 47.6253
+    assert ps["longitude_deg"] == -122.3563
+    # Sibling fields under sync_signal must survive the overlay merge.
+    assert merged_cfg["sync_signal"]["min_corr_peak"] == 0.42
+    # target_channels replaced wholesale with the group's plan.
+    freqs = sorted(c["frequency_hz"] for c in merged_cfg["target_channels"])
+    assert freqs == [460_000_000.0, 462_500_000.0]
+
+
+def test_get_node_merged_no_group_returns_raw(client: TestClient) -> None:
+    """?merged=1 on an ungrouped node returns the raw config (not modified)."""
+    _seed_node(client, "ungrouped-node")
+    base_cfg = {"sync_signal": {"min_corr_peak": 0.5}}
+    client.patch("/api/v1/nodes/ungrouped-node",
+                 json={"config_json": base_cfg})
+
+    merged = client.get("/api/v1/nodes/ungrouped-node?merged=1").json()
+    assert merged["config_merged"] is True
+    cfg = json.loads(merged["config_json"])
+    assert cfg == base_cfg
+
+
+def test_get_node_default_is_raw(client: TestClient) -> None:
+    """Without merged=1, the endpoint returns the raw stored config_json."""
+    _seed_node(client, "raw-node")
+    client.post("/api/v1/groups", json=_GROUP_BODY)
+    client.patch("/api/v1/nodes/raw-node",
+                 json={"config_json": {"target_channels": [{"frequency_hz": 1.0}]}})
+    client.patch("/api/v1/nodes/raw-node",
+                 json={"freq_group_id": "seattle-fm"})
+
+    resp = client.get("/api/v1/nodes/raw-node").json()
+    assert "config_merged" not in resp
+    cfg = json.loads(resp["config_json"])
+    # Raw config has the original 1.0 Hz target, not the group's targets.
+    assert cfg["target_channels"][0]["frequency_hz"] == 1.0
 
 
 # ---------------------------------------------------------------------------

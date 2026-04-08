@@ -1521,25 +1521,15 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                         except (json.JSONDecodeError, TypeError):
                             config_obj = None
 
-                    # Merge frequency group plan (highest priority overlay)
+                    # Merge frequency group plan (highest priority overlay).
+                    # The same helper is used by the admin merged-config
+                    # inspection endpoint so the two views never disagree.
                     if config_obj is not None and node.get("freq_group_id"):
                         grp = await db_module.fetch_freq_group(
                             registry_db, node["freq_group_id"])
-                        if grp is not None:
-                            config_obj["sync_signal"] = {
-                                **config_obj.get("sync_signal", {}),
-                                "primary_station": {
-                                    "station_id": grp["sync_station_id"],
-                                    "frequency_hz": grp["sync_freq_hz"],
-                                    "latitude_deg": grp["sync_station_lat"],
-                                    "longitude_deg": grp["sync_station_lon"],
-                                },
-                            }
-                            try:
-                                config_obj["target_channels"] = json.loads(
-                                    grp["target_channels_json"])
-                            except (json.JSONDecodeError, TypeError):
-                                pass
+                        config_obj = db_module.apply_freq_group_overlay(
+                            config_obj, grp,
+                        )
 
                     return {
                         "node_id": node_id,
@@ -1580,6 +1570,17 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     async def get_node(
         node_id: str,
         request: Request,
+        merged: bool = Query(
+            default=False,
+            description=(
+                "If true, replace the raw config_json with the same "
+                "merged config the long-poll endpoint would serve to "
+                "the node, including the freq_group overlay.  Useful "
+                "for confirming what a bootstrapped node will actually "
+                "receive when its freq_group_id is set, since the raw "
+                "config_json on its own does not show the overlay."
+            ),
+        ),
         registry_db: aiosqlite.Connection = Depends(get_registry_db),
     ) -> dict[str, Any]:
         await auth_module.require_admin(request, registry_db)
@@ -1587,6 +1588,27 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         if node is None:
             raise HTTPException(status_code=404, detail="Node not found")
         node.pop("secret_hash", None)
+
+        if merged and node.get("config_json"):
+            # Parse the raw config_json, apply the freq_group overlay,
+            # and serialise back.  We replace the string field with the
+            # merged JSON string so the response shape is unchanged for
+            # callers that aren't expecting a dict.  A new
+            # config_json_merged_from_raw flag tells the caller this is
+            # the merged form, not the on-disk form.
+            try:
+                config_obj = json.loads(node["config_json"])
+            except (json.JSONDecodeError, TypeError):
+                config_obj = None
+            if config_obj is not None and node.get("freq_group_id"):
+                grp = await db_module.fetch_freq_group(
+                    registry_db, node["freq_group_id"]
+                )
+                config_obj = db_module.apply_freq_group_overlay(config_obj, grp)
+            if config_obj is not None:
+                node["config_json"] = json.dumps(config_obj)
+                node["config_merged"] = True
+
         return node
 
     # -------------------------------------------------------------------

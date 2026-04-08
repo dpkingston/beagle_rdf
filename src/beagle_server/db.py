@@ -908,6 +908,59 @@ async def fetch_freq_group(
     return dict(row) if row is not None else None
 
 
+def apply_freq_group_overlay(
+    config_obj: dict[str, Any],
+    freq_group: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply a frequency group's plan as an overlay on top of a node's
+    parsed config dict.
+
+    The freq group overrides two fields in the node config:
+
+    - ``sync_signal.primary_station`` - replaced with the group's
+      ``sync_station_id`` / ``sync_freq_hz`` / ``sync_station_lat`` /
+      ``sync_station_lon``.
+    - ``target_channels`` - replaced with the parsed
+      ``target_channels_json`` from the group.
+
+    Other fields in ``sync_signal`` (e.g. ``min_corr_peak``,
+    ``max_sync_age_ms``, ``secondary_station``) are preserved from the
+    per-node config.
+
+    The input ``config_obj`` is mutated in place AND returned for
+    chaining convenience.  If ``freq_group`` is ``None``, ``config_obj``
+    is returned unchanged.
+
+    This is the single source of truth for the overlay rule.  Both the
+    long-poll handler that serves config to the node and the admin
+    "merged config" inspection endpoint use it, so they can never
+    disagree about what the node will actually receive.
+    """
+    if freq_group is None or config_obj is None:
+        return config_obj
+
+    config_obj["sync_signal"] = {
+        **config_obj.get("sync_signal", {}),
+        "primary_station": {
+            "station_id": freq_group["sync_station_id"],
+            "frequency_hz": freq_group["sync_freq_hz"],
+            "latitude_deg": freq_group["sync_station_lat"],
+            "longitude_deg": freq_group["sync_station_lon"],
+        },
+    }
+    try:
+        config_obj["target_channels"] = json.loads(
+            freq_group["target_channels_json"]
+        )
+    except (json.JSONDecodeError, TypeError):
+        # Group has malformed target_channels_json - keep the per-node
+        # value rather than blanking it.  Operators should fix the
+        # group via manage_nodes group-add or the API.
+        pass
+
+    return config_obj
+
+
 async def fetch_all_freq_groups(db: aiosqlite.Connection) -> list[dict[str, Any]]:
     """Return all frequency groups ordered by group_id."""
     async with db.execute(

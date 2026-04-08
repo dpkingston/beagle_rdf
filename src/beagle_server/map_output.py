@@ -1850,6 +1850,8 @@ window._tdoaToggleDetail = function (nodeId) {
                   + '</span></div>';
             html += '<div class="tp-row"><span class="tp-key">Group</span><span>'
                   + _esc(node.freq_group_id || 'none') + '</span></div>';
+            html += '<div class="tp-row"><span class="tp-key">Config file</span><span style="font-family:monospace;font-size:10px;word-break:break-all">'
+                  + _esc(node.config_file_path || '(inline / API)') + '</span></div>';
             html += '<div style="margin-top:4px"><span class="tp-key">Config JSON:</span></div>';
             var cfgText = '';
             if (node.config_json) {

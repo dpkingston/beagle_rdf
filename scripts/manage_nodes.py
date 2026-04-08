@@ -58,6 +58,9 @@ Commands
     add NODE_ID     Register a new node.  Generates and prints a secret the
                     node operator must copy into bootstrap.yaml.
     show NODE_ID    Print full details and current config for a node.
+                    Pass --merged to apply the node's frequency-group overlay
+                    and print exactly what the server will hand to the node on
+                    its next config fetch.
     set-config NODE_ID
                     Replace (or clear) the server-assigned config JSON for a node.
                     Accepts --config-file (YAML or JSON) or --config-json string.
@@ -302,24 +305,67 @@ def cmd_show(con: sqlite3.Connection, args: argparse.Namespace) -> None:
         sys.exit(f"error: node '{args.node_id}' not found.")
 
     r = dict(row)
-    print(f"node_id:        {r['node_id']}")
-    print(f"label:          {r['label'] or '(none)'}")
-    print(f"enabled:        {'yes' if r['enabled'] else 'NO (disabled)'}")
-    print(f"registered_at:  {_fmt_ts(r['registered_at'])}")
-    print(f"last_seen_at:   {_fmt_ts(r['last_seen_at'])}")
-    print(f"last_ip:        {r['last_ip'] or '(never connected)'}")
-    print(f"config_version: {r['config_version']}")
-    print(f"template_id:    {r['config_template_id'] or '(none)'}")
+    print(f"node_id:          {r['node_id']}")
+    print(f"label:            {r['label'] or '(none)'}")
+    print(f"enabled:          {'yes' if r['enabled'] else 'NO (disabled)'}")
+    print(f"registered_at:    {_fmt_ts(r['registered_at'])}")
+    print(f"last_seen_at:     {_fmt_ts(r['last_seen_at'])}")
+    print(f"last_ip:          {r['last_ip'] or '(never connected)'}")
+    print(f"config_version:   {r['config_version']}")
+    print(f"template_id:      {r['config_template_id'] or '(none)'}")
+    print(f"freq_group_id:    {r.get('freq_group_id') or '(none)'}")
+    print(f"config_file_path: {r.get('config_file_path') or '(none - inline / API)'}")
     print()
-    if r["config_json"]:
+
+    config_json = r["config_json"]
+    merged_note = ""
+
+    if getattr(args, "merged", False) and config_json:
+        # Apply the same overlay the long-poll handler uses, so the operator
+        # sees exactly what the node will receive on its next config fetch.
         try:
-            parsed = json.loads(r["config_json"])
+            from beagle_server.db import apply_freq_group_overlay
+        except ImportError as exc:
+            sys.exit(
+                "error: --merged requires the beagle_server package on "
+                f"PYTHONPATH ({exc})"
+            )
+        try:
+            parsed = json.loads(config_json)
+        except json.JSONDecodeError as exc:
+            sys.exit(f"error: stored config_json is not valid JSON: {exc}")
+
+        group_id = r.get("freq_group_id")
+        if group_id:
+            grp_row = con.execute(
+                "SELECT * FROM node_freq_groups WHERE group_id = ?",
+                (group_id,),
+            ).fetchone()
+            grp = dict(grp_row) if grp_row is not None else None
+            if grp is None:
+                merged_note = (
+                    f"  (note: freq_group_id '{group_id}' not found - "
+                    "no overlay applied)"
+                )
+            else:
+                apply_freq_group_overlay(parsed, grp)
+                merged_note = f"  (freq group '{group_id}' overlay applied)"
+        else:
+            merged_note = "  (no freq_group assigned - raw config shown)"
+
+        print(f"config_json (merged):{merged_note}")
+        print(json.dumps(parsed, indent=2))
+        return
+
+    if config_json:
+        try:
+            parsed = json.loads(config_json)
             print("config_json:")
             print(json.dumps(parsed, indent=2))
         except json.JSONDecodeError:
-            print(f"config_json (raw): {r['config_json']}")
+            print(f"config_json (raw): {config_json}")
     else:
-        print("config_json:    (none - node uses server defaults)")
+        print("config_json:      (none - node uses server defaults)")
 
 
 def cmd_set_config(con: sqlite3.Connection, args: argparse.Namespace) -> None:
@@ -691,6 +737,15 @@ def _build_parser() -> argparse.ArgumentParser:
     # show
     show_p = sub.add_parser("show", help="Show full details for a node.")
     show_p.add_argument("node_id")
+    show_p.add_argument(
+        "--merged",
+        action="store_true",
+        help=(
+            "Print the config_json with the node's frequency group overlay "
+            "applied - i.e. exactly what the long-poll endpoint would serve "
+            "to the node on its next config fetch."
+        ),
+    )
 
     # set-config
     sc_p = sub.add_parser("set-config", help="Replace the server-assigned config for a node.")
