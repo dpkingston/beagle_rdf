@@ -879,9 +879,20 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     ) -> dict[str, str]:
         cfg: ServerFullConfig = request.app.state.config
         client_ip = request.client.host if request.client else None
+        # The event itself carries the node's lat/lon in node_location.
+        # Persist it to the registry alongside last_seen_at so the map can
+        # reflect a relocated node immediately, even if the node hasn't
+        # polled for config since the move.  Mobile / movable nodes are
+        # supported by always taking the latest message's coordinates as
+        # the current truth.
+        ev_lat = event.node_location.latitude_deg
+        ev_lon = event.node_location.longitude_deg
         if cfg.server.node_auth == "nodedb":
             node = await _check_node_auth(request, registry_db)
-            await db_module.update_node_seen(registry_db, node["node_id"], client_ip)
+            await db_module.update_node_seen(
+                registry_db, node["node_id"], client_ip,
+                location_lat=ev_lat, location_lon=ev_lon,
+            )
         else:
             if cfg.server.node_auth == "token":
                 _check_auth(request)
@@ -895,7 +906,10 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     registry_db, event.node_id, ip=client_ip,
                 )
                 request.app.state.known_nodes[event.node_id] = dict(node)
-            await db_module.update_node_seen(registry_db, event.node_id, client_ip)
+            await db_module.update_node_seen(
+                registry_db, event.node_id, client_ip,
+                location_lat=ev_lat, location_lon=ev_lon,
+            )
 
         if not node["enabled"]:
             raise HTTPException(
@@ -1881,39 +1895,28 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 "checked_at": rs.get("checked_at"),
             }
 
+        from beagle_server.map_output import resolve_node_location
+
         result: list[dict[str, Any]] = []
         for n in registered:
             n = dict(n)
             n.pop("secret_hash", None)
             n["registered"] = True
-            # Location precedence: most recent event > heartbeat > registry.
-            # The registry value (n["location_lat"]/_lon from SELECT *) is
-            # populated by the long-poll handler from each heartbeat body
-            # and survives server restarts.  Falling back to it lets the
-            # map render markers for known nodes immediately on page load,
-            # even when no events have arrived yet and the in-memory
-            # heartbeats dict is empty (e.g. right after a server restart).
+            # Location is the value from the most recent message we have
+            # about this node, regardless of channel.  Each candidate
+            # carries its own timestamp; the freshest one wins.  See
+            # map_output.resolve_node_location() for the rule.  Nodes can
+            # be physically moved, so a stale event row's coordinates
+            # must NOT permanently override a fresher heartbeat or
+            # registry-cached value.
             ev = event_by_id.get(n["node_id"])
             hb = heartbeats.get(n["node_id"])
-            registry_lat = n.get("location_lat")
-            registry_lon = n.get("location_lon")
-            if ev:
-                n["location_lat"] = ev["node_lat"]
-                n["location_lon"] = ev["node_lon"]
-            elif hb and hb.get("latitude_deg") is not None:
-                n["location_lat"] = hb["latitude_deg"]
-                n["location_lon"] = hb["longitude_deg"]
-            else:
-                n["location_lat"] = registry_lat
-                n["location_lon"] = registry_lon
-            # Distinguish "freshly known" from "registry-fallback" so the
-            # JS can render a different colour for nodes whose location
-            # came only from the persisted registry copy.
-            n["location_source"] = (
-                "event" if ev
-                else ("heartbeat" if hb and hb.get("latitude_deg") is not None
-                      else ("registry" if registry_lat is not None else "none"))
+            lat, lon, src, _ts = resolve_node_location(
+                event_row=ev, heartbeat=hb, registry_row=n,
             )
+            n["location_lat"] = lat
+            n["location_lon"] = lon
+            n["location_source"] = src
             n["sdr_mode"] = ev["sdr_mode"] if ev else (hb.get("sdr_mode") if hb else None)
             n["heartbeat_age_s"] = now - hb["received_at"] if hb else None
             n["noise_floor_db"] = hb.get("noise_floor_db") if hb else None

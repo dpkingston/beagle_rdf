@@ -320,6 +320,30 @@ def run(args: argparse.Namespace | None = None) -> int:
                 config.sync_signal = new_config.sync_signal
                 logger.info("Remote config update: sync signal thresholds applied")
 
+            # --- Hot-reloadable: node location ---
+            # Mobile and relocated nodes need their broadcast position to
+            # follow the config change immediately, without a process
+            # restart.  Update both the in-memory config object AND the
+            # _heartbeat_payload dict that the next config poll will send
+            # back to the server.  Then push the updated payload to the
+            # fetcher's snapshot so the very next poll carries it,
+            # without waiting for the heartbeat-interval cycle in the
+            # main SDR loop to do another set_heartbeat_data call.
+            if new_config.location != config.location:
+                old_loc = config.location
+                config.location = new_config.location
+                _heartbeat_payload["latitude_deg"] = new_config.location.latitude_deg
+                _heartbeat_payload["longitude_deg"] = new_config.location.longitude_deg
+                if _remote_fetcher is not None:
+                    _remote_fetcher.set_heartbeat_data(_heartbeat_payload)
+                logger.info(
+                    "Remote config update: location applied "
+                    "(%.6f, %.6f) -> (%.6f, %.6f)",
+                    old_loc.latitude_deg, old_loc.longitude_deg,
+                    new_config.location.latitude_deg,
+                    new_config.location.longitude_deg,
+                )
+
             # Update health endpoint with any config changes
             health.set_config(
                 sync_station=config.sync_signal.primary_station.station_id,

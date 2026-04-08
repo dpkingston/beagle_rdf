@@ -375,3 +375,188 @@ def test_map_data_skips_node_with_no_known_location(
         if f["properties"]["feature_type"] == "node"
     ]
     assert node_features == []
+
+
+# ---------------------------------------------------------------------------
+# Recency-wins precedence: a stale event row must NOT override a fresh
+# heartbeat from a relocated node.  This is the dpk-tdoa2 regression
+# from 2026-04-08: the node was physically moved, the new config carried
+# the new location, but a yesterday-vintage event row in the database
+# was being preferred over today's heartbeat by the old precedence chain.
+# ---------------------------------------------------------------------------
+
+def test_relocated_node_fresh_heartbeat_wins_over_stale_event(
+    client: TestClient, registry_path: str
+) -> None:
+    """A node was at OLD_LOC yesterday, emitted events from there, then
+    was moved to NEW_LOC and is now polling.  The current heartbeat is
+    fresh; the event row in the DB is from yesterday and has OLD_LOC.
+    The map must show NEW_LOC."""
+    OLD_LAT, OLD_LON = 47.671928, -122.404209  # the colocated-with-tdoa1 spot
+    NEW_LAT, NEW_LON = 47.721666, -122.359034  # the new physical location
+
+    # Insert an old event row directly into the events DB carrying OLD_LOC.
+    # received_at is yesterday.  This simulates the stale event-row state
+    # in production for dpk-tdoa2 on 2026-04-08.
+    yesterday = time.time() - 86400.0
+    async def _insert_old_event():
+        # The events DB is opened lazily by the API; insert via a fresh
+        # connection at the same path.
+        cfg = client.app.state.config
+        db = await db_module.open_db(cfg.database.path)
+        await db.execute(
+            """
+            INSERT INTO events
+                (event_id, node_id, received_at, channel_hz, event_type,
+                 sync_delta_ns, sync_tx_id, sync_tx_lat, sync_tx_lon,
+                 node_lat, node_lon, onset_time_ns, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "stale-event-1", _NODE_ID, yesterday, 443475000.0, "onset",
+                100_000, "KUOW_94.9", 47.61576, -122.30919,
+                OLD_LAT, OLD_LON, int(yesterday * 1e9), "{}",
+            ),
+        )
+        await db.commit()
+        await db.close()
+    asyncio.run(_insert_old_event())
+
+    # Now drop a fresh heartbeat into the in-memory dict carrying NEW_LOC.
+    fresh_ts = time.time()
+    client.app.state.heartbeats[_NODE_ID] = {
+        "node_id": _NODE_ID,
+        "latitude_deg": NEW_LAT,
+        "longitude_deg": NEW_LON,
+        "received_at": fresh_ts,
+    }
+
+    # /map/nodes should pick the fresh heartbeat
+    resp = client.get("/map/nodes")
+    nodes = {n["node_id"]: n for n in resp.json()["nodes"]}
+    n = nodes[_NODE_ID]
+    assert n["location_lat"] == pytest.approx(NEW_LAT)
+    assert n["location_lon"] == pytest.approx(NEW_LON)
+    assert n["location_source"] == "heartbeat"
+
+    # /map/data should also place the marker at the new location
+    client.app.state.map_geojson_cache.clear()
+    resp = client.get("/map/data")
+    features = resp.json()["features"]
+    nf = [
+        f for f in features
+        if f["properties"]["feature_type"] == "node"
+        and f["properties"]["node_id"] == _NODE_ID
+    ]
+    assert len(nf) == 1
+    assert nf[0]["geometry"]["coordinates"] == [
+        pytest.approx(NEW_LON), pytest.approx(NEW_LAT),
+    ]
+    assert nf[0]["properties"]["location_source"] == "heartbeat"
+
+
+def test_fresh_event_wins_over_stale_heartbeat(
+    client: TestClient, registry_path: str
+) -> None:
+    """The reverse case: a fresh event arrives after the heartbeat goes
+    stale.  The event must win because it's newer."""
+    OLD_LAT, OLD_LON = 47.6, -122.3
+    NEW_LAT, NEW_LON = 47.8, -122.4
+
+    # Stale heartbeat in memory
+    client.app.state.heartbeats[_NODE_ID] = {
+        "node_id": _NODE_ID,
+        "latitude_deg": OLD_LAT,
+        "longitude_deg": OLD_LON,
+        "received_at": time.time() - 3600.0,
+    }
+
+    # Fresh event in the DB
+    fresh_ts = time.time()
+    async def _insert_fresh_event():
+        cfg = client.app.state.config
+        db = await db_module.open_db(cfg.database.path)
+        await db.execute(
+            """
+            INSERT INTO events
+                (event_id, node_id, received_at, channel_hz, event_type,
+                 sync_delta_ns, sync_tx_id, sync_tx_lat, sync_tx_lon,
+                 node_lat, node_lon, onset_time_ns, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "fresh-event-1", _NODE_ID, fresh_ts, 443475000.0, "onset",
+                100_000, "KUOW_94.9", 47.61576, -122.30919,
+                NEW_LAT, NEW_LON, int(fresh_ts * 1e9), "{}",
+            ),
+        )
+        await db.commit()
+        await db.close()
+    asyncio.run(_insert_fresh_event())
+
+    resp = client.get("/map/nodes")
+    nodes = {n["node_id"]: n for n in resp.json()["nodes"]}
+    n = nodes[_NODE_ID]
+    assert n["location_lat"] == pytest.approx(NEW_LAT)
+    assert n["location_lon"] == pytest.approx(NEW_LON)
+    assert n["location_source"] == "event"
+
+
+# ---------------------------------------------------------------------------
+# Direct unit tests of the resolve_node_location helper
+# ---------------------------------------------------------------------------
+
+def test_resolve_helper_picks_newest_timestamp() -> None:
+    from beagle_server.map_output import resolve_node_location
+
+    t_old = 1000.0
+    t_mid = 2000.0
+    t_new = 3000.0
+
+    event_row = {"node_lat": 1.0, "node_lon": 1.0, "last_seen_at": t_old}
+    heartbeat = {"latitude_deg": 2.0, "longitude_deg": 2.0, "received_at": t_new}
+    registry = {"location_lat": 3.0, "location_lon": 3.0, "last_seen_at": t_mid}
+
+    lat, lon, source, ts = resolve_node_location(event_row, heartbeat, registry)
+    assert (lat, lon) == (2.0, 2.0)
+    assert source == "heartbeat"
+    assert ts == t_new
+
+
+def test_resolve_helper_event_wins_when_newest() -> None:
+    from beagle_server.map_output import resolve_node_location
+    event_row = {"node_lat": 1.0, "node_lon": 1.0, "last_seen_at": 3000.0}
+    heartbeat = {"latitude_deg": 2.0, "longitude_deg": 2.0, "received_at": 1000.0}
+    registry = {"location_lat": 3.0, "location_lon": 3.0, "last_seen_at": 2000.0}
+    lat, lon, source, _ = resolve_node_location(event_row, heartbeat, registry)
+    assert source == "event"
+    assert (lat, lon) == (1.0, 1.0)
+
+
+def test_resolve_helper_registry_wins_when_others_absent() -> None:
+    from beagle_server.map_output import resolve_node_location
+    registry = {"location_lat": 3.0, "location_lon": 3.0, "last_seen_at": 2000.0}
+    lat, lon, source, _ = resolve_node_location(None, None, registry)
+    assert source == "registry"
+    assert (lat, lon) == (3.0, 3.0)
+
+
+def test_resolve_helper_skips_candidates_with_partial_data() -> None:
+    """A candidate that has a timestamp but no coordinates (or vice versa)
+    is ignored, even if it's the newest."""
+    from beagle_server.map_output import resolve_node_location
+    # heartbeat has the newest timestamp but no coordinates
+    event_row = {"node_lat": 1.0, "node_lon": 1.0, "last_seen_at": 1000.0}
+    heartbeat = {"latitude_deg": None, "longitude_deg": None, "received_at": 9999.0}
+    lat, lon, source, _ = resolve_node_location(event_row, heartbeat, None)
+    assert source == "event"
+    assert (lat, lon) == (1.0, 1.0)
+
+
+def test_resolve_helper_returns_none_when_all_empty() -> None:
+    from beagle_server.map_output import resolve_node_location
+    lat, lon, source, ts = resolve_node_location(None, None, None)
+    assert lat is None
+    assert lon is None
+    assert source == "none"
+    assert ts is None

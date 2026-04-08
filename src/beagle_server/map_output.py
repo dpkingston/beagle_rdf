@@ -31,6 +31,78 @@ from folium.plugins import HeatMap  # type: ignore[import-untyped]
 
 from beagle_server.tdoa import _C_M_S, haversine_m
 
+
+# ---------------------------------------------------------------------------
+# Node-location precedence helper
+# ---------------------------------------------------------------------------
+
+def resolve_node_location(
+    event_row: dict[str, Any] | None = None,
+    heartbeat: dict[str, Any] | None = None,
+    registry_row: dict[str, Any] | None = None,
+) -> tuple[float | None, float | None, str, float | None]:
+    """Pick a node's current location from the most-recently-received
+    message about it.
+
+    Beagle's nodes can be moved physically (mobile receivers, relocations),
+    so cached or persisted location values may be stale relative to a
+    fresher message arriving via a different channel.  This helper
+    implements the rule: **the location from the most recent message wins**,
+    regardless of which path it arrived on (event, in-memory heartbeat,
+    or persisted registry row).
+
+    Each candidate source carries its own timestamp:
+
+    - ``event_row``        - the most recent ``events`` row for the node;
+                             keys ``node_lat`` / ``node_lon`` and
+                             ``last_seen_at`` (= the event's received_at).
+    - ``heartbeat``        - the in-memory ``app.state.heartbeats[node_id]``
+                             dict; keys ``latitude_deg`` / ``longitude_deg``
+                             and ``received_at``.
+    - ``registry_row``     - a row from the registry's ``nodes`` table;
+                             keys ``location_lat`` / ``location_lon`` and
+                             ``last_seen_at``.  This is the persistent
+                             cache that survives server restarts.
+
+    Returns ``(lat, lon, source, ts)`` where ``source`` is one of
+    ``"event"`` / ``"heartbeat"`` / ``"registry"`` / ``"none"`` and ``ts``
+    is the wall-clock timestamp of the winning message (or None if no
+    candidate had a position).
+    """
+    candidates: list[tuple[float, float | None, float | None, str]] = []
+
+    if event_row is not None:
+        ts = event_row.get("last_seen_at")
+        lat = event_row.get("node_lat")
+        lon = event_row.get("node_lon")
+        if ts is not None and lat is not None and lon is not None:
+            candidates.append((float(ts), float(lat), float(lon), "event"))
+
+    if heartbeat is not None:
+        ts = heartbeat.get("received_at")
+        lat = heartbeat.get("latitude_deg")
+        lon = heartbeat.get("longitude_deg")
+        if ts is not None and lat is not None and lon is not None:
+            candidates.append((float(ts), float(lat), float(lon), "heartbeat"))
+
+    if registry_row is not None:
+        ts = registry_row.get("last_seen_at")
+        lat = registry_row.get("location_lat")
+        lon = registry_row.get("location_lon")
+        if ts is not None and lat is not None and lon is not None:
+            candidates.append((float(ts), float(lat), float(lon), "registry"))
+
+    if not candidates:
+        return (None, None, "none", None)
+
+    # Newest wins.  Stable sort: ties broken by source order above
+    # (event > heartbeat > registry), but in practice ties only happen
+    # when two paths witnessed the same physical poll, in which case
+    # they all have the same lat/lon anyway.
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    ts, lat, lon, source = candidates[0]
+    return (lat, lon, source, ts)
+
 # ---------------------------------------------------------------------------
 # Page chrome: favicon (bullseye SVG) + title
 # ---------------------------------------------------------------------------
@@ -2778,21 +2850,56 @@ def build_fix_geojson(
             features, lop_fix, node_pos, hyperbola_points, feature_type="lop",
         )
 
-    # Node features - most recent position per node_id from events and heartbeats.
-    # Included here so the JS receives fresh node state on every loadFixes()
-    # call and on every SSE new_fix event, without requiring a page reload.
-    seen_nodes: dict[str, dict[str, Any]] = {}
+    # Node features.  For each known node we collect candidates from all
+    # three sources -- the most recent events row, the in-memory heartbeat
+    # snapshot, and the persisted registry row -- and pick the location
+    # from the most recent message regardless of source (see
+    # resolve_node_location() above).  This handles mobile / relocated
+    # nodes correctly: a stale events row from the previous physical
+    # location no longer permanently overrides a fresh heartbeat from the
+    # new location.
+
+    # Index events by node_id, keeping only the most recent.
+    latest_event: dict[str, dict[str, Any]] = {}
     for ev in recent_events:
         nid = ev["node_id"]
-        if nid not in seen_nodes or ev["received_at"] > seen_nodes[nid]["received_at"]:
-            seen_nodes[nid] = ev
+        if nid not in latest_event or ev["received_at"] > latest_event[nid]["received_at"]:
+            latest_event[nid] = ev
 
     hb_map = heartbeats or {}
-    for nid, ev in seen_nodes.items():
-        lat, lon = ev["node_lat"], ev["node_lon"]
-        age_s = now - ev["received_at"]
+    registry_by_id: dict[str, dict[str, Any]] = {
+        n["node_id"]: n for n in (registered_nodes or [])
+    }
+
+    # Union of all node_ids we know about across the three sources.
+    all_node_ids: set[str] = set(latest_event.keys()) | set(hb_map.keys()) | set(registry_by_id.keys())
+
+    for nid in sorted(all_node_ids):
+        ev_row = latest_event.get(nid)
+        # The events row uses received_at; resolve_node_location expects
+        # last_seen_at.  Adapt by aliasing.
+        ev_for_helper = None
+        if ev_row is not None:
+            ev_for_helper = {
+                "node_lat": ev_row.get("node_lat"),
+                "node_lon": ev_row.get("node_lon"),
+                "last_seen_at": ev_row.get("received_at"),
+            }
+        lat, lon, source, ts = resolve_node_location(
+            event_row=ev_for_helper,
+            heartbeat=hb_map.get(nid),
+            registry_row=registry_by_id.get(nid),
+        )
+        if lat is None or lon is None:
+            continue  # node has no known position from any source
+
+        age_s = (now - ts) if ts is not None else None
+        # heartbeat_age_s remains a separate field for the marker-colour
+        # logic in the JS (online/offline based on heartbeat freshness,
+        # independent of which source the displayed location came from).
         hb = hb_map.get(nid)
-        hb_age = now - hb["received_at"] if hb else None
+        hb_age = (now - hb["received_at"]) if hb else None
+
         features.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [lon, lat]},
@@ -2802,76 +2909,12 @@ def build_fix_geojson(
                 "latitude_deg": lat,
                 "longitude_deg": lon,
                 "age_s": age_s,
-                "received_at": ev["received_at"],
+                "received_at": ts,
                 "heartbeat_age_s": hb_age,
-                "location_source": "event",
+                "location_source": source,
                 "tooltip": nid,
             },
         })
-
-    # Track which node_ids we've already emitted a feature for, so the
-    # registry-fallback step can skip them.
-    emitted_node_ids: set[str] = set(seen_nodes.keys())
-
-    # Nodes known only from heartbeats (no events yet)
-    for nid, hb in hb_map.items():
-        if nid in emitted_node_ids:
-            continue
-        lat = hb.get("latitude_deg")
-        lon = hb.get("longitude_deg")
-        if lat is None or lon is None:
-            continue
-        hb_age = now - hb["received_at"]
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lon, lat]},
-            "properties": {
-                "feature_type": "node",
-                "node_id": nid,
-                "latitude_deg": lat,
-                "longitude_deg": lon,
-                "age_s": hb_age,
-                "received_at": hb["received_at"],
-                "heartbeat_age_s": hb_age,
-                "location_source": "heartbeat",
-                "tooltip": nid,
-            },
-        })
-        emitted_node_ids.add(nid)
-
-    # Registry-fallback: nodes registered with a known location_lat/lon
-    # but neither in recent_events nor in the in-memory heartbeats dict.
-    # Survives server restarts -- the long-poll handler persists each
-    # heartbeat's location to the nodes table on every poll.
-    for n in (registered_nodes or []):
-        nid = n["node_id"]
-        if nid in emitted_node_ids:
-            continue
-        lat = n.get("location_lat")
-        lon = n.get("location_lon")
-        if lat is None or lon is None:
-            continue
-        # Use the row's last_seen_at (also persistent across restarts)
-        # to compute heartbeat_age_s so the JS can colour the marker by
-        # how stale the persisted state is.
-        last_seen = n.get("last_seen_at")
-        hb_age = (now - last_seen) if last_seen is not None else None
-        features.append({
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [lon, lat]},
-            "properties": {
-                "feature_type": "node",
-                "node_id": nid,
-                "latitude_deg": lat,
-                "longitude_deg": lon,
-                "age_s": hb_age,
-                "received_at": last_seen,
-                "heartbeat_age_s": hb_age,
-                "location_source": "registry",
-                "tooltip": nid,
-            },
-        })
-        emitted_node_ids.add(nid)
 
     fix_count = sum(
         1 for f in features if f["properties"].get("feature_type") == "fix"
