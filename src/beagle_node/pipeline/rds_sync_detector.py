@@ -111,6 +111,9 @@ class RDSSyncDetector:
 
         self._pilot_buf: list[np.ndarray] = []
         self._pilot_buf_n: int = 0
+        # Absolute sample index of the first unconsumed sample in _pilot_buf.
+        # Updated when audio is appended and when windows are drained.
+        self._pilot_buf_start_sample: int = 0
 
         # -- Pilot-derived RDS bit boundary timing -----------------------------
         # The RDS subcarrier at 57 kHz is phase-locked to the 19 kHz pilot
@@ -124,8 +127,6 @@ class RDSSyncDetector:
         # required seconds to converge and was sensitive to Costas loop
         # phase errors.  The pilot-derived approach converges in one
         # 10 ms window and has ~1 µs precision.
-        self._rds_phase_per_sample = 2.0 * math.pi * RDS_BIT_RATE / self._rate
-        self._last_pilot_window_start: int | None = None
         self._last_pilot_window_end: int | None = None
 
         # Gap detection
@@ -184,73 +185,70 @@ class RDSSyncDetector:
                 # Long gap (> 1 second): reset pilot state
                 self._pilot_buf.clear()
                 self._pilot_buf_n = 0
+                self._pilot_buf_start_sample = start_sample
                 self._pilot_bpf_zi[:] = 0.0
                 self._pilot_unwrapped_phase = 0.0
                 self._pilot_last_corr_angle = None
                 self._pilot_correction = 1.0
                 self._pilot_corr_peak = 0.0
                 self._calibrator.reset()
-                self._last_pilot_window_start = None
                 self._last_pilot_window_end = None
             elif gap > self._pilot_period:
                 # Short gap (freq_hop): reset filters but keep pilot phase
                 self._pilot_buf.clear()
                 self._pilot_buf_n = 0
+                self._pilot_buf_start_sample = start_sample
                 self._pilot_bpf_zi[:] = 0.0
         self._next_start_sample = start_sample + n
 
         # -- Pilot phase extraction ------------------------------------------
-        # Track which pilot windows fall within this audio buffer so we can
-        # emit SyncEvents at the correct sample positions.
-        self._pilot_buf.append(audio)
-        self._pilot_buf_n += len(audio)
+        # If this is the very first audio, set the buffer origin.
+        if self._pilot_buf_n == 0 and len(self._pilot_buf) == 0:
+            self._pilot_buf_start_sample = start_sample
 
-        # Record the sample range covered by pilot windows processed in this
-        # call.  We need this to compute bit boundary positions.
-        window_start_sample = start_sample
+        self._pilot_buf.append(audio)
+        self._pilot_buf_n += n
+
         events: list[SyncEvent] = []
 
         while self._pilot_buf_n >= self._pilot_period:
+            # The window covers samples [ws, ws + pilot_period) in absolute
+            # sample coordinates, where ws is the start of the unconsumed
+            # portion of the pilot buffer.
+            ws = self._pilot_buf_start_sample
+
             window = self._drain_pilot_window()
             self._update_pilot(window)
 
-            # After _update_pilot, _pilot_unwrapped_phase reflects the
-            # cumulative pilot phase through the end of this window.
-            # The window covered samples [window_start_sample, window_start_sample + pilot_period).
-            ws = window_start_sample
-            we = ws + self._pilot_period
+            # Advance the buffer origin past the consumed window.
+            self._pilot_buf_start_sample = ws + self._pilot_period
 
-            # Skip the first window (need two consecutive for phase difference).
+            # Skip the first window (need two consecutive for phase diff).
             if self._last_pilot_window_end is not None:
-                # The pilot phase at sample `ws` is _pilot_unwrapped_phase
-                # minus the advance that occurred during this window.
-                phase_at_end = self._pilot_unwrapped_phase
-                phase_at_start = phase_at_end - self._pilot_sync_advance
+                # _pilot_unwrapped_phase is the cumulative pilot phase at
+                # the END of this window.  phase_at_start is at sample ws.
+                phase_at_start = self._pilot_unwrapped_phase - self._pilot_sync_advance
 
-                # RDS bit boundaries occur when pilot_phase mod (2*pi*16) == 0
-                # (or any constant — the offset cancels across nodes).
-                # Find all bit boundaries within [ws, we).
-                #
-                # phase_at_start corresponds to sample ws.
-                # phase advances linearly at 2*pi*19000 / rate rad per sample.
+                # RDS bit boundaries occur when pilot_phase mod (2*pi*16) crosses
+                # zero.  Find all such crossings within [ws, ws + pilot_period).
                 phase_per_sample = 2.0 * math.pi * PILOT_FREQ_HZ / self._rate
                 rds_period_rad = 2.0 * math.pi * 16.0  # pilot radians per RDS bit
 
                 # Phase offset within the current RDS bit at window start
                 rds_phase_start = phase_at_start % rds_period_rad
 
-                # Samples until the next bit boundary from window start
-                if rds_phase_start > 0:
+                # Samples from ws to the next bit boundary
+                if rds_phase_start > 1e-9:
                     rad_to_next = rds_period_rad - rds_phase_start
                 else:
                     rad_to_next = 0.0
                 samples_to_next = rad_to_next / phase_per_sample
 
-                # Enumerate all bit boundaries in [ws, we)
+                # Enumerate all bit boundaries in [ws, ws + pilot_period)
                 samples_per_bit = rds_period_rad / phase_per_sample
                 pos = samples_to_next
                 while pos < self._pilot_period:
-                    sample_idx = ws + pos
+                    sample_idx = float(ws) + pos
                     events.append(
                         SyncEvent(
                             sample_index=sample_idx,
@@ -262,9 +260,7 @@ class RDSSyncDetector:
                     )
                     pos += samples_per_bit
 
-            self._last_pilot_window_start = ws
-            self._last_pilot_window_end = we
-            window_start_sample = we
+            self._last_pilot_window_end = ws + self._pilot_period
 
         return events
 
@@ -323,12 +319,12 @@ class RDSSyncDetector:
         """Reset all state."""
         self._pilot_buf.clear()
         self._pilot_buf_n = 0
+        self._pilot_buf_start_sample = 0
         self._pilot_bpf_zi[:] = 0.0
         self._pilot_unwrapped_phase = 0.0
         self._pilot_last_corr_angle = None
         self._pilot_correction = 1.0
         self._pilot_corr_peak = 0.0
         self._calibrator.reset()
-        self._last_pilot_window_start = None
         self._last_pilot_window_end = None
         self._next_start_sample = None
