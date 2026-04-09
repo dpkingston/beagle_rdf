@@ -16,7 +16,33 @@ _VERSION_BASE = "0.2.0"
 
 
 def _git_sha() -> str:
-    """Return the short git SHA of the source tree, or empty string."""
+    """Return the short git SHA of the source tree, or empty string.
+
+    Reads .git/HEAD directly to avoid the "dubious ownership" error that
+    occurs when the service user (e.g. beagle) differs from the repo
+    owner (e.g. dpk).  Falls back to subprocess if the file isn't found.
+    """
+    # Walk up from this file to find the .git directory
+    d = Path(__file__).resolve().parent
+    for _ in range(10):
+        git_dir = d / ".git"
+        if git_dir.is_dir():
+            try:
+                head = (git_dir / "HEAD").read_text().strip()
+                if head.startswith("ref: "):
+                    ref_path = git_dir / head[5:]
+                    if ref_path.exists():
+                        return ref_path.read_text().strip()[:7]
+                elif len(head) >= 7:
+                    # Detached HEAD — raw sha
+                    return head[:7]
+            except OSError:
+                break
+        if d.parent == d:
+            break
+        d = d.parent
+
+    # Fallback: try git subprocess (works if same user owns the repo)
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
