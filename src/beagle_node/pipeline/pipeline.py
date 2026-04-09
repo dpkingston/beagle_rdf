@@ -31,6 +31,7 @@ and target-channel buffers to process_buffer(role='target').
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -43,6 +44,13 @@ from beagle_node.pipeline.pps_detector import PPSDetector
 from beagle_node.pipeline.rds_sync_detector import RDSSyncDetector
 
 logger = logging.getLogger(__name__)
+
+# Set BEAGLE_CAPTURE_SYNC_AUDIO=/path/to/file.npz to capture the first N
+# seconds of demodulated FM audio (the input to RDSSyncDetector.process()).
+# The capture includes start_sample indices so it can be replayed exactly.
+# Use BEAGLE_CAPTURE_SYNC_SECONDS to set duration (default 30).
+_CAPTURE_PATH = os.environ.get("BEAGLE_CAPTURE_SYNC_AUDIO")
+_CAPTURE_SECONDS = float(os.environ.get("BEAGLE_CAPTURE_SYNC_SECONDS", "30"))
 
 
 @dataclass
@@ -175,6 +183,19 @@ class NodePipeline:
         self._latest_corr_peak: float = 0.0
         self._latest_sample_rate_correction: float = 1.0
 
+        # Sync audio capture for test fixture generation
+        self._capture_audio: list[tuple[int, 'np.ndarray']] | None = None
+        self._capture_samples_remaining: int = 0
+        if _CAPTURE_PATH:
+            sync_rate = c.sdr_rate_hz / c.sync_decimation
+            self._capture_audio = []
+            self._capture_samples_remaining = int(sync_rate * _CAPTURE_SECONDS)
+            logger.info(
+                "Sync audio capture enabled: %s (%.0f s, %d samples at %.0f Hz)",
+                _CAPTURE_PATH, _CAPTURE_SECONDS,
+                self._capture_samples_remaining, sync_rate,
+            )
+
     @property
     def carrier_detector(self) -> CarrierDetector:
         """Access the live carrier detector (for health reporting and threshold updates)."""
@@ -229,6 +250,16 @@ class NodePipeline:
         dec_start = raw_start // self._cfg.sync_decimation
 
         audio = self._sync_demod.process(iq_dec)
+
+        # Capture demodulated FM audio for test fixture generation
+        if self._capture_audio is not None and self._capture_samples_remaining > 0:
+            import numpy as np
+            n_take = min(len(audio), self._capture_samples_remaining)
+            self._capture_audio.append((dec_start, audio[:n_take].copy()))
+            self._capture_samples_remaining -= n_take
+            if self._capture_samples_remaining <= 0:
+                self._save_capture()
+
         sync_events = self._sync_det.process(audio, start_sample=dec_start, time_ns=time_ns)
         self.sync_event_count += len(sync_events)
         for se in sync_events:
@@ -346,6 +377,29 @@ class NodePipeline:
         import numpy as np
         iq = np.asarray(iq, dtype=np.complex64)
         return self._pps_det.process(iq, start_sample=start_sample)
+
+    # ------------------------------------------------------------------
+    # Sync audio capture
+    # ------------------------------------------------------------------
+
+    def _save_capture(self) -> None:
+        """Save captured sync audio to disk as a .npz file."""
+        import numpy as np
+        assert self._capture_audio is not None
+        starts = np.array([s for s, _ in self._capture_audio], dtype=np.int64)
+        audio = np.concatenate([a for _, a in self._capture_audio])
+        sync_rate = self._cfg.sdr_rate_hz / self._cfg.sync_decimation
+        np.savez_compressed(
+            _CAPTURE_PATH,
+            audio=audio,
+            start_samples=starts,
+            sample_rate_hz=sync_rate,
+        )
+        logger.info(
+            "Sync audio capture saved: %s (%d samples, %.1f s)",
+            _CAPTURE_PATH, len(audio), len(audio) / sync_rate,
+        )
+        self._capture_audio = None  # disable further capture
 
     # ------------------------------------------------------------------
     # Reset
