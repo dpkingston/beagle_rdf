@@ -1,5 +1,9 @@
 # Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
-"""Unit tests for pipeline/rds_sync_detector.py."""
+"""Unit tests for pipeline/rds_sync_detector.py.
+
+Tests the pilot-derived RDS bit boundary timing approach, which extracts
+the 19 kHz pilot phase and derives bit boundary positions directly from it.
+"""
 
 from __future__ import annotations
 
@@ -9,13 +13,13 @@ import pytest
 from beagle_node.pipeline.rds_sync_detector import (
     RDSSyncDetector,
     RDS_BIT_RATE,
-    RDS_SUBCARRIER_HZ,
-    _cubic_interp,
 )
 from beagle_node.pipeline.sync_detector import SyncEvent, PILOT_FREQ_HZ
 
 RATE = 256_000.0      # post-decimation sync channel rate
 SAMPLES_PER_BIT = RATE / RDS_BIT_RATE  # ~215.6
+
+_RDS_SUBCARRIER_HZ = 57_000.0  # 3 * pilot, used only for synth audio
 
 
 def _synth_fm_audio(
@@ -54,35 +58,10 @@ def _synth_fm_audio(
         bit_positions.append(start)
 
     # DSB-SC on 57 kHz
-    rds = rds_amplitude * bpsk * np.sin(2.0 * np.pi * RDS_SUBCARRIER_HZ * t)
+    rds = rds_amplitude * bpsk * np.sin(2.0 * np.pi * _RDS_SUBCARRIER_HZ * t)
 
     audio = (pilot + rds).astype(np.float32)
     return audio, np.array(bit_positions)
-
-
-# ---------------------------------------------------------------------------
-# Cubic interpolation
-# ---------------------------------------------------------------------------
-
-class TestCubicInterp:
-
-    def test_at_integer_index(self):
-        """mu=0 should return the sample at idx."""
-        buf = np.array([1, 2, 3, 4, 5], dtype=np.complex64)
-        assert _cubic_interp(buf, 2, 0.0) == pytest.approx(3.0, abs=1e-6)
-
-    def test_midpoint(self):
-        """mu=0.5 on a linear ramp should give the midpoint."""
-        buf = np.array([0, 1, 2, 3, 4], dtype=np.complex64)
-        val = _cubic_interp(buf, 2, 0.5)
-        assert val == pytest.approx(2.5, abs=0.1)
-
-    def test_boundary_fallback(self):
-        """At boundaries, should not crash (uses linear fallback)."""
-        buf = np.array([1, 2, 3], dtype=np.complex64)
-        # idx=0 means idx-1 < 0, falls back to linear
-        val = _cubic_interp(buf, 0, 0.5)
-        assert val == pytest.approx(1.5, abs=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +71,7 @@ class TestCubicInterp:
 class TestRDSSyncDetectorBasic:
 
     def _make_detector(self, **kwargs) -> RDSSyncDetector:
-        defaults = dict(sample_rate_hz=RATE, warmup_symbols=50)
+        defaults = dict(sample_rate_hz=RATE)
         defaults.update(kwargs)
         return RDSSyncDetector(**defaults)
 
@@ -106,17 +85,18 @@ class TestRDSSyncDetectorBasic:
 
     def test_event_rate_approximately_correct(self):
         """Should produce events at approximately the RDS bit rate."""
-        det = self._make_detector(warmup_symbols=50)
+        det = self._make_detector()
         duration_s = 1.0
         audio, _ = _synth_fm_audio(int(RATE * duration_s))
         events = det.process(audio, start_sample=0)
-        # Expected: ~1187.5 - 50 (warmup) = ~1137 events in 1 second
+        # Expected: ~1187.5 events per second, minus ~12 for the first
+        # pilot window (10 ms = ~12 bits where no events are emitted).
         assert len(events) > 1000, f"Only {len(events)} events in 1s"
         assert len(events) < 1300, f"Too many events: {len(events)}"
 
     def test_event_spacing(self):
         """Consecutive events should be ~215.6 samples apart (at 256 kHz)."""
-        det = self._make_detector(warmup_symbols=50)
+        det = self._make_detector()
         audio, _ = _synth_fm_audio(int(RATE * 0.5))
         events = det.process(audio, start_sample=0)
         assert len(events) > 10
@@ -144,12 +124,11 @@ class TestRDSSyncDetectorBasic:
                 f"[{start}, {start + n})"
             )
 
-    def test_no_events_during_warmup(self):
-        """First warmup_symbols symbols should not produce events."""
-        warmup = 100
-        det = self._make_detector(warmup_symbols=warmup)
-        # Feed just enough audio for ~50 symbols (less than warmup)
-        n_samples = int(50 * SAMPLES_PER_BIT)
+    def test_no_events_in_first_pilot_window(self):
+        """No events until the second pilot window (need two for phase diff)."""
+        det = self._make_detector(pilot_period_ms=10.0)
+        # Feed just 8 ms of audio — less than one pilot window
+        n_samples = int(RATE * 0.008)
         audio, _ = _synth_fm_audio(n_samples)
         events = det.process(audio, start_sample=0)
         assert len(events) == 0
@@ -167,7 +146,7 @@ class TestRDSSyncDetectorBasic:
 class TestRDSSyncDetectorQuality:
 
     def _make_detector(self, **kwargs) -> RDSSyncDetector:
-        defaults = dict(sample_rate_hz=RATE, warmup_symbols=50)
+        defaults = dict(sample_rate_hz=RATE)
         defaults.update(kwargs)
         return RDSSyncDetector(**defaults)
 
@@ -202,14 +181,14 @@ class TestRDSSyncDetectorQuality:
 class TestRDSSyncDetectorStreaming:
 
     def _make_detector(self, **kwargs) -> RDSSyncDetector:
-        defaults = dict(sample_rate_hz=RATE, warmup_symbols=50)
+        defaults = dict(sample_rate_hz=RATE)
         defaults.update(kwargs)
         return RDSSyncDetector(**defaults)
 
     def test_chunked_vs_single_buffer(self):
         """
         Feeding audio in chunks should produce events at the same positions
-        as feeding it in one large buffer (after warmup).
+        as feeding it in one large buffer.
         """
         audio, _ = _synth_fm_audio(int(RATE * 0.5))
 
@@ -228,7 +207,6 @@ class TestRDSSyncDetectorStreaming:
             )
 
         # Both should produce events at similar positions
-        # Allow some tolerance due to M&M path differences at chunk boundaries
         assert len(events_single) > 0
         assert len(events_chunked) > 0
         # The count should be within 10% of each other
@@ -250,7 +228,7 @@ class TestRDSSyncDetectorStreaming:
             events.extend(det.process(chunk, start_sample=i))
 
         # Should still get events at ~RDS bit rate
-        assert len(events) > 400  # 500ms * 1187.5 - warmup
+        assert len(events) > 400  # 500ms * 1187.5 - first-window warmup
 
     def test_contiguous_buffers_no_gap(self):
         """Back-to-back buffers with correct start_sample should not trigger gap reset."""
@@ -272,31 +250,28 @@ class TestRDSSyncDetectorStreaming:
 class TestRDSSyncDetectorGap:
 
     def _make_detector(self, **kwargs) -> RDSSyncDetector:
-        defaults = dict(sample_rate_hz=RATE, warmup_symbols=50)
+        defaults = dict(sample_rate_hz=RATE)
         defaults.update(kwargs)
         return RDSSyncDetector(**defaults)
 
-    def test_gap_resets_rds_state(self):
+    def test_gap_resets_pilot_state(self):
         """
-        A large gap in start_sample should reset the RDS state,
-        causing a new warmup period.
+        A large gap in start_sample should reset the pilot state,
+        causing a brief warmup period (one pilot window).
         """
-        det = self._make_detector(warmup_symbols=100)
+        det = self._make_detector()
         n = int(RATE * 0.3)
         audio1, _ = _synth_fm_audio(n)
         audio2, _ = _synth_fm_audio(n, seed=99)
 
-        # First block: should get events after warmup
+        # First block: should get events after first pilot window
         ev1 = det.process(audio1, start_sample=0)
         assert len(ev1) > 0
 
-        # Second block with a huge gap: triggers reset, warmup restarts
+        # Second block with a huge gap: triggers reset
         gap_start = n + int(RATE * 1.0)  # 1 second gap
         ev2 = det.process(audio2, start_sample=gap_start)
 
-        # The 300ms of audio2 has ~356 symbols.
-        # With warmup=100, we get ~256 events max.
-        # But the first ~100 are suppressed by warmup.
         # Key assertion: gap was detected and didn't crash.
         assert isinstance(ev2, list)
 
@@ -308,7 +283,7 @@ class TestRDSSyncDetectorGap:
 class TestRDSSyncDetectorReset:
 
     def test_reset_clears_state(self):
-        det = RDSSyncDetector(sample_rate_hz=RATE, warmup_symbols=50)
+        det = RDSSyncDetector(sample_rate_hz=RATE)
         audio, _ = _synth_fm_audio(int(RATE * 0.3))
         det.process(audio, start_sample=0)
 
@@ -318,18 +293,18 @@ class TestRDSSyncDetectorReset:
         events = det.process(audio, start_sample=0)
         assert isinstance(events, list)
 
-    def test_reset_restarts_warmup(self):
-        """After reset, warmup counter should restart."""
-        det = RDSSyncDetector(sample_rate_hz=RATE, warmup_symbols=200)
+    def test_reset_restarts_pilot(self):
+        """After reset, the first pilot window emits no events."""
+        det = RDSSyncDetector(sample_rate_hz=RATE)
         audio, _ = _synth_fm_audio(int(RATE * 0.5))
 
-        # First run: gets past warmup
+        # First run: gets events
         ev1 = det.process(audio, start_sample=0)
         assert len(ev1) > 0
 
         det.reset()
 
-        # Short buffer after reset: should be in warmup, no events
-        short = audio[: int(100 * SAMPLES_PER_BIT)]
+        # Short buffer after reset: less than one pilot window, no events
+        short = audio[: int(RATE * 0.008)]
         ev2 = det.process(short, start_sample=0)
         assert len(ev2) == 0
