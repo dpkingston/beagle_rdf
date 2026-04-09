@@ -4,6 +4,7 @@
 
 **Outstanding**
 - [Remote node restart trigger](#remote-node-restart-trigger)
+- [Report node code version (git sha) in heartbeat / health](#report-node-code-version-git-sha-in-heartbeat--health)
 - [Onset xcorr: investigate alternative detection methods](#onset-xcorr-investigate-alternative-detection-methods)
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
 - [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
@@ -68,6 +69,33 @@ The node's config poll thread checks this flag; when set, it logs a message
 and calls `sys.exit(75)`. The server UI gets a "Restart" button per node
 (with armed confirmation). The flag is cleared after one delivery so the
 node doesn't restart in a loop.
+
+---
+
+### Report node code version (git sha) in heartbeat / health
+
+There is currently no way to tell which code revision a remote node is
+running.  When debugging cross-node behavior we end up suspecting "maybe
+node X just hasn't been restarted on the latest code" with no way to
+confirm or refute it from the server.
+
+**Approach:** at node startup, capture the git short sha (or tag, or
+build version) of the running source tree and include it in:
+- the `/health` JSON snapshot (`node_software_version` already exists
+  but is hardcoded to `"0.1.0"` in main.py)
+- the long-poll heartbeat body (so the server records it per-node)
+- the GUI node details dropdown so the operator can see it at a glance
+
+The git sha should be captured in a way that survives `pip install`
+into a venv (e.g. via `git rev-parse --short HEAD` baked into the
+package at install time, or via `importlib.metadata`).  Fall back to
+`"unknown"` if the node was installed without git history.
+
+**Motivation:** observed during the Magnolia repeater sync_delta
+investigation 2026-04-08: kb7ryy was contributing significantly more
+noise than the other two RSPduo nodes, and one plausible explanation
+was that kb7ryy hadn't been restarted on the latest code.  We had no
+way to confirm or refute this from the server.
 
 ---
 

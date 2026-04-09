@@ -50,7 +50,9 @@ and a warning is logged.
 
 from __future__ import annotations
 
+import json as _json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Union
 
@@ -58,6 +60,8 @@ from beagle_node.pipeline.carrier_detect import CarrierOnset, CarrierOffset
 from beagle_node.pipeline.sync_detector import SyncEvent
 
 logger = logging.getLogger(__name__)
+
+_TIMING_DIAG = os.environ.get("BEAGLE_TIMING_DIAG") == "1"
 
 # Either edge of a carrier transition can produce a measurement.
 _CarrierEvent = Union[CarrierOnset, CarrierOffset]
@@ -301,6 +305,27 @@ class DeltaComputer:
         sync_delta_ns = int(round(delta_samples * 1_000_000_000.0 / corrected_rate))
 
         noise_floor = getattr(event, "noise_floor_db", -100.0)
+
+        if _TIMING_DIAG:
+            # Log in sync-decimated sample space (256 kHz).
+            # event.sample_index is int (carrier side, mapped to sync space).
+            # best.sample_index is float (M&M sub-sample in sync space).
+            logger.info(
+                "TIMING_DIAG %s",
+                _json.dumps({
+                    "stage": "delta",
+                    "event_type": event_type,
+                    "target_sample_sync": event.sample_index,
+                    "sync_sample_float": round(best.sample_index, 3),
+                    "delta_samples": round(delta_samples, 3),
+                    "corrected_rate_hz": round(corrected_rate, 3),
+                    "sample_rate_correction": round(best.sample_rate_correction, 8),
+                    "sync_delta_ns": sync_delta_ns,
+                    "corr_peak": round(best.corr_peak, 4),
+                    "n_sync_candidates": len(candidates),
+                }),
+            )
+
         return TDOAMeasurement(
             sync_delta_ns=sync_delta_ns,
             target_sample=event.sample_index,
