@@ -39,13 +39,18 @@ from __future__ import annotations
 import argparse
 import base64
 import gc
+import hashlib
+import json as _json
 import logging
+import os
 import signal
 import sys
 import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_TIMING_DIAG = os.environ.get("BEAGLE_TIMING_DIAG") == "1"
 
 # ---------------------------------------------------------------------------
 # GC pause monitoring
@@ -201,11 +206,16 @@ def run(args: argparse.Namespace | None = None) -> int:
     # Heartbeat payload - updated in the SDR loop with live telemetry.
     # In bootstrap mode the config poll carries this data; in classic mode
     # it's sent via reporter.post_heartbeat().
+    from beagle_node.version import VERSION as _node_version
+    logger.info("Node software version: %s", _node_version)
+    health.set_config(software_version=_node_version)
+
     _heartbeat_payload: dict[str, object] = {
         "node_id": config.node_id,
         "latitude_deg": config.location.latitude_deg,
         "longitude_deg": config.location.longitude_deg,
         "sdr_mode": config.sdr_mode,
+        "software_version": _node_version,
     }
     if _remote_fetcher is not None:
         # Seed the fetcher so the first config poll carries location/mode
@@ -500,10 +510,31 @@ def run(args: argparse.Namespace | None = None) -> int:
             peak_power_db=m.onset_power_db,
             noise_floor_db=m.noise_floor_db,
             sync_corr_peak=m.corr_peak,
-            node_software_version="0.1.0",
+            node_software_version=_node_version,
             iq_snippet_b64=base64.b64encode(m.iq_snippet).decode(),
             channel_sample_rate_hz=_target_sample_rate_hz,
         )
+        if _TIMING_DIAG:
+            _snippet_hash = hashlib.sha256(m.iq_snippet).hexdigest()[:16]
+            logger.info(
+                "TIMING_DIAG %s",
+                _json.dumps({
+                    "stage": "event",
+                    "event_type": m.event_type,
+                    "target_sample_sync": m.target_sample,
+                    "sync_sample_float": round(m.sync_sample, 3),
+                    "raw_sync_delta_ns": m.sync_delta_ns,
+                    "pipeline_offset_ns": _pipeline_offset_ns,
+                    "corrected_sync_delta_ns": corrected_delta,
+                    "onset_ns": onset_ns,
+                    "buf_wall_ns": buf_wall_ns,
+                    "buf_ref_sample": _buf_ref_sample,
+                    "snippet_len": len(m.iq_snippet),
+                    "snippet_hash": _snippet_hash,
+                    "sample_rate_correction": round(m.sample_rate_correction, 8),
+                    "corr_peak": round(m.corr_peak, 4),
+                }),
+            )
         reporter.submit(event)
         health.record_event()
         logger.info(

@@ -995,6 +995,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             "latitude_deg": body.get("latitude_deg"),
             "longitude_deg": body.get("longitude_deg"),
             "sdr_mode": body.get("sdr_mode"),
+            "software_version": body.get("software_version"),
             "noise_floor_db": body.get("noise_floor_db"),
             "onset_threshold_db": body.get("onset_threshold_db"),
             "offset_threshold_db": body.get("offset_threshold_db"),
@@ -1420,6 +1421,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 "latitude_deg": body_lat,
                 "longitude_deg": body_lon,
                 "sdr_mode": body.get("sdr_mode"),
+                "software_version": body.get("software_version"),
                 "noise_floor_db": body.get("noise_floor_db"),
                 "onset_threshold_db": body.get("onset_threshold_db"),
                 "offset_threshold_db": body.get("offset_threshold_db"),
@@ -1938,6 +1940,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             n["location_lon"] = lon
             n["location_source"] = src
             n["sdr_mode"] = ev["sdr_mode"] if ev else (hb.get("sdr_mode") if hb else None)
+            n["software_version"] = hb.get("software_version") if hb else None
             n["heartbeat_age_s"] = now - hb["received_at"] if hb else None
             n["noise_floor_db"] = hb.get("noise_floor_db") if hb else None
             n["onset_threshold_db"] = hb.get("onset_threshold_db") if hb else None

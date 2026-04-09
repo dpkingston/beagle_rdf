@@ -46,7 +46,9 @@ Both events carry the *sample index* in the continuous sample stream
 
 from __future__ import annotations
 
+import json as _json
 import logging
+import os
 from collections import deque
 from dataclasses import dataclass
 from typing import Literal
@@ -54,6 +56,10 @@ from typing import Literal
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Set BEAGLE_TIMING_DIAG=1 to enable per-event structured diagnostic logging.
+# See docs/dev/timing-diagnostics.md for the field reference and analysis scripts.
+_TIMING_DIAG = os.environ.get("BEAGLE_TIMING_DIAG") == "1"
 
 
 @dataclass(frozen=True)
@@ -413,17 +419,33 @@ class CarrierDetector:
                         self._pre_onset_count = 0
 
                 if self._pending_post_remaining <= 0 or opposite_fired:
-                    snippet = self._encode_combined(
-                        self._pending_pre_snap, self._pending_post_buf
-                    )
                     ev: CarrierOnset | CarrierOffset
                     if self._pending_event_type == "onset":
+                        _onset_bytes, _rise_idx = self._encode_combined(
+                            self._pending_pre_snap, self._pending_post_buf
+                        )
                         ev = CarrierOnset(
                             sample_index=self._pending_sample_index,
                             power_db=self._pending_power_db,
                             noise_floor_db=self._pending_noise_floor_db,
-                            iq_snippet=snippet,
+                            iq_snippet=_onset_bytes,
                         )
+                        if _TIMING_DIAG:
+                            _pre_start = self._pending_pre_snap_start
+                            logger.info(
+                                "TIMING_DIAG %s",
+                                _json.dumps({
+                                    "stage": "carrier",
+                                    "event_type": "onset",
+                                    "sample_index": ev.sample_index,
+                                    "pre_snap_start": _pre_start,
+                                    "rise_idx_in_buf": _rise_idx,
+                                    "snippet_anchor": _pre_start + _rise_idx,
+                                    "anchor_vs_sample_index": _pre_start + _rise_idx - ev.sample_index,
+                                    "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
+                                    "power_db": round(ev.power_db, 1),
+                                }),
+                            )
                     else:
                         _offset_bytes, _cut_idx = self._encode_offset_snippet(
                             self._pending_pre_snap, self._pending_post_buf
@@ -433,6 +455,20 @@ class CarrierDetector:
                             power_db=self._pending_power_db,
                             iq_snippet=_offset_bytes,
                         )
+                        if _TIMING_DIAG:
+                            _pre_start = self._pending_pre_snap_start
+                            logger.info(
+                                "TIMING_DIAG %s",
+                                _json.dumps({
+                                    "stage": "carrier",
+                                    "event_type": "offset",
+                                    "sample_index": ev.sample_index,
+                                    "pre_snap_start": _pre_start,
+                                    "cut_idx_in_buf": _cut_idx,
+                                    "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
+                                    "power_db": round(ev.power_db, 1),
+                                }),
+                            )
                     events.append(ev)
                     logger.debug(
                         "Deferred %s emitted at window %d (pre=%d post=%d snippet=%d bytes)",
@@ -637,17 +673,34 @@ class CarrierDetector:
         # This happens when an onset/offset fires near the end of the block and
         # there aren't enough remaining windows to collect the full post_windows.
         if self._pending_event_type is not None:
-            snippet = self._encode_combined(
-                self._pending_pre_snap, self._pending_post_buf
-            )
             ev: CarrierOnset | CarrierOffset
             if self._pending_event_type == "onset":
+                _onset_bytes, _rise_idx = self._encode_combined(
+                    self._pending_pre_snap, self._pending_post_buf
+                )
                 ev = CarrierOnset(
                     sample_index=self._pending_sample_index,
                     power_db=self._pending_power_db,
                     noise_floor_db=self._pending_noise_floor_db,
-                    iq_snippet=snippet,
+                    iq_snippet=_onset_bytes,
                 )
+                if _TIMING_DIAG:
+                    _pre_start = self._pending_pre_snap_start
+                    logger.info(
+                        "TIMING_DIAG %s",
+                        _json.dumps({
+                            "stage": "carrier",
+                            "event_type": "onset",
+                            "sample_index": ev.sample_index,
+                            "pre_snap_start": _pre_start,
+                            "rise_idx_in_buf": _rise_idx,
+                            "snippet_anchor": _pre_start + _rise_idx,
+                            "anchor_vs_sample_index": _pre_start + _rise_idx - ev.sample_index,
+                            "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
+                            "power_db": round(ev.power_db, 1),
+                            "partial_flush": True,
+                        }),
+                    )
             else:
                 _offset_bytes, _cut_idx = self._encode_offset_snippet(
                     self._pending_pre_snap, self._pending_post_buf
@@ -657,6 +710,21 @@ class CarrierDetector:
                     power_db=self._pending_power_db,
                     iq_snippet=_offset_bytes,
                 )
+                if _TIMING_DIAG:
+                    _pre_start = self._pending_pre_snap_start
+                    logger.info(
+                        "TIMING_DIAG %s",
+                        _json.dumps({
+                            "stage": "carrier",
+                            "event_type": "offset",
+                            "sample_index": ev.sample_index,
+                            "pre_snap_start": _pre_start,
+                            "cut_idx_in_buf": _cut_idx,
+                            "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
+                            "power_db": round(ev.power_db, 1),
+                            "partial_flush": True,
+                        }),
+                    )
             events.append(ev)
             logger.debug(
                 "Partial flush %s at end of block (had %d/%d post windows)",
@@ -716,7 +784,7 @@ class CarrierDetector:
 
     def _encode_combined(
         self, pre_snap: list[np.ndarray], post_buf: list[np.ndarray]
-    ) -> bytes:
+    ) -> tuple[bytes, int]:
         """
         Encode a transition-anchored onset snippet.
 
@@ -725,6 +793,15 @@ class CarrierDetector:
         it at 1/4 from the snippet start.  This mirrors _encode_offset_snippet
         (which places the PA shutoff at 3/4) and ensures the transition sits
         at a fixed position independent of min_hold_windows.
+
+        Returns
+        -------
+        (bytes, rise_idx)
+            bytes is the encoded snippet; rise_idx is the position of the
+            onset (peak positive power derivative) within the concatenated
+            pre+post buffer, in target-rate samples.  This mirrors
+            ``_encode_offset_snippet`` and lets the caller log diagnostics
+            anchored to the same point the snippet is trimmed around.
         """
         assert pre_snap or post_buf, "Both pre_snap and post_buf are empty - cannot happen"
         parts = list(pre_snap) + list(post_buf or [])
@@ -758,7 +835,7 @@ class CarrierDetector:
         int8_ri = np.empty(len(normed) * 2, dtype=np.int8)
         int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
         int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
-        return int8_ri.tobytes()
+        return int8_ri.tobytes(), rise_idx
 
     def _encode_offset_snippet(
         self,

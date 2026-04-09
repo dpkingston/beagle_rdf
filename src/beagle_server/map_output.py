@@ -1496,6 +1496,7 @@ function renderNodes(nodes) {
         if (grpTag) html += grpTag;
         html += '<br>Last: ' + _esc(age);
         if (n.last_ip) { html += ' &bull; ' + _esc(n.last_ip); }
+        if (n.software_version) { html += '<br><span style="color:#5a8abf">v' + _esc(n.software_version) + '</span>'; }
         html += '</div>';
         /* Config-file reload status badge -- only shown for nodes whose
          * config came from a file on disk and is currently in an error or

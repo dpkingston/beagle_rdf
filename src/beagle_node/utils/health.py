@@ -75,6 +75,7 @@ class HealthState:
         self.target_channels: list[dict[str, Any]] | None = None
         self.sdr_mode: str | None = None
         self.sample_rate_hz: float | None = None
+        self.software_version: str | None = None
         # Carrier detector state (updated from pipeline each health cycle)
         self.noise_floor_db: float | None = None
         self.onset_threshold_db: float | None = None
@@ -164,6 +165,8 @@ class HealthState:
             }
             if reasons:
                 result["degraded_reasons"] = reasons
+            if self.software_version is not None:
+                result["software_version"] = self.software_version
             if self.sdr_mode is not None:
                 result["sdr_mode"] = self.sdr_mode
             if self.sample_rate_hz is not None:

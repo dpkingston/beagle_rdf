@@ -512,6 +512,38 @@ def test_heartbeat_missing_node_id(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+def test_heartbeat_carries_software_version(client: TestClient) -> None:
+    """software_version in heartbeat body is stored and visible in /map/nodes."""
+    _seed_node(client, "hb-ver-node")
+    client.post("/api/v1/heartbeat", json={
+        "node_id": "hb-ver-node",
+        "latitude_deg": 47.65,
+        "longitude_deg": -122.35,
+        "sdr_mode": "rspduo",
+        "software_version": "0.2.0+deadbeef",
+    })
+    resp = client.get("/map/nodes")
+    nodes = resp.json()["nodes"]
+    matched = [n for n in nodes if n["node_id"] == "hb-ver-node"]
+    assert len(matched) == 1
+    assert matched[0]["software_version"] == "0.2.0+deadbeef"
+
+
+def test_heartbeat_without_version_shows_none(client: TestClient) -> None:
+    """Nodes that don't send software_version should show None (backward compat)."""
+    _seed_node(client, "hb-nover-node")
+    client.post("/api/v1/heartbeat", json={
+        "node_id": "hb-nover-node",
+        "latitude_deg": 47.65,
+        "longitude_deg": -122.35,
+    })
+    resp = client.get("/map/nodes")
+    nodes = resp.json()["nodes"]
+    matched = [n for n in nodes if n["node_id"] == "hb-nover-node"]
+    assert len(matched) == 1
+    assert matched[0]["software_version"] is None
+
+
 def test_heartbeat_no_auth_required() -> None:
     """Heartbeat should work even with auth_token configured."""
     config = _test_config()
@@ -964,6 +996,7 @@ def test_config_poll_post_carries_heartbeat(client: TestClient) -> None:
             "latitude_deg": 47.65,
             "longitude_deg": -122.35,
             "sdr_mode": "freq_hop",
+            "software_version": "0.2.0+abc1234",
             "noise_floor_db": -55.2,
             "onset_threshold_db": -30.0,
             "offset_threshold_db": -40.0,
@@ -982,6 +1015,7 @@ def test_config_poll_post_carries_heartbeat(client: TestClient) -> None:
     assert n["onset_threshold_db"] == pytest.approx(-30.0)
     assert n["offset_threshold_db"] == pytest.approx(-40.0)
     assert n["sdr_mode"] == "freq_hop"
+    assert n["software_version"] == "0.2.0+abc1234"
     assert n["heartbeat_age_s"] is not None
     assert n["heartbeat_age_s"] < 5.0
 
