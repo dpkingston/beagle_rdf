@@ -122,10 +122,11 @@ class TestPipelineE2E:
 
     def test_produces_at_least_one_measurement(self):
         """End-to-end pipeline with known inputs should produce measurements."""
-        # Carrier starts 100 ms in - after multiple sync events have accumulated
-        carrier_start = int(SDR_RATE * 0.100)
+        # Carrier starts 600 ms in — after M&M warmup (500 symbols ≈ 420 ms)
+        # has completed and multiple sync events have accumulated.
+        carrier_start = int(SDR_RATE * 0.600)
         measurements = self._run(
-            total_samples=int(SDR_RATE * 0.5),   # 0.5 seconds
+            total_samples=int(SDR_RATE * 1.0),   # 1.0 second
             carrier_start_raw=carrier_start,
         )
         assert len(measurements) >= 1, "Pipeline produced no measurements"
@@ -138,9 +139,9 @@ class TestPipelineE2E:
         should be very close.  Allow up to max_sync_age (~80 ms) to account
         for M&M warmup and filter settling.
         """
-        carrier_start = int(SDR_RATE * 0.100)   # 100 ms in
+        carrier_start = int(SDR_RATE * 0.600)
         measurements = self._run(
-            total_samples=int(SDR_RATE * 0.5),
+            total_samples=int(SDR_RATE * 1.0),
             carrier_start_raw=carrier_start,
         )
         assert len(measurements) >= 1
@@ -154,9 +155,9 @@ class TestPipelineE2E:
 
     def test_measurement_fields_populated(self):
         """All TDOAMeasurement fields should be set sensibly."""
-        carrier_start = int(SDR_RATE * 0.080)
+        carrier_start = int(SDR_RATE * 0.600)
         measurements = self._run(
-            total_samples=int(SDR_RATE * 0.4),
+            total_samples=int(SDR_RATE * 1.0),
             carrier_start_raw=carrier_start,
         )
         assert len(measurements) >= 1
@@ -173,8 +174,8 @@ class TestPipelineE2E:
         Splitting the same IQ data into different buffer sizes should produce
         similar sync_delta_ns (verifying state continuity across buffers).
         """
-        carrier_start = int(SDR_RATE * 0.080)
-        total = int(SDR_RATE * 0.4)
+        carrier_start = int(SDR_RATE * 0.600)
+        total = int(SDR_RATE * 1.0)
 
         m_large = self._run(total, carrier_start, buffer_size=65_536)
         m_small = self._run(total, carrier_start, buffer_size=16_384)
@@ -269,14 +270,14 @@ class TestFreqHopTiming:
 
     def test_freq_hop_produces_measurement(self):
         """Pipeline fed with freq_hop-style offsets should produce measurements."""
-        # carrier_block=4: delay carrier start until after RDS warmup (~50 symbols
-        # across the first few sync blocks).  n_blocks=16 gives 8 sync blocks.
-        measurements = self._run_freq_hop(n_blocks=16, carrier_block=4)
+        # carrier_block=28: delay carrier start until after RDS M&M warmup
+        # (500 symbols ≈ 26 sync blocks).  n_blocks=64 gives 32 sync blocks.
+        measurements = self._run_freq_hop(n_blocks=64, carrier_block=28)
         assert len(measurements) >= 1
 
     def test_freq_hop_sync_delta_non_negative(self):
         """Carrier onset follows sync events, so sync_delta_ns must be non-negative."""
-        measurements = self._run_freq_hop(n_blocks=16, carrier_block=4)
+        measurements = self._run_freq_hop(n_blocks=64, carrier_block=28)
         assert len(measurements) >= 1
         assert measurements[0].sync_delta_ns >= 0, (
             f"Negative sync_delta_ns: {measurements[0].sync_delta_ns}"
@@ -284,7 +285,7 @@ class TestFreqHopTiming:
 
     def test_freq_hop_sync_delta_reasonable(self):
         """sync_delta_ns must be within max_sync_age (~80 ms)."""
-        measurements = self._run_freq_hop(n_blocks=16, carrier_block=4)
+        measurements = self._run_freq_hop(n_blocks=64, carrier_block=28)
         assert len(measurements) >= 1
         m = measurements[0]
         assert m.sync_delta_ns <= 80_000_000, (
@@ -305,7 +306,7 @@ class TestFreqHopTiming:
         carrier_offset = 500  # samples into target buffer
 
         # freq_hop: target buffer starts after enough sync blocks for RDS warmup
-        m_hop = self._run_freq_hop(n_blocks=16, carrier_block=4,
+        m_hop = self._run_freq_hop(n_blocks=64, carrier_block=28,
                                    carrier_offset=carrier_offset)
 
         # non-offset: feed the SAME IQ buffers but with raw_start_sample=0

@@ -102,10 +102,10 @@ class RDSSyncDetector:
         rds_lpf_taps: int = 101,
         rds_lpf_cutoff_hz: float = 7500.0,
         rds_decimation: int = 10,
-        mm_gain: float = 0.01,
+        mm_gain: float = 0.1,
         costas_alpha: float = 8.0,
         costas_beta: float = 0.02,
-        warmup_symbols: int = 50,
+        warmup_symbols: int = 500,
     ) -> None:
         self._rate = float(sample_rate_hz)
 
@@ -380,10 +380,11 @@ class RDSSyncDetector:
             # Cubic interpolation at i_in + mu
             sample = _cubic_interp(buf, self._mm_i_in, self._mm_mu)
 
-            # Rail (hard decision on raw, pre-Costas symbol)
-            rail = complex(
-                int(np.real(sample) > 0), int(np.imag(sample) > 0)
-            )
+            # Rail (hard decision on raw, pre-Costas symbol).
+            # RDS is BPSK on the 57 kHz subcarrier — only the in-phase (real)
+            # channel carries data.  The Q channel is noise; including it in
+            # the rail decision feeds random transitions into the M&M TED.
+            rail = complex(1.0 if sample.real > 0 else -1.0, 0.0)
 
             # M&M timing error detector
             if self._mm_out[0] != 0j:
