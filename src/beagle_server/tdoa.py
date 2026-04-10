@@ -440,13 +440,19 @@ def compute_tdoa_s(
     coarse_tdoa_ns = raw_ns + correction_ns
 
     # --- xcorr: sub-sample refinement when IQ snippets are available ---
-    # Both snippets are derivative-peak anchored (transition at a fixed
-    # position), so xcorr measures the residual sub-sample positioning error
-    # -- NOT an absolute TDOA.  The coarse TDOA from sync_delta carries the
-    # propagation geometry; xcorr refines it to sub-sample precision.
     #
-    # Maximum acceptable refinement: a few samples.  Anything larger
-    # indicates a false xcorr peak or mis-paired snippets.
+    # The xcorr lag measures the time offset between the PA transition
+    # positions in the two nodes' snippets.  Both snippets are anchored
+    # to the detected transition (onset at 25%, offset at 75%), so xcorr
+    # should produce a small lag (~few µs) that refines the coarse
+    # sync_delta-based TDOA.
+    #
+    # If the xcorr lag is large (> max_refinement), it means the
+    # sync_delta_ns and the snippet anchor are misaligned — the coarse
+    # TDOA is unreliable for this pair.  Rather than falling back to
+    # the noisy sync_delta value (which can scatter fixes by 100+ km),
+    # we return None so the solver works with fewer pairs or skips the
+    # event entirely.
     _MAX_XCORR_REFINEMENT_NS = 50_000.0  # 50 usec ~ 3 samples at 62.5 kHz
 
     xcorr_refinement_ns = 0.0
@@ -468,14 +474,18 @@ def compute_tdoa_s(
                 xcorr_refinement_ns = xcorr_lag_ns
                 xcorr_used = True
             else:
-                logger.info(
-                    "xcorr refinement too large: %.1f ns > %.0f ns limit for %s<->%s (%s); "
-                    "using sync_delta only",
-                    xcorr_lag_ns, _MAX_XCORR_REFINEMENT_NS, node_a, node_b, event_type,
+                logger.warning(
+                    "xcorr refinement too large: %.1f ns > %.0f ns limit "
+                    "for %s<->%s (%s, SNR=%.2f); pair skipped "
+                    "(sync_delta/snippet anchor misalignment)",
+                    xcorr_lag_ns, _MAX_XCORR_REFINEMENT_NS,
+                    node_a, node_b, event_type, xcorr_snr,
                 )
+                return None
         else:
             logger.debug(
-                "xcorr SNR too low: %.2f < %.2f for %s<->%s (%s); using sync_delta only",
+                "xcorr SNR too low: %.2f < %.2f for %s<->%s (%s); "
+                "using sync_delta only",
                 xcorr_snr, min_xcorr_snr, node_a, node_b, event_type,
             )
 

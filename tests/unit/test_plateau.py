@@ -423,10 +423,13 @@ def test_compute_tdoa_sync_delta_known_lag():
     sync_delta subtraction with a known delay gives the correct TDOA.
     A has a larger sync_delta than B by prop_delay worth of time.
     Both nodes at the same location (no path correction).
+
+    Uses 2-sample delay (~31 usec) to stay within the xcorr refinement
+    gate (50 usec), simulating properly aligned sample_index and snippet.
     """
     fs = 64_000.0
-    prop_delay = 10
-    delta_ns = int(prop_delay / fs * 1e9)  # 10 samples at 64 kHz = 156250 ns
+    prop_delay = 2  # 2 samples at 64 kHz = ~31 usec
+    delta_ns = int(prop_delay / fs * 1e9)
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
     b64_a = _iq_to_b64(iq_a)
     b64_b = _iq_to_b64(iq_b)

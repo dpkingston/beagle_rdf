@@ -424,8 +424,16 @@ class CarrierDetector:
                         _onset_bytes, _rise_idx = self._encode_combined(
                             self._pending_pre_snap, self._pending_post_buf
                         )
+                        # sample_index = snippet anchor (argmax of power
+                        # derivative = steepest carrier rise), matching the
+                        # 25% position in the trimmed snippet.  This ensures
+                        # sync_delta_ns and the xcorr reference the same
+                        # physical time instant.
+                        _onset_sample_index = (
+                            self._pending_pre_snap_start + _rise_idx
+                        )
                         ev = CarrierOnset(
-                            sample_index=self._pending_sample_index,
+                            sample_index=_onset_sample_index,
                             power_db=self._pending_power_db,
                             noise_floor_db=self._pending_noise_floor_db,
                             iq_snippet=_onset_bytes,
@@ -440,8 +448,7 @@ class CarrierDetector:
                                     "sample_index": ev.sample_index,
                                     "pre_snap_start": _pre_start,
                                     "rise_idx_in_buf": _rise_idx,
-                                    "snippet_anchor": _pre_start + _rise_idx,
-                                    "anchor_vs_sample_index": _pre_start + _rise_idx - ev.sample_index,
+                                    "window_sample": self._pending_sample_index,
                                     "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
                                     "power_db": round(ev.power_db, 1),
                                 }),
@@ -518,6 +525,10 @@ class CarrierDetector:
                                 self._pending_power_db = power_db
                                 self._pending_noise_floor_db = self._noise_floor_db
                                 self._pending_pre_snap = list(self._iq_ring)
+                                self._pending_pre_snap_start = (
+                                    window_sample - self._window // 2
+                                    - (len(self._pending_pre_snap) - 1) * self._window
+                                )
                                 self._pending_post_buf = []
                                 self._pending_post_remaining = self._post_windows
                             else:
@@ -579,6 +590,10 @@ class CarrierDetector:
                                 self._pending_power_db = power_db
                                 self._pending_noise_floor_db = self._noise_floor_db
                                 self._pending_pre_snap = list(self._iq_ring)
+                                self._pending_pre_snap_start = (
+                                    window_sample - self._window // 2
+                                    - (len(self._pending_pre_snap) - 1) * self._window
+                                )
                                 self._pending_post_buf = []
                                 self._pending_post_remaining = self._post_windows
                             else:
@@ -678,8 +693,11 @@ class CarrierDetector:
                 _onset_bytes, _rise_idx = self._encode_combined(
                     self._pending_pre_snap, self._pending_post_buf
                 )
+                _onset_sample_index = (
+                    self._pending_pre_snap_start + _rise_idx
+                )
                 ev = CarrierOnset(
-                    sample_index=self._pending_sample_index,
+                    sample_index=_onset_sample_index,
                     power_db=self._pending_power_db,
                     noise_floor_db=self._pending_noise_floor_db,
                     iq_snippet=_onset_bytes,
@@ -694,8 +712,7 @@ class CarrierDetector:
                             "sample_index": ev.sample_index,
                             "pre_snap_start": _pre_start,
                             "rise_idx_in_buf": _rise_idx,
-                            "snippet_anchor": _pre_start + _rise_idx,
-                            "anchor_vs_sample_index": _pre_start + _rise_idx - ev.sample_index,
+                            "window_sample": self._pending_sample_index,
                             "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
                             "power_db": round(ev.power_db, 1),
                             "partial_flush": True,

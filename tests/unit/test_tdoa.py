@@ -304,9 +304,13 @@ def test_compute_tdoa_known_geometry():
     """
     sync_delta subtraction with known geometry gives correct TDOA.
     sync_tx equidistant from both nodes -> path correction ~ 0.
+
+    Uses a small prop_delay (2 samples = 31 usec) that stays within the
+    xcorr refinement gate (50 usec), simulating properly aligned
+    sample_index and snippet anchor.
     """
     fs = 64_000.0
-    prop_delay = 10
+    prop_delay = 2  # 2 samples at 64 kHz = ~31 usec -- within 50 usec gate
     delta_ns = int(prop_delay / fs * 1e9)
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
     ev_a = _make_event_with_snippet(47.7, -122.3, delta_ns, _iq_to_b64(iq_a), node_id="node-a",
@@ -470,12 +474,12 @@ def test_compute_tdoa_xcorr_falls_back_on_low_snr():
 
 def test_compute_tdoa_xcorr_geo_filter_rejects_implausible_lag():
     """
-    xcorr lag that exceeds the geometric plausibility limit falls back to sync_delta.
+    xcorr lag that exceeds the refinement gate (from mismatched snippets)
+    returns None so the solver skips the pair.
 
     A strong carrier edge on snippet A but flat noise on snippet B produces a
-    high-SNR xcorr peak at a large random lag (no true TDOA).  With a tight
-    max_xcorr_baseline_km (1 km -> max TDOA ~ 3.3 usec), the lag is rejected and
-    sync_delta is used instead.
+    high-SNR xcorr peak at a large random lag (no true TDOA).  The refinement
+    gate (50 usec) rejects it before the geo filter even fires.
     """
     rng = np.random.default_rng(42)
     fs = 64_000.0
@@ -494,13 +498,9 @@ def test_compute_tdoa_xcorr_geo_filter_rejects_implausible_lag():
                                      snippet_b64=_iq_to_b64(iq_b), sample_rate_hz=fs,
                                      node_id="node-b", event_type="offset")
 
-    # Tight baseline: 1 km -> max TDOA ~ 3.3 usec.  Any genuine xcorr lag from
-    # mismatched snippets will exceed this, so geo filter must reject it.
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3, max_xcorr_baseline_km=1.0)
-    assert tdoa is not None
-    # Must have fallen back to sync_delta (7000 ns - 0, nodes co-located)
-    assert tdoa == pytest.approx(7_000 / 1e9, abs=1e-6), (
-        "Expected sync_delta fallback; geo filter may not have fired"
+    assert tdoa is None, (
+        f"Expected None (bad xcorr rejected); got {tdoa}"
     )
 
 
@@ -527,12 +527,12 @@ def test_compute_tdoa_xcorr_refinement_within_gate():
 
 def test_compute_tdoa_xcorr_large_lag_rejected_as_refinement():
     """
-    xcorr lag exceeding the refinement gate (50 usec) is rejected.
-    The result falls back to sync_delta only.
+    xcorr lag exceeding the refinement gate (50 usec) indicates a
+    sync_delta/snippet anchor misalignment.  compute_tdoa_s returns
+    None so the solver skips this pair rather than using the unreliable
+    sync_delta-only fallback.
 
     10-sample prop delay at 64 kHz ~ 156 usec -- exceeds 50 usec gate.
-    With sync_delta = 0 for both nodes, the result should be ~0 (sync_delta),
-    NOT ~156 usec (the xcorr lag).
     """
     fs = 64_000.0
     prop_delay = 10  # ~ 156 usec -- exceeds refinement gate
@@ -542,11 +542,8 @@ def test_compute_tdoa_xcorr_large_lag_rejected_as_refinement():
     ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b")
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
-    assert tdoa is not None
-    # xcorr refinement rejected (156 usec > 50 usec gate), sync_delta = 0
-    assert abs(tdoa) < 10e-6, (
-        f"Expected ~0 (sync_delta only); got {tdoa*1e6:.1f} usec -- "
-        f"xcorr refinement gate may not have fired"
+    assert tdoa is None, (
+        f"Expected None (xcorr refinement too large); got {tdoa}"
     )
 
 
