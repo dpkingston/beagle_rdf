@@ -179,18 +179,19 @@ def test_context_manager():
 def test_paired_stream_yields_tuples():
     rx = _make_receiver(buffer_size=64)
     it = rx.paired_stream()
-    sync_buf, target_buf, buf_wall_ns = next(it)
+    sync_buf, target_buf, buf_wall_ns, discontinuity = next(it)
     assert isinstance(sync_buf, np.ndarray)
     assert isinstance(target_buf, np.ndarray)
     assert sync_buf.dtype == np.complex64
     assert target_buf.dtype == np.complex64
     assert isinstance(buf_wall_ns, int)
+    assert discontinuity is False
 
 
 def test_paired_stream_yields_correct_size():
     rx = _make_receiver(buffer_size=128)
     it = rx.paired_stream()
-    sync_buf, target_buf, _ = next(it)
+    sync_buf, target_buf, _, _disc = next(it)
     assert len(sync_buf) == 128
     assert len(target_buf) == 128
 
@@ -207,8 +208,8 @@ def test_paired_stream_yields_copies(inject_soapy_stub):
     """Buffers yielded must be copies so internal arrays can be reused."""
     rx = _make_receiver(buffer_size=64)
     it = rx.paired_stream()
-    a, b, _ = next(it)
-    c, d, _ = next(it)
+    a, b, _, _d1 = next(it)
+    c, d, _, _d2 = next(it)
     # Different objects each iteration
     assert a is not c
     assert b is not d
@@ -582,6 +583,63 @@ def test_paired_stream_retries_on_overflow_ret(inject_soapy_stub):
     assert rx.overflow_count == 1  # overflow counter incremented
 
 
+# ---------------------------------------------------------------------------
+# Discontinuity flag
+# ---------------------------------------------------------------------------
+
+def test_paired_stream_discontinuity_after_overflow(inject_soapy_stub):
+    """First buffer after an overflow has discontinuity=True."""
+    stub = inject_soapy_stub
+    call_count = [0]
+
+    def read_overflow_once(stream, buffers, num_samples, timeoutUs=1_000_000):
+        call_count[0] += 1
+        # readStream is called twice per iteration (sync then target).
+        # Trigger overflow on call 3 (sync read of 2nd iteration) so the
+        # first yielded pair is clean and the second has discontinuity.
+        if call_count[0] == 3:
+            return stub._StreamResult(-4)  # overflow
+        buffers[0][:num_samples] = np.zeros(num_samples, dtype=np.complex64)
+        return stub._StreamResult(num_samples)
+
+    rx = _make_receiver(buffer_size=64)
+    rx.open()
+    rx._dev.readStream.side_effect = read_overflow_once
+
+    it = rx.paired_stream()
+    _, _, _, d0 = next(it)  # calls 1+2: OK, no prior overflow
+    assert d0 is False
+    _, _, _, d1 = next(it)  # call 3: overflow (retry) -> calls 4+5: OK (disc flag)
+    assert d1 is True
+    _, _, _, d2 = next(it)  # calls 6+7: OK, flag cleared
+    assert d2 is False
+    assert rx.discontinuity_count == 1
+
+
+def test_paired_stream_discontinuity_count_accumulates(inject_soapy_stub):
+    """Multiple overflows increment discontinuity_count."""
+    stub = inject_soapy_stub
+    call_count = [0]
+
+    def read_overflow_twice(stream, buffers, num_samples, timeoutUs=1_000_000):
+        call_count[0] += 1
+        # Overflow on calls 3 and 9 (sync reads of iterations 2 and 5).
+        # Each pair uses 2 readStream calls, so the sequence is:
+        # 1,2=pair1  3=overflow  4,5=pair2  6,7=pair3  8,9=overflow  10,11=pair4
+        if call_count[0] in (3, 9):
+            return stub._StreamResult(-4)
+        buffers[0][:num_samples] = np.zeros(num_samples, dtype=np.complex64)
+        return stub._StreamResult(num_samples)
+
+    rx = _make_receiver(buffer_size=64)
+    rx.open()
+    rx._dev.readStream.side_effect = read_overflow_twice
+
+    it = rx.paired_stream()
+    for _ in range(4):
+        next(it)
+    assert rx.discontinuity_count == 2
+
 
 # ---------------------------------------------------------------------------
 # stream() shim
@@ -589,10 +647,11 @@ def test_paired_stream_retries_on_overflow_ret(inject_soapy_stub):
 
 def test_stream_yields_target_buffers():
     rx = _make_receiver(buffer_size=64)
-    buf = next(iter(rx.stream()))
+    buf, disc = next(iter(rx.stream()))
     assert isinstance(buf, np.ndarray)
     assert buf.dtype == np.complex64
     assert len(buf) == 64
+    assert disc is False
 
 
 # ---------------------------------------------------------------------------
@@ -822,7 +881,7 @@ class TestBacklogDrain:
         monkeypatch.setattr(_time_module, "monotonic_ns", lambda: next(values))
 
         rx = _make_receiver(buffer_size=self._BUF_SIZE)
-        s, t, w = next(rx.paired_stream())
+        s, t, w, _disc = next(rx.paired_stream())
         assert isinstance(w, int)
         assert rx.backlog_drain_count == 0
 
@@ -893,7 +952,7 @@ class TestBacklogDrain:
         # age = time.time_ns() - hw_time_ns = 5_000 < 64_000 -> not stale
         monkeypatch.setattr(_time_module, "time_ns", lambda: hw_time_ns + 5_000)
 
-        s, t, w = next(rx.paired_stream())
+        s, t, w, _disc = next(rx.paired_stream())
         assert w == hw_time_ns
         assert rx.backlog_drain_count == 0
 
@@ -920,7 +979,7 @@ class TestBacklogDrain:
         monkeypatch.setattr(_time_module, "time_ns", lambda: now_ns)
 
         # Buffer should be yielded despite being 60 s old - timestamps are correct.
-        sync_buf, target_buf, buf_wall_ns = next(rx.paired_stream())
+        sync_buf, target_buf, buf_wall_ns, _disc = next(rx.paired_stream())
         assert buf_wall_ns == old_time_ns
         assert rx.backlog_drain_count == 0
 
@@ -941,7 +1000,7 @@ class TestBacklogDrain:
         # age = 1_000 ns < 64_000 ns threshold -> not stale
         monkeypatch.setattr(_time_module, "time_ns", lambda: hw_time_ns + 1_000)
 
-        _, _, w = next(rx.paired_stream())
+        _, _, w, _disc = next(rx.paired_stream())
         assert w == hw_time_ns
 
     def test_has_time_future_sanity_check_fallback(self, monkeypatch, inject_soapy_stub,
@@ -965,7 +1024,7 @@ class TestBacklogDrain:
         monkeypatch.setattr(_time_module, "time_ns", lambda: now_ns)
 
         with caplog.at_level(logging.WARNING, logger="beagle_node.sdr.rspduo"):
-            _, _, w = next(rx.paired_stream())
+            _, _, w, _disc = next(rx.paired_stream())
 
         # First bad buffer: correction = now - future_ns -> corrected = future_ns + (now - future_ns) = now
         assert w == now_ns, "first bad buffer: corrected timestamp should equal time.time_ns()"
@@ -1034,8 +1093,8 @@ class TestBacklogDrain:
         monkeypatch.setattr(_time_module, "time_ns", lambda: now_ns)
 
         it = rx.paired_stream()
-        _, _, w1 = next(it)   # first bad buffer: corrected = now_ns
-        _, _, w2 = next(it)   # second bad buffer: corrected = now_ns + buf_dur_ns
+        _, _, w1, _d1 = next(it)   # first bad buffer: corrected = now_ns
+        _, _, w2, _d2 = next(it)   # second bad buffer: corrected = now_ns + buf_dur_ns
 
         assert w1 == now_ns, f"first corrected buf_wall_ns should be now_ns; got {w1}"
         # Second buffer uses TCXO increment: corrected = future_ns_2 + (now - future_ns_1)
@@ -1061,7 +1120,7 @@ class TestBacklogDrain:
         rx._dev.readStream.side_effect = read_slightly_future
         monkeypatch.setattr(_time_module, "time_ns", lambda: now_ns)
 
-        _, _, w = next(rx.paired_stream())
+        _, _, w, _disc = next(rx.paired_stream())
         assert w == slightly_future, "timestamp <=5 s in the future should be accepted"
 
     # ------ Post-reinit recovery (backlog storm suppression) ------
@@ -1292,7 +1351,7 @@ class TestBacklogDrain:
         monkeypatch.setattr(_time_module, "time_ns", lambda: now_ns)
 
         with caplog.at_level(logging.ERROR, logger="beagle_node.sdr.rspduo"):
-            _, _, w = next(rx.paired_stream())
+            _, _, w, _disc = next(rx.paired_stream())
 
         # Should fall back to system clock, not use the bad timestamp
         assert w == now_ns, (

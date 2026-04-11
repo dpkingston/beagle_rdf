@@ -32,7 +32,8 @@ def test_sdr_receiver_context_manager(sdr_config):
 
     rx = MockReceiver.synthetic(config=sdr_config, duration_s=0.1)
     with rx as r:
-        buf = next(r.stream())
+        buf, disc = next(r.stream())
     assert buf.dtype == np.complex64
     assert buf.ndim == 1
     assert len(buf) > 0
+    assert disc is False

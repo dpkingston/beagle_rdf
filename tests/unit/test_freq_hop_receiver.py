@@ -229,45 +229,52 @@ class TestRunLoop:
 class TestLabeledStreamConsumer:
     """Pre-populate the queue and verify labeled_stream output without hardware."""
 
+    @pytest.fixture(autouse=True)
+    def _freeze_time(self, monkeypatch):
+        """Freeze time.time_ns in the freq_hop module to prevent backlog drain
+        from discarding queue items that are only microseconds old."""
+        self._frozen_ns = time.time_ns()
+        monkeypatch.setattr("beagle_node.sdr.freq_hop.time.time_ns", lambda: self._frozen_ns)
+
     def _make_rx_with_queue(self, **kwargs) -> FreqHopReceiver:
-        # Use a large block so _drain_thresh_ns (~16 ms) is comfortably above
-        # Python test-execution overhead (IQ conversion, queue get/put, etc.).
-        # BLOCK=512 gives only ~125 usec, which the second queue item routinely exceeds.
-        kwargs.setdefault("samples_per_block", 65_536)
+        kwargs.setdefault("samples_per_block", BLOCK)
         kwargs.setdefault("settling_samples", SETTLE)
         rx = make_receiver(**kwargs)
         # Mark as open by setting a non-None _sdr sentinel so open() is skipped
         rx._sdr = object()
         return rx
 
+    def _fresh_item(self, role: str, n_samples: int = BLOCK) -> tuple:
+        """Queue item with wall_ns matching the frozen clock."""
+        return (role, _raw_block(n_samples), self._frozen_ns)
+
     def test_yields_correct_roles_from_queue(self):
         rx = self._make_rx_with_queue()
-        rx._queue.put(_queue_item("sync",   BLOCK))
-        rx._queue.put(_queue_item("target", BLOCK))
-        rx._queue.put(_queue_item("sync",   BLOCK))
+        rx._queue.put(self._fresh_item("sync"))
+        rx._queue.put(self._fresh_item("target"))
+        rx._queue.put(self._fresh_item("sync"))
 
         results = list(itertools.islice(rx.labeled_stream(), 3))
-        roles = [r for r, _, _w in results]
+        roles = [r for r, _, _w, _d in results]
         assert roles == ["sync", "target", "sync"]
 
     def test_yields_wall_ns(self):
         """labeled_stream yields the wall_ns from _run_loop as the third element."""
         rx = self._make_rx_with_queue()
-        wall = time.time_ns()
-        rx._queue.put(("sync", _raw_block(BLOCK), wall))
-        _, _buf, got_wall = next(rx.labeled_stream())
-        assert got_wall == wall
+        rx._queue.put(self._fresh_item("sync"))
+        _, _buf, got_wall, _disc = next(rx.labeled_stream())
+        assert got_wall == self._frozen_ns
 
     def test_output_length_after_settling(self):
         rx = self._make_rx_with_queue()
-        rx._queue.put(_queue_item("sync", BLOCK))
-        _, buf, _ = next(rx.labeled_stream())
+        rx._queue.put(self._fresh_item("sync"))
+        _, buf, _, _disc = next(rx.labeled_stream())
         assert len(buf) == BLOCK - SETTLE
 
     def test_output_dtype_complex64(self):
         rx = self._make_rx_with_queue()
-        rx._queue.put(_queue_item("sync", BLOCK))
-        _, buf, _ = next(rx.labeled_stream())
+        rx._queue.put(self._fresh_item("sync"))
+        _, buf, _, _disc = next(rx.labeled_stream())
         assert buf.dtype == np.complex64
 
     def test_settling_bytes_discarded(self):
@@ -275,16 +282,16 @@ class TestLabeledStreamConsumer:
         rx = self._make_rx_with_queue()
         settling_bytes = bytes([200, 200] * SETTLE)
         usable_bytes   = bytes([50, 50] * (BLOCK - SETTLE))
-        rx._queue.put(("sync", settling_bytes + usable_bytes, time.time_ns()))
-        _, buf, _ = next(rx.labeled_stream())
+        rx._queue.put(("sync", settling_bytes + usable_bytes, self._frozen_ns))
+        _, buf, _, _disc = next(rx.labeled_stream())
         expected = (50.0 - 127.5) / 128.0
         assert np.allclose(buf.real, expected, atol=0.01)
 
     def test_uint8_conversion(self):
         """uint8 127 -> ~0+0j, 255 -> ~+1+1j, 0 -> ~-1-1j."""
         rx = self._make_rx_with_queue()
-        rx._queue.put(_queue_item("sync", BLOCK))
-        _, buf, _ = next(rx.labeled_stream())
+        rx._queue.put(self._fresh_item("sync"))
+        _, buf, _, _disc = next(rx.labeled_stream())
         assert np.allclose(buf.real, (127.0 - 127.5) / 128.0, atol=0.01)
 
     def test_stall_exits_generator(self):
@@ -297,11 +304,11 @@ class TestLabeledStreamConsumer:
     def test_asymmetric_correct_usable_lengths(self):
         rx = make_asymmetric_receiver()
         rx._sdr = object()
-        rx._queue.put(_queue_item("sync",   SYNC_BLOCK))
-        rx._queue.put(_queue_item("target", TARGET_BLOCK))
+        rx._queue.put(("sync",   _raw_block(SYNC_BLOCK),  self._frozen_ns))
+        rx._queue.put(("target", _raw_block(TARGET_BLOCK), self._frozen_ns))
 
         results = list(itertools.islice(rx.labeled_stream(), 2))
-        (r0, b0, _), (r1, b1, _) = results
+        (r0, b0, _, _d0), (r1, b1, _, _d1) = results
         assert r0 == "sync"   and len(b0) == SYNC_BLOCK   - SETTLE
         assert r1 == "target" and len(b1) == TARGET_BLOCK - SETTLE
 
@@ -309,15 +316,18 @@ class TestLabeledStreamConsumer:
 class TestStreamWrapper:
     """stream() yields raw arrays without roles."""
 
-    def test_stream_yields_all_buffers(self):
+    def test_stream_yields_all_buffers(self, monkeypatch):
         rx = make_receiver()
         rx._sdr = object()
+        now = time.time_ns()
+        monkeypatch.setattr("beagle_node.sdr.freq_hop.time.time_ns", lambda: now)
         for _ in range(4):
-            rx._queue.put(_queue_item("sync", BLOCK))
-        bufs = list(itertools.islice(rx.stream(), 4))
-        assert len(bufs) == 4
-        for buf in bufs:
+            rx._queue.put(("sync", _raw_block(BLOCK), now))
+        results = list(itertools.islice(rx.stream(), 4))
+        assert len(results) == 4
+        for buf, disc in results:
             assert buf.dtype == np.complex64
+            assert disc is False
 
 
 # ===========================================================================
@@ -488,9 +498,9 @@ def test_integration_symmetric(mock_open):
     rx.close()
 
     assert len(results) == 4
-    roles = [r for r, _, _w in results]
+    roles = [r for r, _, _w, _d in results]
     assert roles == ["sync", "target", "sync", "target"]
-    for role, buf, wall_ns in results:
+    for role, buf, wall_ns, _disc in results:
         assert buf.dtype == np.complex64
         assert len(buf) == rx.usable_samples(role)
         assert isinstance(wall_ns, int)
@@ -528,9 +538,9 @@ def test_integration_asymmetric(mock_open):
     rx.close()
 
     assert len(results) == 4
-    roles = [r for r, _, _w in results]
+    roles = [r for r, _, _w, _d in results]
     assert roles == ["sync", "target", "sync", "target"]
-    for role, buf, wall_ns in results:
+    for role, buf, wall_ns, _disc in results:
         assert buf.dtype == np.complex64
         assert len(buf) == rx.usable_samples(role)
         assert isinstance(wall_ns, int)
@@ -584,7 +594,7 @@ class TestBacklogDrain:
         now = _NOW_NS
         monkeypatch.setattr("beagle_node.sdr.freq_hop.time.time_ns", lambda: now)
         rx._queue.put(("sync", _raw_block(BLOCK), now))  # age = 0
-        _, _buf, wall = next(rx.labeled_stream())
+        _, _buf, wall, _disc = next(rx.labeled_stream())
         assert wall == now
         assert rx.backlog_drain_count == 0
 
@@ -636,9 +646,30 @@ class TestBacklogDrain:
         monkeypatch.setattr("beagle_node.sdr.freq_hop.time.time_ns", lambda: now)
         expected_wall = now - 100  # slightly old but within threshold
         rx._queue.put(("sync", _raw_block(BLOCK), expected_wall))
-        _, _buf, got_wall = next(rx.labeled_stream())
+        _, _buf, got_wall, _disc = next(rx.labeled_stream())
         assert got_wall == expected_wall
 
     def test_backlog_drain_count_zero_initially(self):
         rx = make_receiver()
         assert rx.backlog_drain_count == 0
+
+    def test_discontinuity_after_drain(self, monkeypatch):
+        """First buffer after backlog drain has discontinuity=True."""
+        rx = self._make_rx()
+        thresh = self._drain_thresh_ns(rx)
+        stale_wall = _NOW_NS
+        now = _NOW_NS + thresh + 1
+        monkeypatch.setattr("beagle_node.sdr.freq_hop.time.time_ns", lambda: now)
+        rx._queue.put(("sync", _raw_block(BLOCK), stale_wall))  # stale -> drain
+        rx._queue.put(("sync", _raw_block(BLOCK), now))          # fresh
+        rx._queue.put(("sync", _raw_block(BLOCK), now))          # fresh
+        results = list(itertools.islice(rx.labeled_stream(), 2))
+        _, _, _, d0 = results[0]
+        _, _, _, d1 = results[1]
+        assert d0 is True   # first after drain
+        assert d1 is False  # subsequent
+        assert rx.discontinuity_count == 1
+
+    def test_discontinuity_count_zero_initially(self):
+        rx = make_receiver()
+        assert rx.discontinuity_count == 0

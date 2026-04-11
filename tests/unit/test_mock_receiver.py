@@ -11,14 +11,14 @@ from beagle_node.sdr.mock import MockReceiver
 
 def test_synthetic_yields_correct_total_samples(sdr_config):
     rx = MockReceiver.synthetic(config=sdr_config, duration_s=1.0)
-    total = sum(len(buf) for buf in rx.stream())
+    total = sum(len(buf) for buf, _disc in rx.stream())
     expected = int(1.0 * sdr_config.sample_rate_hz)
     assert total == expected
 
 
 def test_synthetic_dtype_is_complex64(sdr_config):
     rx = MockReceiver.synthetic(config=sdr_config, duration_s=0.01)
-    for buf in rx.stream():
+    for buf, _disc in rx.stream():
         assert buf.dtype == np.complex64
 
 
@@ -38,8 +38,8 @@ def test_synthetic_carrier_raises_power(sdr_config):
         snr_db=0,
         rng=np.random.default_rng(0),
     )
-    power_carrier = np.mean([np.mean(np.abs(b) ** 2) for b in rx_carrier.stream()])
-    power_noise = np.mean([np.mean(np.abs(b) ** 2) for b in rx_noise.stream()])
+    power_carrier = np.mean([np.mean(np.abs(b) ** 2) for b, _ in rx_carrier.stream()])
+    power_noise = np.mean([np.mean(np.abs(b) ** 2) for b, _ in rx_noise.stream()])
     assert power_carrier > power_noise * 2
 
 
@@ -55,7 +55,7 @@ def test_synthetic_pps_spike_visible(sdr_config):
         pilot_present=False,
         snr_db=0,
     )
-    all_samples = np.concatenate(list(rx.stream()))
+    all_samples = np.concatenate([buf for buf, _ in rx.stream()])
     magnitudes = np.abs(all_samples)
     # The maximum should be at a 1PPS spike location
     max_idx = int(np.argmax(magnitudes))
@@ -73,7 +73,7 @@ def test_from_file_roundtrip(tmp_path, sdr_config):
     np.save(path, original)
 
     rx = MockReceiver.from_file(path, sdr_config)
-    recovered = np.concatenate(list(rx.stream()))
+    recovered = np.concatenate([buf for buf, _ in rx.stream()])
     np.testing.assert_array_equal(original, recovered)
 
 
@@ -83,9 +83,16 @@ def test_loop_mode_yields_more_than_one_pass(sdr_config):
         config=sdr_config, duration_s=0.01, loop=True
     )
     count = 0
-    for buf in rx.stream():
+    for buf, _disc in rx.stream():
         count += len(buf)
         if count > int(0.025 * sdr_config.sample_rate_hz):
             rx.close()
             break
     assert count > int(0.015 * sdr_config.sample_rate_hz)
+
+
+def test_discontinuity_always_false(sdr_config):
+    """MockReceiver never signals discontinuity."""
+    rx = MockReceiver.synthetic(config=sdr_config, duration_s=0.01)
+    for _buf, disc in rx.stream():
+        assert disc is False

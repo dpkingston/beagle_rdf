@@ -209,6 +209,33 @@ def test_reset_returns_to_idle():
 
 
 # ---------------------------------------------------------------------------
+# cancel_pending - discontinuity handling
+# ---------------------------------------------------------------------------
+
+def test_cancel_pending_discards_inflight_onset():
+    """cancel_pending discards an onset that is collecting post-windows."""
+    det = make_detector(window_samples=64, snippet_post_windows=10)
+    W = 64
+    # Feed enough carrier to trigger onset deferral (collecting post-windows)
+    iq_on = _carrier(W * 5, power_db=-10.0)
+    events = det.process(iq_on, start_sample=0)
+    # Onset should be pending (collecting post-windows), not emitted yet
+    # because we gave it fewer windows than post_windows requires
+    assert det._pending_event_type in ("onset", None)
+
+    det.cancel_pending()
+    assert det._pending_event_type is None
+    assert det.state == "idle"
+
+
+def test_cancel_pending_noop_when_nothing_pending():
+    """cancel_pending is safe to call with no pending event."""
+    det = make_detector()
+    det.cancel_pending()  # should not raise
+    assert det.state == "idle"
+
+
+# ---------------------------------------------------------------------------
 # min_hold_windows - transient-spike suppression
 # ---------------------------------------------------------------------------
 

@@ -64,6 +64,12 @@ def test_update_fields(state):
     assert snap["sdr_overflows"] == 1
 
 
+def test_discontinuities_in_snapshot(state):
+    state.update(discontinuities=3)
+    snap = state.snapshot()
+    assert snap["discontinuities"] == 3
+
+
 def test_sync_corr_peak_optional(state):
     """sync_corr_peak is omitted from snapshot until set."""
     snap = state.snapshot()
