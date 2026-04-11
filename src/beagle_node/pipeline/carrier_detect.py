@@ -807,18 +807,22 @@ class CarrierDetector:
 
         Concatenates pre-event and post-event IQ, finds the carrier onset
         (peak positive power derivative = steepest carrier rise), and places
-        it at 1/4 from the snippet start.  This mirrors _encode_offset_snippet
-        (which places the PA shutoff at 3/4) and ensures the transition sits
-        at a fixed position independent of min_hold_windows.
+        it at 1/4 from the snippet start.
+
+        The derivative search is constrained to the transition zone around
+        the detection point using the smoothed power envelope.  The detection
+        point (end of pre_snap) is near the bottom of the rise — noise is
+        behind, plateau is ahead.  We walk backward to the noise floor and
+        forward to the plateau, then search for argmax(deriv) only within
+        that zone.  This prevents false peaks from noise features or AGC
+        transients deep in the ring buffer.
 
         Returns
         -------
         (bytes, rise_idx)
             bytes is the encoded snippet; rise_idx is the position of the
-            onset (peak positive power derivative) within the concatenated
-            pre+post buffer, in target-rate samples.  This mirrors
-            ``_encode_offset_snippet`` and lets the caller log diagnostics
-            anchored to the same point the snippet is trimmed around.
+            onset within the concatenated pre+post buffer, in target-rate
+            samples.
         """
         assert pre_snap or post_buf, "Both pre_snap and post_buf are empty - cannot happen"
         parts = list(pre_snap) + list(post_buf or [])
@@ -832,8 +836,48 @@ class CarrierDetector:
         envelope = np.convolve(power, kernel, mode='same')
         deriv = np.diff(envelope)
 
-        # Peak positive derivative = steepest carrier rise = onset moment
-        rise_idx = int(np.argmax(deriv))
+        # Detection point: end of pre_snap (where threshold was exceeded).
+        pre_len = sum(len(w) for w in pre_snap)
+        det_idx = min(pre_len, len(envelope) - 1)
+
+        # Noise level: before the rise (behind the detection point).
+        noise_end = max(0, det_idx - self._window * 2)
+        noise_start = max(0, noise_end - self._window * 4)
+        if noise_end > noise_start:
+            noise_level = float(np.median(envelope[noise_start:noise_end]))
+        else:
+            noise_level = float(np.min(envelope[:max(1, det_idx)]))
+
+        # Plateau level: after the rise settles (ahead of detection point).
+        post_start = min(det_idx + self._window * 2, len(envelope))
+        post_end = min(post_start + self._window * 4, len(envelope))
+        if post_end > post_start:
+            plateau_level = float(np.median(envelope[post_start:post_end]))
+        else:
+            plateau_level = float(np.max(envelope[det_idx:]))
+
+        lo_thresh = noise_level + 0.2 * (plateau_level - noise_level)
+        hi_thresh = noise_level + 0.8 * (plateau_level - noise_level)
+
+        # Walk backward from detection to the noise floor.
+        search_lo = max(0, det_idx - self._snippet_samples)
+        for i in range(det_idx, search_lo - 1, -1):
+            if envelope[i] <= lo_thresh:
+                search_lo = max(0, i - smooth)
+                break
+
+        # Walk forward from detection to the plateau.
+        search_hi = min(len(deriv), det_idx + self._snippet_samples)
+        for i in range(det_idx, min(len(envelope), det_idx + self._snippet_samples)):
+            if envelope[i] >= hi_thresh:
+                search_hi = min(len(deriv), i + smooth)
+                break
+
+        # Peak positive derivative within the transition zone
+        search_lo = max(0, search_lo)
+        search_hi = max(search_lo + 1, search_hi)
+        region = deriv[search_lo:search_hi]
+        rise_idx = search_lo + int(np.argmax(region)) if len(region) > 0 else int(np.argmax(deriv))
 
         # Place the onset at 1/4 from the start of the snippet.
         # This gives snippet/4 noise (pre-onset) + 3*snippet/4 carrier
