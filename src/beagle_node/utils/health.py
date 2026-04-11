@@ -23,6 +23,7 @@ Response schema
   "sync_corr_peak":       0.7042,    # latest SyncEvent quality (0-1); RDS pilot ~0.7
   "sdr_overflows":        0,
   "backlog_drains":       0,
+  "discontinuities":      0,
   "sdr_mode":             "rspduo",           # present if configured
   "sample_rate_hz":       2048000.0,          # present if configured
   "sync_station":         "KISW_99.9",        # present if configured
@@ -70,6 +71,7 @@ class HealthState:
         self.crystal_correction: float = 1.0
         self.sdr_overflows: int = 0
         self.backlog_drains: int = 0
+        self.discontinuities: int = 0
         self.sync_station: str | None = None
         self.sync_freq_hz: float | None = None
         self.target_channels: list[dict[str, Any]] | None = None
@@ -102,6 +104,7 @@ class HealthState:
         crystal_correction: float = 1.0,
         sdr_overflows: int = 0,
         backlog_drains: int = 0,
+        discontinuities: int = 0,
         sync_event_count: int = 0,
         noise_floor_db: float | None = None,
         onset_threshold_db: float | None = None,
@@ -119,6 +122,7 @@ class HealthState:
             self.crystal_correction = crystal_correction
             self.sdr_overflows = sdr_overflows
             self.backlog_drains = backlog_drains
+            self.discontinuities = discontinuities
             if noise_floor_db is not None:
                 self.noise_floor_db = noise_floor_db
             if onset_threshold_db is not None:
@@ -162,6 +166,7 @@ class HealthState:
                 "crystal_correction": round(self.crystal_correction, 8),
                 "sdr_overflows": self.sdr_overflows,
                 "backlog_drains": self.backlog_drains,
+                "discontinuities": self.discontinuities,
             }
             if reasons:
                 result["degraded_reasons"] = reasons

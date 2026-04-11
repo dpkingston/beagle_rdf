@@ -611,9 +611,11 @@ def run(args: argparse.Namespace | None = None) -> int:
                 # a simple block_count * fixed_block formula is incorrect; we must
                 # accumulate the actual block sizes seen.
                 adc_pos = 0  # ADC sample index of the start of the current block
-                for role, iq_buf, buf_wall_ns in receiver.labeled_stream():
+                for role, iq_buf, buf_wall_ns, discontinuity in receiver.labeled_stream():
                     if _stop["flag"]:
                         break
+                    if discontinuity:
+                        pipeline.mark_discontinuity()
                     block_n = receiver.sync_block_samples if role == "sync" else receiver.target_block_samples
                     raw_start = adc_pos + receiver.settling_samples
                     if role == "sync":
@@ -656,6 +658,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
                             backlog_drains=receiver.backlog_drain_count,
+                            discontinuities=receiver.discontinuity_count,
                             sync_event_count=pipeline.sync_event_count,
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
@@ -666,9 +669,11 @@ def run(args: argparse.Namespace | None = None) -> int:
                 # RSPduo dual-tuner: master=sync, slave=target.  Both buffers
                 # share the same ADC clock, so we pass the same sample position
                 # as raw_start_sample for both channels.
-                for sync_buf, target_buf, buf_wall_ns in receiver.paired_stream():
+                for sync_buf, target_buf, buf_wall_ns, discontinuity in receiver.paired_stream():
                     if _stop["flag"]:
                         break
+                    if discontinuity:
+                        pipeline.mark_discontinuity()
                     # _buf_ref_sample = buffer start (raw ADC position).
                     # buf_wall_ns (HAS_TIME) is the hardware timestamp of the
                     # first sample of this buffer pair, which is sample_count.
@@ -700,6 +705,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
                             backlog_drains=receiver.backlog_drain_count,
+                            discontinuities=receiver.discontinuity_count,
                             sync_event_count=pipeline.sync_event_count,
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
@@ -709,9 +715,11 @@ def run(args: argparse.Namespace | None = None) -> int:
 
             else:
                 # single_sdr / two_sdr / mock: single stream covers both roles.
-                for iq_buf in receiver.stream():
+                for iq_buf, discontinuity in receiver.stream():
                     if _stop["flag"]:
                         break
+                    if discontinuity:
+                        pipeline.mark_discontinuity()
                     pipeline.process_sync_buffer(iq_buf)
                     pipeline.process_target_buffer(iq_buf)
                     sample_count += len(iq_buf)
@@ -734,6 +742,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             queue_depth=reporter.queue_depth,
                             crystal_correction=pipeline.latest_sample_rate_correction,
                             sdr_overflows=receiver.overflow_count,
+                            discontinuities=receiver.discontinuity_count,
                             sync_event_count=pipeline.sync_event_count,
                             noise_floor_db=pipeline.carrier_detector.noise_floor_db,
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,

@@ -239,18 +239,24 @@ def render(snapshot: dict, prev: dict | None, prev_time: float | None,
     # Hardware
     sdr_overflows = snapshot.get("sdr_overflows", 0)
     backlog_drains = snapshot.get("backlog_drains", 0)
+    discontinuities = snapshot.get("discontinuities", 0)
     prev_overflows = prev.get("sdr_overflows") if prev else None
     prev_backlog = prev.get("backlog_drains") if prev else None
+    prev_disc = prev.get("discontinuities") if prev else None
 
     lines.append(f"{BOLD}Hardware{RESET}")
     of_str = fmt_int_with_delta(sdr_overflows, prev_overflows)
     if sdr_overflows > 0:
         of_str = f"{YELLOW}{of_str}{RESET}"
-    lines.append(f"  sdr_overflows  {of_str}")
+    lines.append(f"  sdr_overflows   {of_str}")
     bd_str = fmt_int_with_delta(backlog_drains, prev_backlog)
     if backlog_drains > 0:
         bd_str = f"{YELLOW}{bd_str}{RESET}"
-    lines.append(f"  backlog_drains {bd_str}")
+    lines.append(f"  backlog_drains  {bd_str}")
+    dc_str = fmt_int_with_delta(discontinuities, prev_disc)
+    if discontinuities > 0:
+        dc_str = f"{YELLOW}{dc_str}{RESET}"
+    lines.append(f"  discontinuities {dc_str}    {DIM}(pipeline resyncs){RESET}")
 
     return "\n".join(lines)
 

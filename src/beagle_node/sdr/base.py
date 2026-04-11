@@ -67,14 +67,15 @@ class SDRReceiver(abc.ABC):
         """Stop the sample stream and release hardware resources."""
 
     @abc.abstractmethod
-    def stream(self) -> Generator[np.ndarray, None, None]:
+    def stream(self) -> Generator[tuple[np.ndarray, bool], None, None]:
         """
-        Yield successive IQ sample buffers as complex64 numpy arrays.
+        Yield ``(iq_buffer, discontinuity)`` tuples.
 
         Each call to next() blocks until a full buffer is available.
         Raises StopIteration (or GeneratorExit) when close() is called.
-        The cumulative sample count across all yielded buffers increases
-        monotonically and is the basis for sample-domain timestamping.
+        ``discontinuity`` is True on the first buffer after lost samples
+        (overflow, timeout, stream restart).  The caller should reset
+        pipeline state when this flag is set.
         """
 
     @property
@@ -85,6 +86,11 @@ class SDRReceiver(abc.ABC):
     @property
     def backlog_drain_count(self) -> int:
         """Number of stale buffers discarded by backlog drain logic. Override if supported."""
+        return 0
+
+    @property
+    def discontinuity_count(self) -> int:
+        """Number of sample discontinuities (overflows, restarts) since open()."""
         return 0
 
     def __enter__(self) -> "SDRReceiver":

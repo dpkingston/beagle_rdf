@@ -215,6 +215,8 @@ class RSPduoReceiver(SDRReceiver):
         self._target_stream = None
         self._overflow_count: int = 0
         self._backlog_drain_count: int = 0
+        self._discontinuity_pending: bool = False
+        self._discontinuity_count: int = 0
         self._is_open: bool = False
 
     # ------------------------------------------------------------------
@@ -273,6 +275,10 @@ class RSPduoReceiver(SDRReceiver):
     @property
     def backlog_drain_count(self) -> int:
         return self._backlog_drain_count
+
+    @property
+    def discontinuity_count(self) -> int:
+        return self._discontinuity_count
 
     def open(self) -> None:
         if self._is_open:
@@ -382,10 +388,10 @@ class RSPduoReceiver(SDRReceiver):
         self._dev = None
         logger.info("RSPduo closed")
 
-    def stream(self) -> Generator[np.ndarray, None, None]:
+    def stream(self) -> Generator[tuple[np.ndarray, bool], None, None]:
         """Yield target-channel IQ buffers (SDRReceiver compatibility shim)."""
-        for _sync_buf, target_buf, _buf_wall_ns in self.paired_stream():
-            yield target_buf
+        for _sync_buf, target_buf, _buf_wall_ns, disc in self.paired_stream():
+            yield target_buf, disc
 
     # ------------------------------------------------------------------
     # Dual-channel stream
@@ -393,9 +399,9 @@ class RSPduoReceiver(SDRReceiver):
 
     def paired_stream(self) -> Generator[tuple[np.ndarray, np.ndarray], None, None]:
         """
-        Yield (sync_buf, target_buf, buf_wall_ns) triples captured simultaneously.
+        Yield (sync_buf, target_buf, buf_wall_ns, discontinuity) tuples.
 
-        Both buffers in each triple cover the same time window on the same
+        Both buffers in each tuple cover the same time window on the same
         shared ADC clock.  ``buf_wall_ns`` is the wall-clock time (``time.time_ns()``
         epoch) at which the buffer pair was received from the driver FIFO - use it
         as the ``onset_time_ns`` reference rather than calling ``time.time_ns()``
@@ -403,11 +409,18 @@ class RSPduoReceiver(SDRReceiver):
         ``SOAPY_SDR_HAS_TIME``, the hardware sample-counter timestamp is used
         instead (eliminates per-event NTP jitter).
 
+        ``discontinuity`` is ``True`` on the first buffer yielded after any
+        event that may have caused lost samples (overflow, timeout, backlog
+        drain, stream restart).  The caller should discard stale pipeline
+        state and let the sync detector re-lock.
+
         Stale buffers (backlog) are silently discarded before yielding; a WARNING
         is logged when a backlog episode begins and an INFO when it clears.
 
             pos = 0
-            for sync_buf, target_buf, buf_wall_ns in receiver.paired_stream():
+            for sync_buf, target_buf, wall_ns, disc in receiver.paired_stream():
+                if disc:
+                    pipeline.mark_discontinuity()
                 pipeline.process_sync_buffer(sync_buf,   raw_start_sample=pos)
                 pipeline.process_target_buffer(target_buf, raw_start_sample=pos)
                 pos += len(sync_buf)
@@ -656,6 +669,7 @@ class RSPduoReceiver(SDRReceiver):
                         )
                     _draining = False
                     _drain_episode_count = 0
+                    self._discontinuity_pending = True
 
                 if _in_reinit_recovery:
                     _reinit_consecutive_fresh += 1
@@ -666,6 +680,7 @@ class RSPduoReceiver(SDRReceiver):
                             _reinit_total_drained,
                         )
                         _in_reinit_recovery = False
+                        self._discontinuity_pending = True
                         # Do NOT reset _has_time_correction here: the driver bug
                         # that produces future timestamps is persistent.  Clearing
                         # the correction after recovery would cause the warning and
@@ -752,6 +767,7 @@ class RSPduoReceiver(SDRReceiver):
                             _reinit_consecutive_fresh = 0
                             _has_time_correction = None
                             _has_time_warn_logged = False
+                            self._discontinuity_pending = True
                             continue
                         _timeout_log(
                             "RSPduo readStream timeout: sync=%d  target=%d "
@@ -759,6 +775,7 @@ class RSPduoReceiver(SDRReceiver):
                             sr_sync.ret, sr_tgt.ret,
                             len(_timeout_times), self._TIMEOUT_WINDOW_SECS,
                         )
+                        self._discontinuity_pending = True
                         continue
                     if sr_sync.ret == OVERFLOW or sr_tgt.ret == OVERFLOW:
                         self._overflow_count += 1
@@ -766,6 +783,7 @@ class RSPduoReceiver(SDRReceiver):
                             "RSPduo readStream overflow #%d: sync=%d  target=%d - retrying",
                             self._overflow_count, sr_sync.ret, sr_tgt.ret,
                         )
+                        self._discontinuity_pending = True
                         continue
                     logger.error(
                         "RSPduo readStream error: sync=%d  target=%d",
@@ -781,7 +799,11 @@ class RSPduoReceiver(SDRReceiver):
                     # ret<0, but ret=0 would fall through and spin here.
                     continue
                 _restarts_without_recovery = 0
-                yield sync_buf[:n].copy(), target_buf[:n].copy(), buf_wall_ns
+                _discontinuity = self._discontinuity_pending
+                if _discontinuity:
+                    self._discontinuity_count += 1
+                    self._discontinuity_pending = False
+                yield sync_buf[:n].copy(), target_buf[:n].copy(), buf_wall_ns, _discontinuity
         finally:
             self._close_streams()
 

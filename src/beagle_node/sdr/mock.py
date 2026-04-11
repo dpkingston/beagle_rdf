@@ -199,7 +199,7 @@ class MockReceiver(SDRReceiver):
     def close(self) -> None:
         self._stop_event.set()
 
-    def stream(self) -> Generator[np.ndarray, None, None]:
+    def stream(self) -> Generator[tuple[np.ndarray, bool], None, None]:
         buf_size = self._config.buffer_size
         samples = self._samples
 
@@ -209,7 +209,7 @@ class MockReceiver(SDRReceiver):
                 if self._stop_event.is_set():
                     return
                 end = min(offset + buf_size, len(samples))
-                yield samples[offset:end].copy()
+                yield samples[offset:end].copy(), False
                 if self._realtime:
                     import time
                     time.sleep((end - offset) / self._config.sample_rate_hz)

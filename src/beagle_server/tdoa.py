@@ -453,7 +453,19 @@ def compute_tdoa_s(
     # the noisy sync_delta value (which can scatter fixes by 100+ km),
     # we return None so the solver works with fewer pairs or skips the
     # event entirely.
-    _MAX_XCORR_REFINEMENT_NS = 50_000.0  # 50 usec ~ 3 samples at 62.5 kHz
+    #
+    # Onset gate is tight (50 µs) because argmax(deriv) on a sharp PA
+    # key-up is very stable across nodes.
+    #
+    # Offset gate is wider (500 µs) because argmin(deriv) on the PA
+    # shutoff is noisy — the power decay is gradual and voice-modulated
+    # carrier content creates false derivative minima.  The xcorr itself
+    # is still precise (SNR ~1.7), so we trust it over a wider range.
+    _MAX_XCORR_ONSET_NS = 50_000.0    # 50 µs ~ 3 samples at 62.5 kHz
+    _MAX_XCORR_OFFSET_NS = 500_000.0  # 500 µs ~ 32 samples at 62.5 kHz
+    _max_refinement_ns = (
+        _MAX_XCORR_ONSET_NS if event_type == "onset" else _MAX_XCORR_OFFSET_NS
+    )
 
     xcorr_refinement_ns = 0.0
     xcorr_used = False
@@ -470,7 +482,7 @@ def compute_tdoa_s(
             event_type=event_type,
         )
         if xcorr_snr >= min_xcorr_snr:
-            if abs(xcorr_lag_ns) <= _MAX_XCORR_REFINEMENT_NS:
+            if abs(xcorr_lag_ns) <= _max_refinement_ns:
                 xcorr_refinement_ns = xcorr_lag_ns
                 xcorr_used = True
             else:
@@ -478,7 +490,7 @@ def compute_tdoa_s(
                     "xcorr refinement too large: %.1f ns > %.0f ns limit "
                     "for %s<->%s (%s, SNR=%.2f); pair skipped "
                     "(sync_delta/snippet anchor misalignment)",
-                    xcorr_lag_ns, _MAX_XCORR_REFINEMENT_NS,
+                    xcorr_lag_ns, _max_refinement_ns,
                     node_a, node_b, event_type, xcorr_snr,
                 )
                 return None

@@ -57,6 +57,8 @@ class SoapyReceiver(SDRReceiver):
         self._device = None
         self._stream = None
         self._overflow_count: int = 0
+        self._discontinuity_pending: bool = False
+        self._discontinuity_count: int = 0
         self._is_open: bool = False
 
     # ------------------------------------------------------------------
@@ -70,6 +72,10 @@ class SoapyReceiver(SDRReceiver):
     @property
     def overflow_count(self) -> int:
         return self._overflow_count
+
+    @property
+    def discontinuity_count(self) -> int:
+        return self._discontinuity_count
 
     def open(self) -> None:
         if self._is_open:
@@ -121,7 +127,12 @@ class SoapyReceiver(SDRReceiver):
         self._is_open = False
         logger.info("SoapySDR device closed")
 
-    def stream(self) -> Generator[np.ndarray, None, None]:
+    def stream(self) -> Generator[tuple[np.ndarray, bool], None, None]:
+        """Yield ``(iq_buffer, discontinuity)`` tuples.
+
+        ``discontinuity`` is ``True`` on the first buffer after an overflow,
+        signaling that samples were lost and pipeline state should be reset.
+        """
         if not self._is_open:
             self.open()
 
@@ -136,11 +147,17 @@ class SoapyReceiver(SDRReceiver):
             if sr.ret < 0:
                 # Negative return is an error code
                 logger.error("readStream error: %d", sr.ret)
+                self._discontinuity_pending = True
                 break
 
             if sr.flags & OVERFLOW_FLAG:
                 self._overflow_count += 1
                 logger.warning("SDR overflow #%d", self._overflow_count)
+                self._discontinuity_pending = True
 
             if sr.ret > 0:
-                yield buf[: sr.ret].copy()
+                _disc = self._discontinuity_pending
+                if _disc:
+                    self._discontinuity_count += 1
+                    self._discontinuity_pending = False
+                yield buf[: sr.ret].copy(), _disc

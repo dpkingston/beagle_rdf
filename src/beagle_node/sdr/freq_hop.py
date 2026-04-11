@@ -133,6 +133,7 @@ class FreqHopReceiver(SDRReceiver):
         self._stop_event: threading.Event = threading.Event()
         self._queue: queue.Queue[tuple[Role, bytes, int]] = queue.Queue()
         self._backlog_drain_count: int = 0
+        self._discontinuity_count: int = 0
 
     # ------------------------------------------------------------------
     # Factory from NodeConfig
@@ -184,6 +185,10 @@ class FreqHopReceiver(SDRReceiver):
     def backlog_drain_count(self) -> int:
         """Number of stale buffers discarded by the backlog drain logic."""
         return self._backlog_drain_count
+
+    @property
+    def discontinuity_count(self) -> int:
+        return self._discontinuity_count
 
     @property
     def sync_block_samples(self) -> int:
@@ -284,20 +289,23 @@ class FreqHopReceiver(SDRReceiver):
             pass
         logger.info("FreqHopReceiver closed")
 
-    def stream(self) -> Generator[np.ndarray, None, None]:
+    def stream(self) -> Generator[tuple[np.ndarray, bool], None, None]:
         """Yield all blocks sequentially (sync, target, sync, target, ...)."""
-        for _role, buf, _wall_ns in self.labeled_stream():
-            yield buf
+        for _role, buf, _wall_ns, disc in self.labeled_stream():
+            yield buf, disc
 
-    def labeled_stream(self) -> Generator[tuple[Role, np.ndarray, int], None, None]:
+    def labeled_stream(self) -> Generator[tuple[Role, np.ndarray, int, bool], None, None]:
         """
-        Yield (role, iq_buf, wall_ns) tuples, alternating sync and target blocks.
+        Yield (role, iq_buf, wall_ns, discontinuity) tuples.
 
         Blocks are placed on an internal queue by the background read loop.
         Each iq_buf has usable_samples(role) complex64 samples (settling
         transient already removed).  wall_ns is time.time_ns() captured
         immediately after read_bytes() returned in the background thread --
         use it directly as buf_wall_ns for onset_time_ns computation.
+
+        ``discontinuity`` is True on the first buffer after a backlog drain
+        or queue stall, signaling that samples were lost.
 
         Buffers whose age exceeds half a block duration are silently discarded
         (backlog drain).  A WARNING is logged when draining begins and an INFO
@@ -311,6 +319,7 @@ class FreqHopReceiver(SDRReceiver):
         _drain_thresh_ns = int(self._block * 1_000_000_000 / self._config.sample_rate_hz / 2)
         _draining = False
         _drain_episode_count = 0
+        _discontinuity_pending = False
 
         while True:
             try:
@@ -345,12 +354,17 @@ class FreqHopReceiver(SDRReceiver):
                 )
                 _draining = False
                 _drain_episode_count = 0
+                _discontinuity_pending = True
 
             usable = raw[skip_bytes:]
             raw_arr = np.frombuffer(usable, dtype=np.uint8).astype(np.float32)
             raw_arr = (raw_arr - 127.5) / 128.0
             iq = (raw_arr[0::2] + 1j * raw_arr[1::2]).astype(np.complex64)
-            yield role, iq, wall_ns
+            _disc = _discontinuity_pending
+            if _disc:
+                self._discontinuity_count += 1
+                _discontinuity_pending = False
+            yield role, iq, wall_ns, _disc
 
     # ------------------------------------------------------------------
     # Internal: sequential read loop

@@ -405,6 +405,18 @@ class NodePipeline:
     # Reset
     # ------------------------------------------------------------------
 
+    def mark_discontinuity(self) -> None:
+        """Signal that samples were lost (overflow, drain, stream restart).
+
+        Discards stale pipeline state and forces the sync detector to
+        re-lock.  Small gaps in detection readiness are acceptable —
+        target events are infrequent and sync events arrive every ~842 µs.
+        """
+        logger.warning("Pipeline discontinuity: resetting sync and cancelling pending carrier events")
+        self._sync_det.reset()
+        self._carrier_det.cancel_pending()
+        self._delta.reset()
+
     def reset(self) -> None:
         """Reset all pipeline state."""
         self._sync_dec.reset()

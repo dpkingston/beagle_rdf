@@ -1010,6 +1010,30 @@ class CarrierDetector:
         # Arm snippet transition validation for the upcoming process() call.
         self._validate_snippets = True
 
+    def cancel_pending(self) -> None:
+        """Discard any in-flight event (onset seen, collecting post-windows).
+
+        Called on sample discontinuity — the pending event's sample position
+        is relative to pre-gap timing and would produce a corrupt sync_delta.
+        """
+        if self._pending_event_type is not None:
+            logger.warning(
+                "Discontinuity: cancelled pending %s event "
+                "(had %d/%d post windows)",
+                self._pending_event_type,
+                len(self._pending_post_buf),
+                len(self._pending_post_buf) + self._pending_post_remaining,
+            )
+            self._pending_event_type = None
+            self._pending_pre_snap = []
+            self._pending_post_buf = []
+            self._pending_post_remaining = 0
+        # Also return to idle — if we were in "active" state tracking a
+        # carrier, the sample continuity is broken and we should re-detect.
+        self._state = "idle"
+        self._pre_onset_count = 0
+        self._pre_offset_count = 0
+
     def reset(self) -> None:
         """Reset detector state."""
         self._state = "idle"
