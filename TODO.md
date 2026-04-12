@@ -84,7 +84,7 @@ build version) of the running source tree and include it in:
 - the `/health` JSON snapshot (`node_software_version` already exists
   but is hardcoded to `"0.1.0"` in main.py)
 - the long-poll heartbeat body (so the server records it per-node)
-- the GUI node details dropdown so the operator can see it at a glance
+- the GUI node details modal so the operator can see it at a glance
 
 The git sha should be captured in a way that survives `pip install`
 into a venv (e.g. via `git rev-parse --short HEAD` baked into the
@@ -518,9 +518,9 @@ Full node lifecycle management from the Nodes tab - no CLI needed.
 - **Regen secret**: Armed-confirmation button on each node card.  New secret
   shown in the same one-time modal.
 - **Edit label**: Pencil icon next to label; inline input with Save/Cancel.
-- **Edit config**: Expandable detail panel per node with `config_json` textarea
+- **Edit config**: Node detail modal (overlay) with `config_json` textarea
   and Save Config button.
-- **Detail panel**: Shows config_version, registered_at, freq_group_id.
+- **Detail modal**: Shows config_version, registered_at, freq_group_id.
 - API: added `POST /api/v1/nodes` (admin-create), `POST /api/v1/nodes/{id}/regen-secret`,
   extended `PATCH /api/v1/nodes/{id}` to accept `label`.
 - DB: added `create_node()`, `update_node_secret()`, `update_node_label()`.

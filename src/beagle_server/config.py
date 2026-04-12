@@ -170,6 +170,13 @@ class SolverConfig(BaseModel):
     always side-lobe noise artefacts from the power-envelope correlation.
     0.0 = disable the check (accept all xcorr lags regardless of magnitude).
     """
+    sync_diag: bool = False
+    """
+    Enable detailed sync-timing diagnostic logging.  When True, each TDOA
+    computation logs pilot-phase comparison (sync_diag) and grid-calibration
+    (sync_cal) lines.  Useful for verifying RDS bit-boundary alignment across
+    nodes.  Can also be enabled via the BEAGLE_SYNC_DIAG=1 environment variable.
+    """
     xcorr_resample_rate_hz: float | None = None
     """
     Target sample rate (Hz) to resample IQ snippets to before cross-correlation

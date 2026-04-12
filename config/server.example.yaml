@@ -70,6 +70,11 @@ solver:
                                   # peak and falls back to sync_delta.  Set to the maximum
                                   # node-to-node separation in your deployment area.
                                   # 50 km => max lag ~167 usec.  0 = disable the check.
+  # sync_diag: false              # Enable detailed sync-timing diagnostic logging.
+                                  # Logs pilot-phase comparison (sync_diag) and grid-
+                                  # calibration (sync_cal) lines for each TDOA computation.
+                                  # Useful for verifying RDS bit-boundary alignment.
+                                  # Also settable via BEAGLE_SYNC_DIAG=1 env var.
   # xcorr_resample_rate_hz: null  # Target rate for resampling snippets in mixed-hardware
                                   # deployments (RTL-SDR = 64000 Hz, RSPduo = 62500 Hz).
                                   # null (default) = automatically use the lower of the two

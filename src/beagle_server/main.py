@@ -18,6 +18,7 @@ import uvicorn
 
 from beagle_server.api import create_app
 from beagle_server.config import ServerFullConfig, load_config
+from beagle_server.tdoa import set_sync_diag
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -83,6 +84,10 @@ def main(argv: list[str] | None = None) -> None:
 
     host = args.host or config.server.host
     port = args.port or config.server.port
+
+    # Enable sync diagnostics from config (env var BEAGLE_SYNC_DIAG=1 also works)
+    if config.solver.sync_diag:
+        set_sync_diag(True)
 
     # ------------------------------------------------------------------
     # Logging configuration

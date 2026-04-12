@@ -50,6 +50,12 @@ logger = logging.getLogger(__name__)
 import os
 _SYNC_DIAG = os.environ.get("BEAGLE_SYNC_DIAG", "") == "1"
 
+
+def set_sync_diag(enabled: bool) -> None:
+    """Enable or disable sync diagnostic logging (called from server startup)."""
+    global _SYNC_DIAG
+    _SYNC_DIAG = enabled
+
 _C_M_S = 299_792_458.0  # speed of light, m/s
 
 

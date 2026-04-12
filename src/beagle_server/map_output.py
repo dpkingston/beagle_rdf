@@ -407,6 +407,30 @@ _PANEL_CSS = """<style>
     font: 10px monospace; padding: 2px 4px;
 }
 .tp-carrier-form .tp-carrier-btns { margin-top: 4px; display: flex; gap: 6px; }
+/* --- Node detail modal --- */
+.tp-detail-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7); z-index: 20000;
+    display: flex; justify-content: center; align-items: center;
+}
+.tp-detail-modal {
+    background: #1a2540; border: 1px solid rgba(80,110,160,0.5);
+    border-radius: 8px; padding: 16px 20px; width: 90%; max-width: 600px;
+    max-height: 85vh; overflow-y: auto; color: #c8d4e8; font-size: 11px;
+}
+.tp-detail-modal h3 {
+    margin: 0 0 10px; font-size: 14px; color: #e8f0ff;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.tp-detail-modal h3 .tp-detail-close {
+    cursor: pointer; font-size: 18px; color: #7a9bbf; line-height: 1;
+}
+.tp-detail-modal h3 .tp-detail-close:hover { color: #e74c3c; }
+.tp-detail-modal .tp-node-config-ta {
+    min-height: 250px; font-size: 11px;
+}
+.tp-detail-modal .tp-carrier-form label { font-size: 11px; width: 130px; }
+.tp-detail-modal .tp-carrier-form input[type=number] { font-size: 11px; width: 80px; }
 /* --- Node register form --- */
 .tp-node-reg-form { padding: 4px 8px 6px; font-size: 11px; }
 .tp-node-reg-form input {
@@ -1540,10 +1564,9 @@ function renderNodes(nodes) {
                   + ' onclick="window._tdoaDelete(this,&apos;' + nid + '&apos;)">'
                   + 'Delete</button>';
             html += '</div>';
-            /* Expandable detail panel */
+            /* Detail panel (opens in modal) */
             html += '<div style="text-align:right"><span style="cursor:pointer;font-size:10px;color:#7a9bbf"'
-                  + ' onclick="window._tdoaToggleDetail(&apos;' + nid + '&apos;)">&#9660; details</span></div>';
-            html += '<div class="tp-node-detail" id="nd-' + nid + '" style="display:none"></div>';
+                  + ' onclick="window._tdoaOpenDetail(&apos;' + nid + '&apos;)">&#9660; details</span></div>';
         }
         html += '</div>';
     }
@@ -1832,91 +1855,108 @@ window._tdoaCancelEditLabel = function () {
     loadNodes();
 };
 
-/* --- Expandable node detail panel --- */
-window._tdoaToggleDetail = function (nodeId) {
-    var det = document.getElementById('nd-' + nodeId);
-    if (!det) return;
-    if (det.style.display === 'none') {
-        _nodeEditing = true;
-        det.style.display = '';
-        /* Fetch full node details */
-        _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), { headers: _hdr() })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function (node) {
-            var html = '';
-            html += '<div class="tp-row"><span class="tp-key">Config ver</span><span>'
-                  + (node.config_version != null ? node.config_version : '?') + '</span></div>';
-            html += '<div class="tp-row"><span class="tp-key">Registered</span><span>'
-                  + (node.registered_at ? new Date(node.registered_at * 1000).toISOString().slice(0,19) + 'Z' : '?')
-                  + '</span></div>';
-            html += '<div class="tp-row"><span class="tp-key">Group</span><span>'
-                  + _esc(node.freq_group_id || 'none') + '</span></div>';
-            html += '<div class="tp-row"><span class="tp-key">Config file</span><span style="font-family:monospace;font-size:10px;word-break:break-all">'
-                  + _esc(node.config_file_path || '(inline / API)') + '</span></div>';
-            html += '<div style="margin-top:4px"><span class="tp-key">Config JSON:</span></div>';
-            var cfgText = '';
-            if (node.config_json) {
-                try { cfgText = JSON.stringify(JSON.parse(node.config_json), null, 2); }
-                catch (e) { cfgText = node.config_json; }
-            }
-            /* --- Carrier threshold editing --- */
-            var cfgObj = {};
-            if (node.config_json) {
-                try { cfgObj = JSON.parse(node.config_json); } catch (e) { cfgObj = {}; }
-            }
-            var carrier = cfgObj.carrier || {};
-            /* Find live values from the nodes list */
-            var liveNode = null;
-            if (_currentNodes) {
-                for (var k = 0; k < _currentNodes.length; k++) {
-                    if (_currentNodes[k].node_id === nodeId) { liveNode = _currentNodes[k]; break; }
-                }
-            }
-            var liveFloor = liveNode && liveNode.noise_floor_db != null ? liveNode.noise_floor_db : null;
-            var liveOnset = liveNode && liveNode.onset_threshold_db != null ? liveNode.onset_threshold_db : null;
-            var liveOffset = liveNode && liveNode.offset_threshold_db != null ? liveNode.offset_threshold_db : null;
-            var curOnset = carrier.onset_db != null ? carrier.onset_db : (liveOnset != null ? liveOnset : -30);
-            var curOffset = carrier.offset_db != null ? carrier.offset_db : (liveOffset != null ? liveOffset : -40);
-            var curHold = carrier.min_hold_windows != null ? carrier.min_hold_windows : 1;
-            var curRelease = carrier.min_release_windows != null ? carrier.min_release_windows : 1;
+/* --- Node detail modal --- */
+window._tdoaCloseDetail = function () {
+    var ov = document.getElementById('tp-detail-overlay');
+    if (ov) ov.remove();
+    _nodeEditing = false;
+};
 
-            html += '<div class="tp-carrier-form">';
-            html += '<div style="color:#c8d4e8;font-size:11px;margin-bottom:4px">Carrier Thresholds';
-            if (liveFloor != null) {
-                var m = (curOnset - liveFloor).toFixed(1);
-                var mc = m >= 10 ? 'tp-margin-good' : (m >= 5 ? 'tp-margin-warn' : 'tp-margin-bad');
-                html += ' <span style="font-size:10px;color:#7a9bbf">(noise floor: '
-                      + liveFloor.toFixed(1) + ' dB, margin: <span class="' + mc + '">' + m + ' dB</span>)</span>';
-            }
-            html += '</div>';
-            html += '<div><label>Onset (dBFS)</label><input type="number" step="1" id="ct-onset-' + _esc(nodeId) + '" value="' + curOnset + '"></div>';
-            html += '<div><label>Offset (dBFS)</label><input type="number" step="1" id="ct-offset-' + _esc(nodeId) + '" value="' + curOffset + '"></div>';
-            html += '<div><label>Hold windows</label><input type="number" step="1" min="1" id="ct-hold-' + _esc(nodeId) + '" value="' + curHold + '"></div>';
-            html += '<div><label>Release windows</label><input type="number" step="1" min="1" id="ct-release-' + _esc(nodeId) + '" value="' + curRelease + '"></div>';
-            html += '<div class="tp-carrier-btns">';
-            html += '<button class="tdoa-btn-sm ton" onclick="window._tdoaSaveCarrier(&apos;'
-                  + _esc(nodeId) + '&apos;)">Save Thresholds</button>';
-            if (liveFloor != null) {
-                html += '<button class="tdoa-btn-sm" style="background:rgba(46,204,113,0.15);color:#2ecc71;border-color:rgba(46,204,113,0.3)"'
-                      + ' onclick="window._tdoaAutoCalibrate(&apos;' + _esc(nodeId) + '&apos;,' + liveFloor + ')">'
-                      + 'Auto-Calibrate</button>';
-            }
-            html += '</div></div>';
+window._tdoaOpenDetail = function (nodeId) {
+    /* Remove any existing modal */
+    var old = document.getElementById('tp-detail-overlay');
+    if (old) old.remove();
 
-            html += '<div style="margin-top:6px"><span class="tp-key">Config JSON:</span></div>';
-            html += '<textarea class="tp-node-config-ta" id="ncfg-' + _esc(nodeId) + '">'
-                  + _esc(cfgText) + '</textarea>';
-            html += '<button class="tdoa-btn-sm ton" onclick="window._tdoaSaveConfig(&apos;'
-                  + _esc(nodeId) + '&apos;)">Save Config</button>';
-            det.innerHTML = html;
-        })
-        .catch(function (e) {
-            det.innerHTML = '<span style="color:#e74c3c;font-size:10px">' + _esc(e.message) + '</span>';
-        });
-    } else {
-        det.style.display = 'none';
-        _nodeEditing = false;
-    }
+    _nodeEditing = true;
+
+    /* Create overlay */
+    var overlay = document.createElement('div');
+    overlay.id = 'tp-detail-overlay';
+    overlay.className = 'tp-detail-overlay';
+    overlay.onclick = function (e) { if (e.target === overlay) window._tdoaCloseDetail(); };
+
+    var modal = document.createElement('div');
+    modal.className = 'tp-detail-modal';
+    modal.innerHTML = '<h3><span>Loading…</span><span class="tp-detail-close" onclick="window._tdoaCloseDetail()">&times;</span></h3>';
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    /* Fetch full node details */
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId)), { headers: _hdr() })
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (node) {
+        var html = '<h3><span>' + _esc(nodeId) + '</span>'
+                 + '<span class="tp-detail-close" onclick="window._tdoaCloseDetail()">&times;</span></h3>';
+        html += '<div class="tp-row"><span class="tp-key">Config ver</span><span>'
+              + (node.config_version != null ? node.config_version : '?') + '</span></div>';
+        html += '<div class="tp-row"><span class="tp-key">Registered</span><span>'
+              + (node.registered_at ? new Date(node.registered_at * 1000).toISOString().slice(0,19) + 'Z' : '?')
+              + '</span></div>';
+        html += '<div class="tp-row"><span class="tp-key">Group</span><span>'
+              + _esc(node.freq_group_id || 'none') + '</span></div>';
+        html += '<div class="tp-row"><span class="tp-key">Config file</span><span style="font-family:monospace;font-size:11px;word-break:break-all">'
+              + _esc(node.config_file_path || '(inline / API)') + '</span></div>';
+
+        /* --- Carrier threshold editing --- */
+        var cfgObj = {};
+        if (node.config_json) {
+            try { cfgObj = JSON.parse(node.config_json); } catch (e) { cfgObj = {}; }
+        }
+        var carrier = cfgObj.carrier || {};
+        var liveNode = null;
+        if (_currentNodes) {
+            for (var k = 0; k < _currentNodes.length; k++) {
+                if (_currentNodes[k].node_id === nodeId) { liveNode = _currentNodes[k]; break; }
+            }
+        }
+        var liveFloor = liveNode && liveNode.noise_floor_db != null ? liveNode.noise_floor_db : null;
+        var liveOnset = liveNode && liveNode.onset_threshold_db != null ? liveNode.onset_threshold_db : null;
+        var liveOffset = liveNode && liveNode.offset_threshold_db != null ? liveNode.offset_threshold_db : null;
+        var curOnset = carrier.onset_db != null ? carrier.onset_db : (liveOnset != null ? liveOnset : -30);
+        var curOffset = carrier.offset_db != null ? carrier.offset_db : (liveOffset != null ? liveOffset : -40);
+        var curHold = carrier.min_hold_windows != null ? carrier.min_hold_windows : 1;
+        var curRelease = carrier.min_release_windows != null ? carrier.min_release_windows : 1;
+
+        html += '<div class="tp-carrier-form">';
+        html += '<div style="color:#c8d4e8;font-size:12px;margin-bottom:6px">Carrier Thresholds';
+        if (liveFloor != null) {
+            var m = (curOnset - liveFloor).toFixed(1);
+            var mc = m >= 10 ? 'tp-margin-good' : (m >= 5 ? 'tp-margin-warn' : 'tp-margin-bad');
+            html += ' <span style="font-size:10px;color:#7a9bbf">(noise floor: '
+                  + liveFloor.toFixed(1) + ' dB, margin: <span class="' + mc + '">' + m + ' dB</span>)</span>';
+        }
+        html += '</div>';
+        html += '<div><label>Onset (dBFS)</label><input type="number" step="1" id="ct-onset-' + _esc(nodeId) + '" value="' + curOnset + '"></div>';
+        html += '<div><label>Offset (dBFS)</label><input type="number" step="1" id="ct-offset-' + _esc(nodeId) + '" value="' + curOffset + '"></div>';
+        html += '<div><label>Hold windows</label><input type="number" step="1" min="1" id="ct-hold-' + _esc(nodeId) + '" value="' + curHold + '"></div>';
+        html += '<div><label>Release windows</label><input type="number" step="1" min="1" id="ct-release-' + _esc(nodeId) + '" value="' + curRelease + '"></div>';
+        html += '<div class="tp-carrier-btns">';
+        html += '<button class="tdoa-btn-sm ton" onclick="window._tdoaSaveCarrier(&apos;'
+              + _esc(nodeId) + '&apos;)">Save Thresholds</button>';
+        if (liveFloor != null) {
+            html += '<button class="tdoa-btn-sm" style="background:rgba(46,204,113,0.15);color:#2ecc71;border-color:rgba(46,204,113,0.3)"'
+                  + ' onclick="window._tdoaAutoCalibrate(&apos;' + _esc(nodeId) + '&apos;,' + liveFloor + ')">'
+                  + 'Auto-Calibrate</button>';
+        }
+        html += '</div></div>';
+
+        var cfgText = '';
+        if (node.config_json) {
+            try { cfgText = JSON.stringify(JSON.parse(node.config_json), null, 2); }
+            catch (e) { cfgText = node.config_json; }
+        }
+        html += '<div style="margin-top:8px"><span class="tp-key">Config JSON:</span></div>';
+        html += '<textarea class="tp-node-config-ta" id="ncfg-' + _esc(nodeId) + '">'
+              + _esc(cfgText) + '</textarea>';
+        html += '<button class="tdoa-btn-sm ton" onclick="window._tdoaSaveConfig(&apos;'
+              + _esc(nodeId) + '&apos;)">Save Config</button>';
+        modal.innerHTML = html;
+    })
+    .catch(function (e) {
+        modal.innerHTML = '<h3><span>' + _esc(nodeId) + '</span>'
+                        + '<span class="tp-detail-close" onclick="window._tdoaCloseDetail()">&times;</span></h3>'
+                        + '<span style="color:#e74c3c">' + _esc(e.message) + '</span>';
+    });
 };
 
 window._tdoaSaveConfig = function (nodeId) {
