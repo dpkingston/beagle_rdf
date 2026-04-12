@@ -66,25 +66,22 @@ class SyncCalibrator:
     phase, creating a fixed fractional-bit offset between any two nodes.
     This offset is stable but node-pair-specific and resets on node restart.
 
-    Measurement method (sync-only, no carrier contamination):
-    For each carrier event, the node reports onset_time_ns (wall-clock at
-    carrier edge) and sync_delta_ns (carrier - sync in ns).  Therefore:
+    Measurement method (sample-based, no wall-clock contamination):
+    Each carrier event includes sync_sample_index (the pilot-derived
+    sub-sample position of the matched RDS bit boundary) and
+    sync_sample_rate_correction (crystal calibration factor).
 
-        sync_wall_ns = onset_time_ns - sync_delta_ns
-
-    This is the wall-clock time of the matched RDS bit boundary.  For two
-    nodes that matched the same physical bit boundary, sync_wall_A and
-    sync_wall_B should differ only by the FM propagation delay difference
-    between nodes (~microseconds for our geometry).
-
-    The fractional-bit part of (sync_wall_A - sync_wall_B - expected_FM_delay)
-    modulo T_SYNC is the grid offset.  We track this with an EMA.
+    The difference in sync_sample_index between two nodes, expressed in
+    RDS bit periods, should be near an integer.  The fractional part is
+    the grid offset.  We track this with an EMA and convert to ns for
+    correction.
     """
 
     def __init__(self, alpha: float = 0.02, min_samples: int = 5) -> None:
         self._alpha = alpha
         self._min_samples = min_samples
-        # Key: tuple(sorted([node_a, node_b])), value: (correction_ns, count)
+        # Key: tuple(sorted([node_a, node_b])), value: (correction_frac, count)
+        # correction_frac is in fractional bit periods, canonical direction.
         self._pairs: dict[tuple[str, str], tuple[float, int]] = {}
 
     def update(
@@ -94,55 +91,35 @@ class SyncCalibrator:
         event_a: dict,
         event_b: dict,
     ) -> float:
-        """Update calibration from sync timing and return correction in ns.
+        """Update calibration from sync sample indices and return correction in ns.
 
-        Uses onset_time_ns and sync_delta_ns (both already present in every
-        event) to compute each node's sync event wall-clock time.  The
-        correction removes the fractional-bit grid offset from raw_ns.
+        Uses sync_sample_index and sync_sample_rate_correction (sent by
+        every node in every carrier event) to compute the fractional-bit
+        grid offset purely from sample counting — no wall-clock involved.
         """
         key = tuple(sorted([node_a, node_b]))
         sign = 1.0 if key[0] == node_a else -1.0
 
-        onset_a = event_a.get("onset_time_ns")
-        onset_b = event_b.get("onset_time_ns")
-        delta_a = event_a.get("sync_delta_ns")
-        delta_b = event_b.get("sync_delta_ns")
+        sync_idx_a = event_a.get("sync_sample_index", 0.0)
+        sync_idx_b = event_b.get("sync_sample_index", 0.0)
+        corr_a = event_a.get("sync_sample_rate_correction", 0.0)
+        corr_b = event_b.get("sync_sample_rate_correction", 0.0)
 
-        if onset_a is None or onset_b is None or delta_a is None or delta_b is None:
+        # Need valid sample indices from both nodes.  Legacy nodes send 0.
+        if sync_idx_a == 0.0 or sync_idx_b == 0.0 or corr_a == 0.0 or corr_b == 0.0:
             est, count = self._pairs.get(key, (0.0, 0))
-            return est * sign if count >= self._min_samples else 0.0
+            return est * sign * _T_SYNC_NS if count >= self._min_samples else 0.0
 
-        # Wall-clock time of each node's matched sync event
-        sync_wall_a = float(onset_a) - float(delta_a)
-        sync_wall_b = float(onset_b) - float(delta_b)
+        # Compute fractional-bit offset from sample indices.
+        # sync_sample_index is in sync-decimated sample space (~250 kHz).
+        sync_diff_samples = sync_idx_a - sync_idx_b
+        rate_avg = 250_000.0 * (corr_a + corr_b) / 2.0
+        rds_bit_samples = rate_avg / 1187.5
+        sync_diff_bits = sync_diff_samples / rds_bit_samples
+        frac = sync_diff_bits - round(sync_diff_bits)
 
-        # Expected FM propagation delay difference (sync station → each node).
-        # This is typically ~10-50 µs for our geometry.  If location data is
-        # missing, skip — the correction would be wrong.
-        try:
-            fm_delay_diff_ns = path_delay_correction_ns(
-                sync_tx_lat=event_a["sync_tx_lat"],
-                sync_tx_lon=event_a["sync_tx_lon"],
-                node_a_lat=event_a["node_lat"],
-                node_a_lon=event_a["node_lon"],
-                node_b_lat=event_b["node_lat"],
-                node_b_lon=event_b["node_lon"],
-            )
-        except (KeyError, TypeError):
-            est, count = self._pairs.get(key, (0.0, 0))
-            return est * sign if count >= self._min_samples else 0.0
-
-        # Sync timing residual: should be near 0 if on the same bit boundary,
-        # or near ±N × T_SYNC if on different boundaries.
-        sync_diff_ns = (sync_wall_a - sync_wall_b) - fm_delay_diff_ns
-
-        # Extract the fractional-bit offset (mod T_SYNC, centered at 0)
-        frac_ns = sync_diff_ns % _T_SYNC_NS
-        if frac_ns > _T_SYNC_NS / 2:
-            frac_ns -= _T_SYNC_NS
-
-        # Normalize to canonical key direction
-        signed_frac = frac_ns * sign
+        # Normalize to canonical key direction (sorted pair order)
+        signed_frac = frac * sign
 
         est, count = self._pairs.get(key, (0.0, 0))
         if count == 0:
@@ -151,10 +128,10 @@ class SyncCalibrator:
             est = est + self._alpha * (signed_frac - est)
         self._pairs[key] = (est, count + 1)
 
-        correction = est * sign
+        correction_frac = est * sign
         if count + 1 < self._min_samples:
             return 0.0
-        return correction
+        return correction_frac * _T_SYNC_NS
 
 
 # Global calibrator instance (persists across requests within a server process)
