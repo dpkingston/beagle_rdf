@@ -241,22 +241,18 @@ class RDSSyncDetector:
                 # without losing the integer count.  We reset every
                 # _RESYNC_WINDOWS windows (~5 minutes at 100 windows/sec).
                 if self._pilot_phase_offset is not None:
-                    # The raw fractional cycle from angle(corr), rotated so
-                    # the wrap boundary is far from the signal.
-                    adjusted_frac = (
-                        (self._pilot_corr_angle - self._pilot_phase_offset)
-                        / (2.0 * math.pi)
-                    ) % 1.0
-                    # Compensate for crystal error: the ADC samples at a
-                    # slightly wrong rate, causing the measured pilot phase
-                    # to drift.  Dividing by the crystal correction factor
-                    # gives the true pilot phase (at the station's exact
-                    # frequency).  Without this, the bit boundary grid
-                    # drifts at ~2.5 samples/sec.
-                    adjusted_frac /= self._pilot_correction
+                    # Total pilot cycles from the unwrapped phase.  This is
+                    # deterministic: all nodes receiving the same FM station
+                    # compute the same value at the same wall-clock moment
+                    # (modulo propagation delay ~µs).  No node-specific offset.
+                    total_cycles_at_start = (
+                        self._pilot_unwrapped_phase / (2.0 * math.pi)
+                    )
+                    # Compensate for crystal error so the bit boundary grid
+                    # tracks the station's true frequency.
+                    total_cycles_at_start /= self._pilot_correction
                 else:
-                    adjusted_frac = 0.0
-                total_cycles_at_start = self._pilot_cycle_count + adjusted_frac
+                    total_cycles_at_start = 0.0
 
                 # RDS bit boundaries occur every 16 pilot cycles.
                 # Phase within the current bit, in cycles [0, 16):
@@ -343,13 +339,28 @@ class RDSSyncDetector:
         self._pilot_corr_angle = pilot_phase
 
         # Set the phase offset after the BPF has settled (~500 windows
-        # = 5 seconds) so that adjusted_frac = (angle - offset) / 2π is
-        # near 0, placing the wrap boundary at ±0.5 — far from the signal.
+        # = 5 seconds).  The offset is used ONLY for wrap detection (keeping
+        # the wrap boundary away from the signal).  The bit boundary grid
+        # is derived from the unwrapped phase, which is deterministic —
+        # all nodes receiving the same FM station compute the same total
+        # cycle count at the same wall-clock moment (modulo propagation
+        # delay), producing aligned bit boundary grids.
         if self._pilot_phase_offset is None and self._pilot_last_corr_angle is not None:
             self._pilot_settle_count = getattr(self, '_pilot_settle_count', 0) + 1
             if self._pilot_settle_count >= 500:
                 self._pilot_phase_offset = pilot_phase
-                self._pilot_last_adjusted_frac = 0.0
+                # Initialize cycle count from the unwrapped phase.
+                # total_cycles = unwrapped_phase / 2π gives the absolute
+                # number of pilot cycles, which is the same for all nodes
+                # at the same moment.  The integer part becomes the cycle
+                # count; the fractional part is recovered each window from
+                # the raw pilot phase.
+                total_cycles = self._pilot_unwrapped_phase / (2.0 * math.pi)
+                self._pilot_cycle_count = int(total_cycles)
+                # adjusted_frac for wrap detection (offset-relative)
+                self._pilot_last_adjusted_frac = (
+                    (pilot_phase - self._pilot_phase_offset) / (2.0 * math.pi)
+                ) % 1.0
 
         # Advance the integer cycle counter by detecting wraps in the
         # adjusted fractional cycle.  Since adjusted_frac is centered

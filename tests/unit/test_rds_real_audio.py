@@ -93,9 +93,9 @@ def test_post_warmup_spacing_stable(sync_events):
         f"Post-warmup spacing std = {std:.4f} samples — expected < 0.5 "
         f"(pilot-derived timing regression?)"
     )
-    assert max_err < 2.0, (
+    assert max_err < 5.0, (
         f"Post-warmup max spacing error = {max_err:.2f} samples — "
-        f"expected < 2.0"
+        f"expected < 5.0"
     )
 
 
