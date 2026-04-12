@@ -69,6 +69,8 @@ class CarrierOnset:
     power_db: float             # Instantaneous power at detection
     noise_floor_db: float = -100.0  # EMA of idle-state power; used to compute SNR
     iq_snippet: bytes = b""    # int8-interleaved IQ bytes for cross-correlation
+    transition_start: int = 0  # Sample index within snippet where transition begins
+    transition_end: int = 0    # Sample index within snippet where transition ends (plateau)
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,8 @@ class CarrierOffset:
     sample_index: int
     power_db: float
     iq_snippet: bytes = b""    # int8-interleaved IQ bytes for cross-correlation
+    transition_start: int = 0  # Sample index within snippet where transition begins (plateau edge)
+    transition_end: int = 0    # Sample index within snippet where transition ends (noise)
 
 
 _State = Literal["idle", "active"]
@@ -421,14 +425,9 @@ class CarrierDetector:
                 if self._pending_post_remaining <= 0 or opposite_fired:
                     ev: CarrierOnset | CarrierOffset
                     if self._pending_event_type == "onset":
-                        _onset_bytes, _rise_idx = self._encode_combined(
+                        _onset_bytes, _rise_idx, _t_start, _t_end = self._encode_combined(
                             self._pending_pre_snap, self._pending_post_buf
                         )
-                        # sample_index = snippet anchor (argmax of power
-                        # derivative = steepest carrier rise), matching the
-                        # 25% position in the trimmed snippet.  This ensures
-                        # sync_delta_ns and the xcorr reference the same
-                        # physical time instant.
                         _onset_sample_index = (
                             self._pending_pre_snap_start + _rise_idx
                         )
@@ -437,6 +436,8 @@ class CarrierDetector:
                             power_db=self._pending_power_db,
                             noise_floor_db=self._pending_noise_floor_db,
                             iq_snippet=_onset_bytes,
+                            transition_start=_t_start,
+                            transition_end=_t_end,
                         )
                         if _TIMING_DIAG:
                             _pre_start = self._pending_pre_snap_start
@@ -448,19 +449,22 @@ class CarrierDetector:
                                     "sample_index": ev.sample_index,
                                     "pre_snap_start": _pre_start,
                                     "rise_idx_in_buf": _rise_idx,
+                                    "transition_window": [_t_start, _t_end],
                                     "window_sample": self._pending_sample_index,
                                     "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
                                     "power_db": round(ev.power_db, 1),
                                 }),
                             )
                     else:
-                        _offset_bytes, _cut_idx = self._encode_offset_snippet(
+                        _offset_bytes, _cut_idx, _t_start, _t_end = self._encode_offset_snippet(
                             self._pending_pre_snap, self._pending_post_buf
                         )
                         ev = CarrierOffset(
                             sample_index=self._pending_pre_snap_start + _cut_idx,
                             power_db=self._pending_power_db,
                             iq_snippet=_offset_bytes,
+                            transition_start=_t_start,
+                            transition_end=_t_end,
                         )
                         if _TIMING_DIAG:
                             _pre_start = self._pending_pre_snap_start
@@ -508,11 +512,13 @@ class CarrierDetector:
                             else:
                                 _pre = list(self._iq_ring)
                                 _pre_start = window_sample - self._window // 2 - (len(_pre) - 1) * self._window
-                                _off_bytes, _cut = self._encode_offset_snippet(_pre)
+                                _off_bytes, _cut, _t_s, _t_e = self._encode_offset_snippet(_pre)
                                 events.append(CarrierOffset(
                                     sample_index=_pre_start + _cut,
                                     power_db=power_db,
                                     iq_snippet=_off_bytes,
+                                    transition_start=_t_s,
+                                    transition_end=_t_e,
                                 ))
                         else:
                             # onset just fired during post-offset collection.
@@ -667,11 +673,13 @@ class CarrierDetector:
                         else:
                             _pre = list(self._iq_ring)
                             _pre_start = window_sample - self._window // 2 - (len(_pre) - 1) * self._window
-                            _off_bytes, _cut = self._encode_offset_snippet(_pre)
+                            _off_bytes, _cut, _t_s, _t_e = self._encode_offset_snippet(_pre)
                             events.append(CarrierOffset(
                                 sample_index=_pre_start + _cut,
                                 power_db=power_db,
                                 iq_snippet=_off_bytes,
+                                transition_start=_t_s,
+                                transition_end=_t_e,
                             ))
                 else:
                     # Signal above offset threshold - reset the release counter.
@@ -690,7 +698,7 @@ class CarrierDetector:
         if self._pending_event_type is not None:
             ev: CarrierOnset | CarrierOffset
             if self._pending_event_type == "onset":
-                _onset_bytes, _rise_idx = self._encode_combined(
+                _onset_bytes, _rise_idx, _t_start, _t_end = self._encode_combined(
                     self._pending_pre_snap, self._pending_post_buf
                 )
                 _onset_sample_index = (
@@ -701,6 +709,8 @@ class CarrierDetector:
                     power_db=self._pending_power_db,
                     noise_floor_db=self._pending_noise_floor_db,
                     iq_snippet=_onset_bytes,
+                    transition_start=_t_start,
+                    transition_end=_t_end,
                 )
                 if _TIMING_DIAG:
                     _pre_start = self._pending_pre_snap_start
@@ -712,6 +722,7 @@ class CarrierDetector:
                             "sample_index": ev.sample_index,
                             "pre_snap_start": _pre_start,
                             "rise_idx_in_buf": _rise_idx,
+                            "transition_window": [_t_start, _t_end],
                             "window_sample": self._pending_sample_index,
                             "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
                             "power_db": round(ev.power_db, 1),
@@ -719,13 +730,15 @@ class CarrierDetector:
                         }),
                     )
             else:
-                _offset_bytes, _cut_idx = self._encode_offset_snippet(
+                _offset_bytes, _cut_idx, _t_start, _t_end = self._encode_offset_snippet(
                     self._pending_pre_snap, self._pending_post_buf
                 )
                 ev = CarrierOffset(
                     sample_index=self._pending_pre_snap_start + _cut_idx,
                     power_db=self._pending_power_db,
                     iq_snippet=_offset_bytes,
+                    transition_start=_t_start,
+                    transition_end=_t_end,
                 )
                 if _TIMING_DIAG:
                     _pre_start = self._pending_pre_snap_start
@@ -819,10 +832,11 @@ class CarrierDetector:
 
         Returns
         -------
-        (bytes, rise_idx)
+        (bytes, rise_idx, transition_start, transition_end)
             bytes is the encoded snippet; rise_idx is the position of the
-            onset within the concatenated pre+post buffer, in target-rate
-            samples.
+            onset within the concatenated pre+post buffer; transition_start
+            and transition_end are the bounds of the transition zone within
+            the trimmed snippet (for server-side xcorr windowing).
         """
         assert pre_snap or post_buf, "Both pre_snap and post_buf are empty - cannot happen"
         parts = list(pre_snap) + list(post_buf or [])
@@ -885,22 +899,23 @@ class CarrierDetector:
         int8_ri = np.empty(len(normed) * 2, dtype=np.int8)
         int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
         int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
-        return int8_ri.tobytes(), rise_idx
+
+        # Transition bounds relative to the trimmed snippet
+        t_start = max(0, search_lo - start)
+        t_end = min(len(iq_trim), search_hi - start)
+        return int8_ri.tobytes(), rise_idx, t_start, t_end
 
     def _encode_offset_snippet(
         self,
         pre_snap: list[np.ndarray],
         post_buf: list[np.ndarray] | None = None,
-    ) -> tuple[bytes, int]:
+    ) -> tuple[bytes, int, int, int]:
         """
         Encode a snippet for a carrier-offset event anchored on the PA shutoff.
 
-        The derivative search is constrained to the transition zone around
-        the detection point using the smoothed power envelope.  The detection
-        point (end of pre_snap) is near the bottom of the fall — plateau is
-        behind, noise floor is ahead.  We walk backward to the plateau and
-        forward to confirm the noise floor, then search for argmin(deriv)
-        only within that zone.
+        Returns (bytes, cut_idx, transition_start, transition_end) where
+        transition_start/end are the bounds of the transition zone within
+        the trimmed snippet.
 
         Using post_buf (from the deferred emission path) is strongly recommended:
         it supplies post-cutoff noise samples that confirm the transition and
@@ -971,7 +986,11 @@ class CarrierDetector:
         int8_ri = np.empty(len(normed) * 2, dtype=np.int8)
         int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
         int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
-        return int8_ri.tobytes(), cut_idx
+
+        # Transition bounds relative to the trimmed snippet
+        t_start = max(0, search_lo - start)
+        t_end = min(len(iq_trim), search_hi - start)
+        return int8_ri.tobytes(), cut_idx, t_start, t_end
 
     def _snippet_has_transition(self, snippet: bytes) -> bool:
         """Check that an encoded IQ snippet contains a genuine power transition.

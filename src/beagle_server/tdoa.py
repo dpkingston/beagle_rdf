@@ -228,6 +228,8 @@ def cross_correlate_snippets(
     sample_rate_hz_b: float | None = None,
     target_rate_hz: float | None = None,
     event_type: str = "",
+    transition_a: tuple[int, int] | None = None,
+    transition_b: tuple[int, int] | None = None,
 ) -> tuple[float, float]:
     """
     Cross-correlate two int8 IQ snippets to find the inter-node TDOA.
@@ -237,36 +239,29 @@ def cross_correlate_snippets(
     peaks.  Uses FFT-based correlation with parabolic peak interpolation for
     sub-sample precision.
 
-    If the two snippets were captured at different sample rates (e.g. RTL-SDR
-    at 64 kHz and RSPduo at 62.5 kHz), one envelope is resampled to the target
-    rate before correlation so the correlation peak position is correctly
-    interpreted in time.  The target rate defaults to the lower of the two
-    input rates (prefer downsampling; no interpolated data introduced).
+    If ``transition_a`` and ``transition_b`` are provided (from the node's
+    knee-finding algorithm), the correlation is restricted to those sample
+    ranges within each snippet.  This focuses xcorr on the PA transition and
+    excludes noise/plateau regions that could produce false peaks.
 
-    The correlation is restricted to the half of the snippet that contains the
-    PA transition, based on *event_type*:
-
-    - "onset":  PA rise sits near the centre of the snippet.
-                The first 3/4 is used (noise + transition + carrier prefix).
-                Avoids false peaks from voice-modulated carrier in final quarter.
-    - "offset": PA fall is anchored at ~3/4 of the snippet length.
-                Only the second half is used (brief carrier + transition + noise).
-    - "":       No trimming (full snippet).  For synthetic test signals.
+    If transition bounds are not available (legacy nodes), falls back to
+    fixed-fraction trimming based on event_type.
 
     Parameters
     ----------
     a_b64, b_b64 : str
-        Base64-encoded int8-interleaved IQ snippets (see CarrierEvent.iq_snippet_b64).
+        Base64-encoded int8-interleaved IQ snippets.
     sample_rate_hz_a : float
-        Sample rate of snippet A (default 64 kHz = RTL-SDR target decimation rate).
+        Sample rate of snippet A (default 64 kHz).
     sample_rate_hz_b : float or None
-        Sample rate of snippet B.  None means same as A (no resampling).
+        Sample rate of snippet B.  None means same as A.
     target_rate_hz : float or None
-        Rate to resample both snippets to before correlation.  None = use the
-        lower of the two input rates (recommended).
+        Rate to resample both to before correlation.  None = lower of the two.
     event_type : str
-        "onset" or "offset" to enable transition windowing (recommended).
-        Empty string uses the full snippet (for synthetic tests).
+        "onset" or "offset" for legacy trimming fallback.
+    transition_a, transition_b : tuple[int, int] or None
+        (start, end) sample indices within each snippet bounding the PA
+        transition zone.  From the node's d2 knee-finding walk.
 
     Returns
     -------
@@ -298,19 +293,22 @@ def cross_correlate_snippets(
     if abs(rate_b - effective_rate) / effective_rate > 1e-6:
         env_b = _resample_to_rate(env_b, rate_b, effective_rate)
 
-    # Trim to the transition region to avoid false peaks from voice-modulated
-    # carrier content.  The PA transition sits near the centre (~1/2) of the
-    # onset snippet and at ~3/4 of the offset snippet.
-    #
-    # Onset: use the first 3/4 of the snippet.  This brackets the transition
-    # at ~1/2 with noise before and carrier after, while excluding the
-    # voice-modulated carrier in the final quarter.
-    # Offset: use the second half, which contains the carrier-to-noise drop.
-    if event_type == "onset":
+    # Trim to the transition region.  When the node provides transition
+    # bounds (from the d2 knee-finding walk), use them directly — they
+    # tightly bracket the PA edge.  Otherwise fall back to fixed-fraction
+    # trimming based on event_type.
+    if transition_a and transition_a[1] > transition_a[0]:
+        env_a = env_a[transition_a[0]:transition_a[1]]
+    elif event_type == "onset":
         env_a = env_a[: 3 * len(env_a) // 4]
-        env_b = env_b[: 3 * len(env_b) // 4]
     elif event_type == "offset":
         env_a = env_a[len(env_a) // 2 :]
+
+    if transition_b and transition_b[1] > transition_b[0]:
+        env_b = env_b[transition_b[0]:transition_b[1]]
+    elif event_type == "onset":
+        env_b = env_b[: 3 * len(env_b) // 4]
+    elif event_type == "offset":
         env_b = env_b[len(env_b) // 2 :]
 
     # Equalise lengths after resampling + trimming.  Different sample rates
@@ -469,12 +467,23 @@ def compute_tdoa_s(
     if iq_a and iq_b:
         rate_a = float(event_a.get("channel_sample_rate_hz", 64_000.0))
         rate_b = float(event_b.get("channel_sample_rate_hz", 64_000.0))
+
+        # Extract transition bounds if the node provided them
+        t_a_start = int(event_a.get("transition_start", 0))
+        t_a_end = int(event_a.get("transition_end", 0))
+        t_b_start = int(event_b.get("transition_start", 0))
+        t_b_end = int(event_b.get("transition_end", 0))
+        trans_a = (t_a_start, t_a_end) if t_a_end > t_a_start else None
+        trans_b = (t_b_start, t_b_end) if t_b_end > t_b_start else None
+
         xcorr_lag_ns, xcorr_snr = cross_correlate_snippets(
             iq_a, iq_b,
             sample_rate_hz_a=rate_a,
             sample_rate_hz_b=rate_b,
             target_rate_hz=xcorr_target_rate_hz,
             event_type=event_type,
+            transition_a=trans_a,
+            transition_b=trans_b,
         )
         if xcorr_snr >= min_xcorr_snr:
             if abs(xcorr_lag_ns) <= _max_refinement_ns:

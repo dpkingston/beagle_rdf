@@ -121,6 +121,12 @@ class CarrierEvent(BaseModel):
     only relative timing is used by the cross-correlator.
     """
 
+    transition_start: int = 0
+    """Sample index within the snippet where the PA transition zone begins."""
+
+    transition_end: int = 0
+    """Sample index within the snippet where the PA transition zone ends."""
+
     channel_sample_rate_hz: float
     """
     Sample rate of the IQ snippet in Hz.

@@ -512,6 +512,8 @@ def run(args: argparse.Namespace | None = None) -> int:
             sync_corr_peak=m.corr_peak,
             node_software_version=_node_version,
             iq_snippet_b64=base64.b64encode(m.iq_snippet).decode(),
+            transition_start=m.transition_start,
+            transition_end=m.transition_end,
             channel_sample_rate_hz=_target_sample_rate_hz,
         )
         if _TIMING_DIAG:

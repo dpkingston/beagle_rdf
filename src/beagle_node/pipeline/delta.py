@@ -89,6 +89,8 @@ class TDOAMeasurement:
     noise_floor_db: float               # EMA of idle-state power before the event
     event_type: str                     # "onset" or "offset"
     iq_snippet: bytes = b""             # int8-interleaved IQ for server cross-correlation
+    transition_start: int = 0           # Transition zone start within snippet (samples)
+    transition_end: int = 0             # Transition zone end within snippet (samples)
 
 
 class DeltaComputer:
@@ -338,6 +340,8 @@ class DeltaComputer:
             noise_floor_db=noise_floor,
             event_type=event_type,
             iq_snippet=event.iq_snippet,
+            transition_start=getattr(event, 'transition_start', 0),
+            transition_end=getattr(event, 'transition_end', 0),
         )
 
     # ------------------------------------------------------------------
