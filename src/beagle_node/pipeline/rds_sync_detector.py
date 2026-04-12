@@ -241,13 +241,20 @@ class RDSSyncDetector:
                 # without losing the integer count.  We reset every
                 # _RESYNC_WINDOWS windows (~5 minutes at 100 windows/sec).
                 if self._pilot_phase_offset is not None:
-                    # Total pilot cycles from the unwrapped phase.  This is
-                    # deterministic: all nodes receiving the same FM station
-                    # compute the same value at the same wall-clock moment
-                    # (modulo propagation delay ~µs).  No node-specific offset.
-                    total_cycles_at_start = (
+                    # Integer cycle count from the unwrapped phase (deterministic
+                    # across nodes — same value at the same wall-clock moment).
+                    # Fractional cycle from the raw angle(corr) (measured fresh
+                    # each window, no accumulation drift).
+                    #
+                    # The raw angle gives the sub-cycle position directly from
+                    # the signal without noise accumulation.  Using angle/2π
+                    # (not offset-relative) makes the fractional part canonical
+                    # across all nodes receiving the same FM station.
+                    integer_cycles = int(
                         self._pilot_unwrapped_phase / (2.0 * math.pi)
                     )
+                    raw_frac = (self._pilot_corr_angle / (2.0 * math.pi)) % 1.0
+                    total_cycles_at_start = integer_cycles + raw_frac
                     # Compensate for crystal error so the bit boundary grid
                     # tracks the station's true frequency.
                     total_cycles_at_start /= self._pilot_correction
