@@ -91,6 +91,9 @@ class TDOAMeasurement:
     iq_snippet: bytes = b""             # int8-interleaved IQ for server cross-correlation
     transition_start: int = 0           # Transition zone start within snippet (samples)
     transition_end: int = 0             # Transition zone end within snippet (samples)
+    # Sync event diagnostics for server-side verification
+    sync_pilot_phase_rad: float = 0.0   # pilot_phase_rad from the matched SyncEvent
+    sync_delta_samples: float = 0.0     # raw sample delta before ns conversion
 
 
 class DeltaComputer:
@@ -342,6 +345,8 @@ class DeltaComputer:
             iq_snippet=event.iq_snippet,
             transition_start=getattr(event, 'transition_start', 0),
             transition_end=getattr(event, 'transition_end', 0),
+            sync_pilot_phase_rad=best.pilot_phase_rad,
+            sync_delta_samples=delta_samples,
         )
 
     # ------------------------------------------------------------------

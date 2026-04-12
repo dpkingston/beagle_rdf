@@ -514,6 +514,9 @@ def run(args: argparse.Namespace | None = None) -> int:
             iq_snippet_b64=base64.b64encode(m.iq_snippet).decode(),
             transition_start=m.transition_start,
             transition_end=m.transition_end,
+            sync_pilot_phase_rad=m.sync_pilot_phase_rad,
+            sync_delta_samples=m.sync_delta_samples,
+            sync_sample_rate_correction=m.sample_rate_correction,
             channel_sample_rate_hz=_target_sample_rate_hz,
         )
         if _TIMING_DIAG:

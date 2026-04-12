@@ -47,6 +47,9 @@ from scipy.signal import resample_poly
 
 logger = logging.getLogger(__name__)
 
+import os
+_SYNC_DIAG = os.environ.get("BEAGLE_SYNC_DIAG", "") == "1"
+
 _C_M_S = 299_792_458.0  # speed of light, m/s
 
 
@@ -407,6 +410,27 @@ def compute_tdoa_s(
     # leaving the target signal arrival time difference.
     delta_a = event_a.get("sync_delta_ns")
     delta_b = event_b.get("sync_delta_ns")
+
+    # Sync diagnostics: log pilot phase comparison to verify bit-boundary
+    # alignment across nodes.  Gated by BEAGLE_SYNC_DIAG=1 env var.
+    if _SYNC_DIAG:
+        phase_a = event_a.get("sync_pilot_phase_rad", 0.0)
+        phase_b = event_b.get("sync_pilot_phase_rad", 0.0)
+        dsamp_a = event_a.get("sync_delta_samples", 0.0)
+        dsamp_b = event_b.get("sync_delta_samples", 0.0)
+        corr_a = event_a.get("sync_sample_rate_correction", 1.0)
+        corr_b = event_b.get("sync_sample_rate_correction", 1.0)
+        if phase_a != 0.0 or phase_b != 0.0:
+            import math
+            phase_diff = (phase_a - phase_b + math.pi) % (2 * math.pi) - math.pi
+            logger.info(
+                "sync_diag %s<->%s (%s): delta_ns=[%s, %s]  delta_samp=[%.1f, %.1f]  "
+                "pilot_phase=[%.4f, %.4f] phase_diff=%.4f rad  crystal=[%.8f, %.8f]",
+                node_a, node_b, event_type,
+                delta_a, delta_b, dsamp_a, dsamp_b,
+                phase_a, phase_b, phase_diff, corr_a, corr_b,
+            )
+
     if delta_a is None or delta_b is None:
         logger.warning(
             "Missing sync_delta_ns for %s<->%s (%s) - pair skipped",

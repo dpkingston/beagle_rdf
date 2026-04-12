@@ -127,6 +127,18 @@ class CarrierEvent(BaseModel):
     transition_end: int = 0
     """Sample index within the snippet where the PA transition zone ends."""
 
+    # Sync event diagnostics — sent so the server can verify all nodes
+    # are using the same RDS bit boundary for a given transmission event.
+    sync_pilot_phase_rad: float = 0.0
+    """Pilot phase (radians) at the matched SyncEvent.  Nodes on the same
+    bit boundary should report nearly identical values."""
+
+    sync_delta_samples: float = 0.0
+    """Raw sample difference (carrier - sync) before ns conversion."""
+
+    sync_sample_rate_correction: float = 1.0
+    """Crystal calibration factor applied to sample rate for ns conversion."""
+
     channel_sample_rate_hz: float
     """
     Sample rate of the IQ snippet in Hz.
