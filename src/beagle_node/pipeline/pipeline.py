@@ -348,6 +348,8 @@ class NodePipeline:
                         power_db=event.power_db,
                         noise_floor_db=event.noise_floor_db,
                         iq_snippet=event.iq_snippet,
+                        transition_start=event.transition_start,
+                        transition_end=event.transition_end,
                     )
                     new = self._delta.feed_onset(mapped)
                 else:
@@ -355,6 +357,8 @@ class NodePipeline:
                         sample_index=event_in_sync_space,
                         power_db=event.power_db,
                         iq_snippet=event.iq_snippet,
+                        transition_start=event.transition_start,
+                        transition_end=event.transition_end,
                     )
                     new = self._delta.feed_offset(mapped)
                 for m in new:
