@@ -2047,6 +2047,13 @@ def _carrier_event_to_db_dict(event: CarrierEvent) -> dict[str, Any]:
         # event dict so the solver can use them without re-parsing raw_json.
         "iq_snippet_b64": event.iq_snippet_b64,
         "channel_sample_rate_hz": event.channel_sample_rate_hz,
+        # Transition bounds for xcorr windowing
+        "transition_start": event.transition_start,
+        "transition_end": event.transition_end,
+        # Sync diagnostics for cross-node verification
+        "sync_pilot_phase_rad": event.sync_pilot_phase_rad,
+        "sync_delta_samples": event.sync_delta_samples,
+        "sync_sample_rate_correction": event.sync_sample_rate_correction,
     }
 
 
