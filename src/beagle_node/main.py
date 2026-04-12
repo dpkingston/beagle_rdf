@@ -365,6 +365,17 @@ def run(args: argparse.Namespace | None = None) -> int:
                 sdr_mode=config.sdr_mode,
             )
 
+            # Immediately push a heartbeat so the server reflects the new
+            # config (e.g. updated onset/offset thresholds) without waiting
+            # for the next 30-second heartbeat cycle.
+            _heartbeat_payload["noise_floor_db"] = pipeline.carrier_detector.noise_floor_db
+            _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
+            _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
+            if _remote_fetcher is not None:
+                _remote_fetcher.set_heartbeat_data(_heartbeat_payload)
+            else:
+                reporter.post_heartbeat(_heartbeat_payload)
+
             # --- Trigger restart if needed ---
             if need_restart:
                 logger.info(
