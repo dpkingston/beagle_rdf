@@ -551,36 +551,16 @@ def test_compute_tdoa_xcorr_large_lag_rejected_onset():
     )
 
 
-def test_compute_tdoa_xcorr_offset_wider_gate_accepts():
+def test_compute_tdoa_xcorr_offset_same_gate_as_onset():
     """
-    Offset events use a wider xcorr gate (500 usec) because argmin(deriv)
-    on the PA shutoff is noisier than argmax(deriv) on the onset.
+    With d2 knee-finding, offset snippets should be as well-anchored as
+    onset.  Both use the same 50 usec xcorr refinement gate.
 
-    10-sample prop delay at 64 kHz ~ 156 usec -- rejected by onset gate
-    but accepted by the wider offset gate.
-    """
-    fs = 64_000.0
-    prop_delay = 10  # ~ 156 usec -- within 500 usec offset gate
-    iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0,
-                                        event_type="offset")
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
-                                     sample_rate_hz=fs, node_id="node-a", event_type="offset")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
-                                     sample_rate_hz=fs, node_id="node-b", event_type="offset")
-    tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
-    assert tdoa is not None, "Offset xcorr within 500µs gate should be accepted"
-    assert abs(tdoa - prop_delay / fs) < 50e-6  # within 50 usec of true delay
-
-
-def test_compute_tdoa_xcorr_offset_huge_lag_still_rejected():
-    """
-    Even with the wider offset gate, very large xcorr lags (>500 usec)
-    are still rejected.
-
-    40-sample prop delay at 64 kHz ~ 625 usec -- exceeds 500 usec offset gate.
+    10-sample prop delay at 64 kHz ~ 156 usec -- exceeds 50 usec gate
+    for both onset and offset.
     """
     fs = 64_000.0
-    prop_delay = 40  # ~ 625 usec -- exceeds even the wider offset gate
+    prop_delay = 10  # ~ 156 usec -- exceeds 50 usec gate
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0,
                                         event_type="offset")
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
@@ -589,7 +569,7 @@ def test_compute_tdoa_xcorr_offset_huge_lag_still_rejected():
                                      sample_rate_hz=fs, node_id="node-b", event_type="offset")
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
     assert tdoa is None, (
-        f"Expected None (offset xcorr refinement too large); got {tdoa}"
+        f"Expected None (offset xcorr > 50µs gate); got {tdoa}"
     )
 
 
