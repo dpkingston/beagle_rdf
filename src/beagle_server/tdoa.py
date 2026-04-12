@@ -53,6 +53,94 @@ _SYNC_DIAG = os.environ.get("BEAGLE_SYNC_DIAG", "") == "1"
 _C_M_S = 299_792_458.0  # speed of light, m/s
 
 
+class SyncCalibrator:
+    """Rolling calibration of the per-pair sync bit-grid offset.
+
+    Each node initializes its RDS bit boundary grid at an arbitrary pilot
+    phase, creating a fixed fractional-bit offset between any two nodes.
+    This offset is stable (doesn't drift) but is different for each node
+    pair and changes when a node restarts.
+
+    The calibrator measures the offset from the sync_delta_samples values
+    reported by each node and applies it as a correction to the coarse
+    TDOA.  Uses an exponential moving average to filter per-event noise
+    while tracking real changes (e.g. node restart).
+
+    The correction is in nanoseconds, applied BEFORE disambiguation:
+        corrected_raw_ns = raw_ns - pair_correction_ns
+    """
+
+    def __init__(self, alpha: float = 0.05, min_samples: int = 3) -> None:
+        self._alpha = alpha
+        self._min_samples = min_samples
+        # Key: tuple(sorted([node_a, node_b])), value: (correction_ns, count)
+        self._pairs: dict[tuple[str, str], tuple[float, int]] = {}
+
+    def update(
+        self,
+        node_a: str,
+        node_b: str,
+        sync_delta_samples_a: float,
+        sync_delta_samples_b: float,
+        rate_a: float,
+        rate_b: float,
+    ) -> float:
+        """Update calibration and return the current correction in ns.
+
+        The correction is the estimated fractional-bit offset between the
+        two nodes, converted to nanoseconds.  Subtract it from raw_ns
+        (= sync_delta_A - sync_delta_B) to remove the grid bias.
+        """
+        if sync_delta_samples_a == 0.0 and sync_delta_samples_b == 0.0:
+            # No diagnostic data — return current estimate or 0
+            key = tuple(sorted([node_a, node_b]))
+            est, count = self._pairs.get(key, (0.0, 0))
+            return est if count >= self._min_samples else 0.0
+
+        # Compute the raw delta in ns from the sample counts
+        ns_a = sync_delta_samples_a * 1e9 / rate_a if rate_a > 0 else 0.0
+        ns_b = sync_delta_samples_b * 1e9 / rate_b if rate_b > 0 else 0.0
+        measured_raw_ns = ns_a - ns_b
+
+        # The measured raw should equal the true TDOA + grid_offset.
+        # After disambiguation, coarse_tdoa = raw - n*T_SYNC + correction.
+        # We want to estimate the grid_offset so we can subtract it.
+        #
+        # The fractional-bit part of the raw delta (mod T_SYNC) that
+        # persists across events IS the grid offset.  Extract it:
+        frac_ns = measured_raw_ns % _T_SYNC_NS
+        if frac_ns > _T_SYNC_NS / 2:
+            frac_ns -= _T_SYNC_NS
+        # frac_ns is now in [-T_SYNC/2, +T_SYNC/2]
+        # The true TDOA component is small (<333µs for our geometry).
+        # The grid offset can be up to ±T_SYNC/2.
+        # We can't separate them from a single measurement, but the grid
+        # offset is constant while the true TDOA changes with each event.
+        # Over many events, the EMA converges on the grid offset.
+
+        # Determine sign: if node_a sorts first, keep sign; else flip
+        key = tuple(sorted([node_a, node_b]))
+        sign = 1.0 if key[0] == node_a else -1.0
+        signed_frac = frac_ns * sign
+
+        est, count = self._pairs.get(key, (0.0, 0))
+        if count == 0:
+            est = signed_frac
+        else:
+            est = est + self._alpha * (signed_frac - est)
+        self._pairs[key] = (est, count + 1)
+
+        # Return correction with the right sign for this pair order
+        correction = est * sign
+        if count + 1 < self._min_samples:
+            return 0.0  # not enough data yet
+        return correction
+
+
+# Global calibrator instance (persists across requests)
+_sync_calibrator = SyncCalibrator()
+
+
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """
     Great-circle distance between two WGS-84 points in metres.
@@ -447,6 +535,33 @@ def compute_tdoa_s(
         return None
 
     raw_ns = float(delta_a) - float(delta_b)
+
+    # Apply sync grid calibration: remove the per-pair fractional-bit
+    # offset from the coarse TDOA.  This must happen BEFORE disambiguation
+    # so that the corrected value rounds to the right bit period.
+    dsamp_a = float(event_a.get("sync_delta_samples", 0.0))
+    dsamp_b = float(event_b.get("sync_delta_samples", 0.0))
+    # sync_delta_samples is in sync-decimated space.  The sync rate is
+    # the channel (target) rate × (target_decimation / sync_decimation).
+    # For RSPduo: 62500 × 4 = 250000.  For RTL-SDR: 64000 × 4 = 256000.
+    # Apply crystal correction for accurate ns conversion.
+    corr_a = float(event_a.get("sync_sample_rate_correction", 1.0))
+    corr_b = float(event_b.get("sync_sample_rate_correction", 1.0))
+    target_rate_a = float(event_a.get("channel_sample_rate_hz", 62_500.0))
+    target_rate_b = float(event_b.get("channel_sample_rate_hz", 62_500.0))
+    sync_rate_a = target_rate_a * 4.0 * corr_a
+    sync_rate_b = target_rate_b * 4.0 * corr_b
+    grid_correction_ns = _sync_calibrator.update(
+        node_a, node_b, dsamp_a, dsamp_b, sync_rate_a, sync_rate_b,
+    )
+    raw_ns -= grid_correction_ns
+
+    if _SYNC_DIAG and grid_correction_ns != 0.0:
+        logger.info(
+            "sync_cal %s<->%s (%s): grid_correction=%.0f ns  raw_ns_before=%.0f  after=%.0f",
+            node_a, node_b, event_type,
+            grid_correction_ns, raw_ns + grid_correction_ns, raw_ns,
+        )
 
     correction_ns = path_delay_correction_ns(
         sync_tx_lat=event_a["sync_tx_lat"],
