@@ -2052,6 +2052,7 @@ def _carrier_event_to_db_dict(event: CarrierEvent) -> dict[str, Any]:
         "transition_end": event.transition_end,
         # Sync diagnostics for cross-node verification
         "sync_pilot_phase_rad": event.sync_pilot_phase_rad,
+        "sync_sample_index": event.sync_sample_index,
         "sync_delta_samples": event.sync_delta_samples,
         "sync_sample_rate_correction": event.sync_sample_rate_correction,
     }

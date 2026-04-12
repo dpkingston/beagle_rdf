@@ -93,6 +93,7 @@ class TDOAMeasurement:
     transition_end: int = 0             # Transition zone end within snippet (samples)
     # Sync event diagnostics for server-side verification
     sync_pilot_phase_rad: float = 0.0   # pilot_phase_rad from the matched SyncEvent
+    sync_sample_index: float = 0.0      # absolute sample index of the matched SyncEvent
     sync_delta_samples: float = 0.0     # raw sample delta before ns conversion
 
 
@@ -346,6 +347,7 @@ class DeltaComputer:
             transition_start=getattr(event, 'transition_start', 0),
             transition_end=getattr(event, 'transition_end', 0),
             sync_pilot_phase_rad=best.pilot_phase_rad,
+            sync_sample_index=best.sample_index,
             sync_delta_samples=delta_samples,
         )
 

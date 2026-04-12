@@ -130,8 +130,10 @@ class CarrierEvent(BaseModel):
     # Sync event diagnostics — sent so the server can verify all nodes
     # are using the same RDS bit boundary for a given transmission event.
     sync_pilot_phase_rad: float = 0.0
-    """Pilot phase (radians) at the matched SyncEvent.  Nodes on the same
-    bit boundary should report nearly identical values."""
+    """Pilot phase (radians) at the matched SyncEvent."""
+
+    sync_sample_index: float = 0.0
+    """Absolute sample index of the matched SyncEvent (sync-decimated space)."""
 
     sync_delta_samples: float = 0.0
     """Raw sample difference (carrier - sync) before ns conversion."""

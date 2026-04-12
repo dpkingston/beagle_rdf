@@ -414,21 +414,29 @@ def compute_tdoa_s(
     # Sync diagnostics: log pilot phase comparison to verify bit-boundary
     # alignment across nodes.  Gated by BEAGLE_SYNC_DIAG=1 env var.
     if _SYNC_DIAG:
-        phase_a = event_a.get("sync_pilot_phase_rad", 0.0)
-        phase_b = event_b.get("sync_pilot_phase_rad", 0.0)
         dsamp_a = event_a.get("sync_delta_samples", 0.0)
         dsamp_b = event_b.get("sync_delta_samples", 0.0)
+        sync_idx_a = event_a.get("sync_sample_index", 0.0)
+        sync_idx_b = event_b.get("sync_sample_index", 0.0)
         corr_a = event_a.get("sync_sample_rate_correction", 1.0)
         corr_b = event_b.get("sync_sample_rate_correction", 1.0)
-        if phase_a != 0.0 or phase_b != 0.0:
-            import math
-            phase_diff = (phase_a - phase_b + math.pi) % (2 * math.pi) - math.pi
+        if dsamp_a != 0.0 or dsamp_b != 0.0:
+            # Sync sample difference in RDS bit periods — should be near an
+            # integer if both nodes are counting bit boundaries consistently.
+            sync_diff_samples = sync_idx_a - sync_idx_b
+            rate_avg = 250_000.0 * (corr_a + corr_b) / 2.0
+            rds_bit_samples = rate_avg / 1187.5
+            sync_diff_bits = sync_diff_samples / rds_bit_samples if rds_bit_samples > 0 else 0.0
+            sync_diff_frac = sync_diff_bits - round(sync_diff_bits)
             logger.info(
                 "sync_diag %s<->%s (%s): delta_ns=[%s, %s]  delta_samp=[%.1f, %.1f]  "
-                "pilot_phase=[%.4f, %.4f] phase_diff=%.4f rad  crystal=[%.8f, %.8f]",
+                "sync_idx=[%.1f, %.1f]  sync_diff=%.1f samp (%.2f bits, frac=%.4f)  "
+                "crystal=[%.8f, %.8f]",
                 node_a, node_b, event_type,
                 delta_a, delta_b, dsamp_a, dsamp_b,
-                phase_a, phase_b, phase_diff, corr_a, corr_b,
+                sync_idx_a, sync_idx_b,
+                sync_diff_samples, sync_diff_bits, sync_diff_frac,
+                corr_a, corr_b,
             )
 
     if delta_a is None or delta_b is None:

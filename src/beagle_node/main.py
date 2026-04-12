@@ -515,6 +515,7 @@ def run(args: argparse.Namespace | None = None) -> int:
             transition_start=m.transition_start,
             transition_end=m.transition_end,
             sync_pilot_phase_rad=m.sync_pilot_phase_rad,
+            sync_sample_index=m.sync_sample_index,
             sync_delta_samples=m.sync_delta_samples,
             sync_sample_rate_correction=m.sample_rate_correction,
             channel_sample_rate_hz=_target_sample_rate_hz,
