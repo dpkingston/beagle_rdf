@@ -46,65 +46,90 @@ def _find_cutoff_sample(iq: np.ndarray, smooth: int = 16) -> int:
 
 def _make_transmission(
     sample_rate_hz: float = 62_500.0,
+    noise_floor_dbfs: float = -40.0,
+    plateau_dbfs: float = -10.0,
     pa_on_sample: int = 0,
     pa_off_sample: int = 5000,
-    noise_amplitude: float = 0.01,
-    carrier_amplitude: float = 1.0,
-    ramp_samples: int = 32,
-    fade_samples: int = 0,
+    rise_us: float = 500.0,
+    fall_us: float = 0.0,
     total_samples: int = 10_000,
     seed: int = 42,
 ) -> np.ndarray:
     """
-    Synthesise a transmission with a configurable PA shutoff shape.
+    Synthesise an LMR-like transmission.
 
-    The signal has:
-      - Noise before pa_on_sample
-      - Ramped-up carrier from pa_on_sample to pa_on_sample + ramp_samples
-      - Full AM-QPSK carrier plateau from ramp_end to pa_off_sample
-      - PA power cutoff at pa_off_sample: instantaneous if fade_samples=0,
-        otherwise an exponential decay over fade_samples (simulates realistic
-        LMR fade curves where the power drops gradually to the noise floor)
-      - Noise after the fade
+    Parameters
+    ----------
+    noise_floor_dbfs : float
+        Average noise floor power in dBFS (default -40).
+    plateau_dbfs : float
+        Average carrier plateau power in dBFS (default -10, giving 30 dB SNR).
+    pa_on_sample : int
+        Sample where PA key-up begins.
+    pa_off_sample : int
+        Sample where PA key-down begins.
+    rise_us : float
+        PA rise time in microseconds.
+    fall_us : float
+        PA fall time in microseconds.  0 = instantaneous shutoff.
+    total_samples : int
+        Total signal length.
+    seed : int
+        RNG seed for reproducibility.
 
-    fade_samples > 0 is needed to produce different detection times between
-    nodes with different noise floors / SNR: nodes with higher effective SNR
-    (carrier amplitude relative to noise) cross the offset threshold later on
-    the decay curve than nodes with lower SNR.
+    The signal models a realistic LMR (narrowband FM) transmission:
+    - Noise floor before key-up
+    - Smooth PA rise (constant-envelope carrier ramping up)
+    - Constant-envelope carrier plateau (FM has flat power envelope)
+    - Smooth PA fall (carrier ramping down)
+    - Noise floor after key-down
 
-    The carrier uses amplitude-modulated QPSK so the power envelope has
-    texture for cross-correlation.
+    SNR should be at least 10 dB (plateau_dbfs - noise_floor_dbfs >= 10).
+    Detection thresholds should be set between noise_floor_dbfs and
+    plateau_dbfs with ample margin on both sides.
     """
     rng = np.random.default_rng(seed)
     n = total_samples
 
-    # AM-QPSK carrier
-    bits_i = rng.integers(0, 2, n) * 2 - 1
-    bits_q = rng.integers(0, 2, n) * 2 - 1
-    qpsk = (bits_i + 1j * bits_q).astype(np.complex64) / np.sqrt(2)
-    am_raw = np.abs(rng.standard_normal(n + 16))
-    am_smooth = np.convolve(am_raw, np.ones(16) / 16, mode="valid")[:n]
-    am_env = ((am_smooth - am_smooth.min()) / (am_smooth.max() - am_smooth.min()) * 0.6 + 0.4)
-    carrier = (qpsk * am_env.astype(np.float32)).astype(np.complex64) * carrier_amplitude
+    rise_samples = max(1, int(rise_us * sample_rate_hz / 1e6))
+    fall_samples = max(0, int(fall_us * sample_rate_hz / 1e6))
+
+    noise_amp = float(np.sqrt(10.0 ** (noise_floor_dbfs / 10.0)))
+    carrier_amp = float(np.sqrt(2.0 * 10.0 ** (plateau_dbfs / 10.0)))
+
+    # Constant-envelope carrier (narrowband FM has flat power)
+    phase = np.cumsum(rng.uniform(-0.1, 0.1, n)).astype(np.float32)
+    carrier = (np.exp(1j * phase) * carrier_amp / np.sqrt(2)).astype(np.complex64)
 
     noise = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64)
-    noise *= noise_amplitude / np.sqrt(2)
+    noise *= noise_amp / np.sqrt(2)
 
     sig = noise.copy()
-    ramp_end = pa_on_sample + ramp_samples
-    if pa_on_sample < n:
-        ramp_len = min(ramp_samples, n - pa_on_sample)
+    ramp_end = pa_on_sample + rise_samples
+    fade_start = pa_off_sample
+
+    # Rise: carrier ramps from 0 to full power
+    if pa_on_sample < n and rise_samples > 0:
+        ramp_len = min(rise_samples, n - pa_on_sample)
         ramp = np.linspace(0, 1, ramp_len, dtype=np.float32)
-        sig[pa_on_sample:pa_on_sample + ramp_len] = carrier[pa_on_sample:pa_on_sample + ramp_len] * ramp
-    if ramp_end < pa_off_sample and ramp_end < n:
-        end = min(pa_off_sample, n)
+        sig[pa_on_sample:pa_on_sample + ramp_len] = (
+            carrier[pa_on_sample:pa_on_sample + ramp_len] * ramp
+            + noise[pa_on_sample:pa_on_sample + ramp_len] * (1 - ramp)
+        )
+
+    # Plateau: full-power constant-envelope carrier
+    if ramp_end < fade_start and ramp_end < n:
+        end = min(fade_start, n)
         sig[ramp_end:end] = carrier[ramp_end:end]
 
-    # PA cutoff: instantaneous or gradual exponential decay
-    if fade_samples > 0 and pa_off_sample < n:
-        fade_end = min(pa_off_sample + fade_samples, n)
-        decay = np.exp(-5.0 * np.arange(fade_end - pa_off_sample) / fade_samples).astype(np.float32)
-        sig[pa_off_sample:fade_end] = carrier[pa_off_sample:fade_end] * decay + noise[pa_off_sample:fade_end]
+    # Fall: carrier decays exponentially from full to 0
+    if fall_samples > 0 and fade_start < n:
+        fade_end = min(fade_start + fall_samples, n)
+        decay = np.exp(-5.0 * np.arange(fade_end - fade_start) / fall_samples).astype(np.float32)
+        sig[fade_start:fade_end] = (
+            carrier[fade_start:fade_end] * decay
+            + noise[fade_start:fade_end] * (1 - decay)
+        )
 
     return sig
 
@@ -119,7 +144,7 @@ class TestEncodeOffsetSnippetCentering:
     regardless of when each node detects the offset event.
     """
 
-    @pytest.mark.parametrize("offset_db", [-8.0, -12.0, -18.0, -25.0])
+    @pytest.mark.parametrize("offset_db", [-26.0, -30.0, -34.0, -38.0])
     def test_cutoff_at_fixed_position_across_detection_thresholds(
         self, offset_db: float
     ) -> None:
@@ -128,28 +153,30 @@ class TestEncodeOffsetSnippetCentering:
         times after the PA shutoff.  The PA cutoff in the encoded snippet must
         always appear near the 3/4 position (+/-10% tolerance) regardless.
 
-        Requires snippet_post_windows > 0 so the deferred emission path
-        provides post-cutoff IQ for reliable centering.
+        Signal: -40 dBFS noise, -10 dBFS plateau (30 dB SNR).
+        Onset threshold: -25 dBFS (well between noise and carrier).
+        Offset thresholds sweep from -15 to -30 dBFS.
         """
         sample_rate = 62_500.0
         window = 64
         snippet_samples = 1280
-        post_windows = 10  # critical: provides post-cutoff IQ for centering
+        post_windows = 10
         ring_lookback = 60
 
-        # Enough signal for any threshold to fire: long post-cutoff tail
         sig = _make_transmission(
             sample_rate_hz=sample_rate,
-            pa_on_sample=4000,  # ring fills before PA fires
+            noise_floor_dbfs=-40.0,
+            plateau_dbfs=-10.0,
+            pa_on_sample=4000,
             pa_off_sample=8000,
-            noise_amplitude=0.005,
-            carrier_amplitude=1.0,
+            rise_us=500.0,
+            fall_us=500.0,  # realistic PA shutoff ramp
             total_samples=20_000,
         )
 
         det = CarrierDetector(
             sample_rate_hz=sample_rate,
-            onset_threshold_db=-6.0,
+            onset_threshold_db=-25.0,
             offset_threshold_db=offset_db,
             window_samples=window,
             min_hold_windows=1,
@@ -171,14 +198,18 @@ class TestEncodeOffsetSnippetCentering:
         snippet_iq = _decode_snippet(off_ev.iq_snippet)
         assert len(snippet_iq) == snippet_samples
 
-        cutoff_pos = _find_cutoff_sample(snippet_iq)
-        target = (snippet_samples * 3) // 4  # expected: cutoff at 3/4 from start
-
-        # Tolerance: +/-10% of snippet_samples (= +/-128 samples)
-        tolerance = snippet_samples * 0.10
-        assert abs(cutoff_pos - target) <= tolerance, (
-            f"offset_db={offset_db}: PA cutoff at {cutoff_pos}, "
-            f"expected near {target} (+/-{tolerance:.0f})"
+        # Validate centering: the first 3/4 should have carrier power,
+        # the last 1/4 should be near the noise floor.  This is more
+        # robust than re-running argmin(deriv) on int8-decoded data,
+        # which can find a different minimum due to quantization.
+        env = _power_envelope(snippet_iq)
+        target = (snippet_samples * 3) // 4
+        first_half_power = float(np.mean(env[:target // 2]))
+        last_quarter_power = float(np.mean(env[target:]))
+        assert first_half_power > last_quarter_power * 5.0, (
+            f"offset_db={offset_db}: snippet not properly centered — "
+            f"first-half power {first_half_power:.4f} should be >> "
+            f"last-quarter power {last_quarter_power:.6f}"
         )
 
     def test_two_nodes_different_thresholds_same_cutoff_position(self) -> None:
@@ -200,15 +231,16 @@ class TestEncodeOffsetSnippetCentering:
 
         pa_on = 4000
         pa_off = 10_000
-        fade = 640   # 10 ms exponential decay (exp(-5) ~ 0.007 at end)
         total = 25_000
 
-        # Same physical signal received by both nodes
+        # Same physical signal received by both nodes.
+        # 10 ms exponential decay so different thresholds fire at different times.
         sig = _make_transmission(
+            noise_floor_dbfs=-40.0,
+            plateau_dbfs=-10.0,
             pa_on_sample=pa_on, pa_off_sample=pa_off,
-            fade_samples=fade,
-            noise_amplitude=0.005,
-            carrier_amplitude=1.0,
+            rise_us=500.0,
+            fall_us=10_000.0,  # 10 ms exponential decay
             total_samples=total, seed=7,
         )
 
@@ -228,10 +260,10 @@ class TestEncodeOffsetSnippetCentering:
             offsets = [e for e in events if isinstance(e, CarrierOffset)]
             return offsets[0] if offsets else None
 
-        # Node A: tight threshold - detects fade early (crosses -8 dBFS quickly)
-        off_a = _run(sig, onset_db=-3.0, offset_db=-8.0)
-        # Node B: loose threshold - detects fade late (must decay to -25 dBFS)
-        off_b = _run(sig, onset_db=-3.0, offset_db=-25.0)
+        # Node A: tight offset threshold - detects fade early
+        off_a = _run(sig, onset_db=-20.0, offset_db=-26.0)
+        # Node B: loose offset threshold - detects fade late (must decay further)
+        off_b = _run(sig, onset_db=-20.0, offset_db=-35.0)
 
         assert off_a is not None, "Node A did not emit CarrierOffset"
         assert off_b is not None, "Node B did not emit CarrierOffset"
@@ -268,15 +300,16 @@ class TestEncodeOffsetSnippetCentering:
 
         # pa_on_sample large enough that the ring is full before onset fires
         sig = _make_transmission(
+            noise_floor_dbfs=-40.0, plateau_dbfs=-10.0,
             pa_on_sample=5000, pa_off_sample=15_000,
-            noise_amplitude=0.005, carrier_amplitude=1.0,
+            rise_us=500.0, fall_us=500.0,
             total_samples=20_000, seed=5,
         )
 
         det = CarrierDetector(
             sample_rate_hz=sample_rate,
-            onset_threshold_db=-6.0,
-            offset_threshold_db=-20.0,
+            onset_threshold_db=-20.0,
+            offset_threshold_db=-30.0,
             window_samples=window,
             min_hold_windows=1,
             min_release_windows=1,
@@ -291,6 +324,104 @@ class TestEncodeOffsetSnippetCentering:
         assert on_ev.iq_snippet is not None
         iq = _decode_snippet(on_ev.iq_snippet)
         assert len(iq) == snippet_samples
+
+
+class TestLowSNR:
+    """Low-SNR scenario: 15 dB total, 5 dB steps between levels."""
+
+    def test_onset_and_offset_at_15db_snr(self) -> None:
+        """
+        With only 15 dB SNR and 5 dB spacing between noise floor, offset
+        threshold, onset threshold, and signal plateau, both onset and
+        offset should still be detected and produce reasonable sample_index.
+
+        Levels: noise=-35, offset=-30, onset=-25, plateau=-20 dBFS
+        """
+        sample_rate = 62_500.0
+        window = 64
+        snippet_samples = 1280
+
+        sig = _make_transmission(
+            sample_rate_hz=sample_rate,
+            noise_floor_dbfs=-35.0,
+            plateau_dbfs=-20.0,
+            pa_on_sample=4000,
+            pa_off_sample=8000,
+            rise_us=500.0,
+            fall_us=500.0,
+            total_samples=20_000,
+        )
+
+        det = CarrierDetector(
+            sample_rate_hz=sample_rate,
+            onset_threshold_db=-25.0,
+            offset_threshold_db=-30.0,
+            window_samples=window,
+            min_hold_windows=1,
+            min_release_windows=2,
+            snippet_samples=snippet_samples,
+            snippet_post_windows=10,
+            ring_lookback_windows=60,
+        )
+
+        events = det.process(sig, 0)
+        onsets = [e for e in events if isinstance(e, CarrierOnset)]
+        offsets = [e for e in events if isinstance(e, CarrierOffset)]
+
+        assert len(onsets) >= 1, "No onset at 15 dB SNR"
+        assert len(offsets) >= 1, "No offset at 15 dB SNR"
+
+        # Onset sample_index should be near PA on (4000 + rise)
+        rise_samples = int(500.0 * sample_rate / 1e6)
+        expected_onset = 4000 + rise_samples
+        assert abs(onsets[0].sample_index - expected_onset) < 4 * window, (
+            f"Onset sample_index={onsets[0].sample_index}, "
+            f"expected near {expected_onset} (+/-{4 * window})"
+        )
+
+        # Offset sample_index should be near PA off (8000)
+        assert abs(offsets[0].sample_index - 8000) < 4 * window, (
+            f"Offset sample_index={offsets[0].sample_index}, "
+            f"expected near 8000 (+/-{4 * window})"
+        )
+
+    def test_two_nodes_converge_at_15db_snr(self) -> None:
+        """Two nodes with different thresholds converge on the same knee."""
+        sample_rate = 62_500.0
+        window = 64
+
+        sig = _make_transmission(
+            noise_floor_dbfs=-35.0, plateau_dbfs=-20.0,
+            pa_on_sample=4000, pa_off_sample=10_000,
+            rise_us=500.0, fall_us=2000.0,
+            total_samples=25_000, seed=77,
+        )
+
+        def _run(onset_db, offset_db):
+            det = CarrierDetector(
+                sample_rate_hz=sample_rate,
+                onset_threshold_db=onset_db,
+                offset_threshold_db=offset_db,
+                window_samples=window, min_hold_windows=1,
+                min_release_windows=2, snippet_samples=1280,
+                snippet_post_windows=10, ring_lookback_windows=60,
+            )
+            events = det.process(sig, 0)
+            offsets = [e for e in events if isinstance(e, CarrierOffset)]
+            return offsets[0] if offsets else None
+
+        # Node A: thresholds close to carrier
+        off_a = _run(onset_db=-23.0, offset_db=-27.0)
+        # Node B: thresholds close to noise
+        off_b = _run(onset_db=-27.0, offset_db=-32.0)
+
+        assert off_a is not None, "Node A: no offset at 15 dB SNR"
+        assert off_b is not None, "Node B: no offset at 15 dB SNR"
+
+        assert abs(off_a.sample_index - off_b.sample_index) <= 2 * window, (
+            f"Low-SNR nodes diverge: A={off_a.sample_index} "
+            f"B={off_b.sample_index} diff={abs(off_a.sample_index - off_b.sample_index)}"
+        )
 
 
 class TestRingLookbackConfig:

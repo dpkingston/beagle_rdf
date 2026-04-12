@@ -829,55 +829,44 @@ class CarrierDetector:
         iq_cat = np.concatenate(parts)
         assert len(iq_cat) >= 32, "Onset IQ data too short for derivative - cannot happen"
 
-        # Smoothed power envelope and its derivative
+        # Smoothed power envelope and its first/second derivatives
         smooth = 16
         power = iq_cat.real.astype(np.float64) ** 2 + iq_cat.imag.astype(np.float64) ** 2
         kernel = np.ones(smooth) / smooth
         envelope = np.convolve(power, kernel, mode='same')
-        deriv = np.diff(envelope)
+        deriv2 = np.diff(np.diff(envelope))
 
-        # Detection point: end of pre_snap (where threshold was exceeded).
+        # The onset knee is where the rise meets the plateau — the second
+        # derivative is most negative (the rise is decelerating).
+        #
+        # Detection fires at the bottom of the rise (threshold just
+        # exceeded).  Walk FORWARD one window at a time, averaging power
+        # in each window.  When the average stabilises (current ≈ previous,
+        # both high), we've reached the plateau.  The knee is between the
+        # detection point and the plateau.
         pre_len = sum(len(w) for w in pre_snap)
         det_idx = min(pre_len, len(envelope) - 1)
 
-        # Noise level: before the rise (behind the detection point).
-        noise_end = max(0, det_idx - self._window * 2)
-        noise_start = max(0, noise_end - self._window * 4)
-        if noise_end > noise_start:
-            noise_level = float(np.median(envelope[noise_start:noise_end]))
-        else:
-            noise_level = float(np.min(envelope[:max(1, det_idx)]))
-
-        # Plateau level: after the rise settles (ahead of detection point).
-        post_start = min(det_idx + self._window * 2, len(envelope))
-        post_end = min(post_start + self._window * 4, len(envelope))
-        if post_end > post_start:
-            plateau_level = float(np.median(envelope[post_start:post_end]))
-        else:
-            plateau_level = float(np.max(envelope[det_idx:]))
-
-        lo_thresh = noise_level + 0.2 * (plateau_level - noise_level)
-        hi_thresh = noise_level + 0.8 * (plateau_level - noise_level)
-
-        # Walk backward from detection to the noise floor.
-        search_lo = max(0, det_idx - self._snippet_samples)
-        for i in range(det_idx, search_lo - 1, -1):
-            if envelope[i] <= lo_thresh:
-                search_lo = max(0, i - smooth)
+        plateau_end = min(len(envelope), det_idx + self._window)
+        prev_avg = float(np.mean(envelope[det_idx:plateau_end])) if plateau_end > det_idx else 0.0
+        for w in range(1, 20):
+            ws = det_idx + w * self._window
+            we = min(ws + self._window, len(envelope))
+            if we <= ws:
                 break
-
-        # Walk forward from detection to the plateau.
-        search_hi = min(len(deriv), det_idx + self._snippet_samples)
-        for i in range(det_idx, min(len(envelope), det_idx + self._snippet_samples)):
-            if envelope[i] >= hi_thresh:
-                search_hi = min(len(deriv), i + smooth)
+            avg = float(np.mean(envelope[ws:we]))
+            if avg > 0 and abs(avg - prev_avg) / avg < 0.1:
+                plateau_end = we
                 break
+            prev_avg = avg
+            plateau_end = we
 
-        # Peak positive derivative within the transition zone
-        search_lo = max(0, search_lo)
+        # argmin(d2) in [detection, plateau_end] = the onset knee
+        search_lo = max(0, det_idx)
+        search_hi = min(len(deriv2), plateau_end)
         search_hi = max(search_lo + 1, search_hi)
-        region = deriv[search_lo:search_hi]
-        rise_idx = search_lo + int(np.argmax(region)) if len(region) > 0 else int(np.argmax(deriv))
+        region = deriv2[search_lo:search_hi]
+        rise_idx = search_lo + int(np.argmin(region)) if len(region) > 0 else int(np.argmax(np.diff(envelope)))
 
         # Place the onset at 1/4 from the start of the snippet.
         # This gives snippet/4 noise (pre-onset) + 3*snippet/4 carrier
@@ -906,34 +895,62 @@ class CarrierDetector:
         """
         Encode a snippet for a carrier-offset event anchored on the PA shutoff.
 
-        The PA shutoff is an instantaneous transmitter-side event (bias cut)
-        that appears at the same wall-clock time on all receivers.  Finding the
-        peak negative power derivative in the combined pre+post IQ data identifies
-        that moment, and the snippet is then placed so the shutoff lands at a
-        fixed position (3/4 from the start) regardless of detection timing.
+        The derivative search is constrained to the transition zone around
+        the detection point using the smoothed power envelope.  The detection
+        point (end of pre_snap) is near the bottom of the fall — plateau is
+        behind, noise floor is ahead.  We walk backward to the plateau and
+        forward to confirm the noise floor, then search for argmin(deriv)
+        only within that zone.
 
         Using post_buf (from the deferred emission path) is strongly recommended:
-        it supplies post-cutoff noise samples that keep the target position inside
-        the snippet even when detection fires only a few windows after the shutoff.
-        Without post_buf the target position may be clamped, causing the cutoff to
-        appear at different positions for nodes with different detection delays --
-        which reintroduces the alignment problem this method is designed to solve.
+        it supplies post-cutoff noise samples that confirm the transition and
+        keep the target position inside the snippet.
         """
         parts = list(pre_snap) + list(post_buf or [])
         assert parts, "No IQ data for offset snippet - cannot happen"
         iq_cat = np.concatenate(parts)
         assert len(iq_cat) >= 32, "Offset IQ data too short for derivative - cannot happen"
 
-        # Smoothed power envelope and its derivative
+        # Smoothed power envelope and its first/second derivatives
         smooth = 16
         power = iq_cat.real.astype(np.float64) ** 2 + iq_cat.imag.astype(np.float64) ** 2
         kernel = np.ones(smooth) / smooth
         envelope = np.convolve(power, kernel, mode='same')
-        deriv = np.diff(envelope)
-        assert len(deriv) > 0, "Empty derivative - cannot happen"
+        deriv2 = np.diff(np.diff(envelope))
+        assert len(deriv2) > 0, "Empty second derivative - cannot happen"
 
-        # Peak negative derivative = fastest power drop = PA shutoff moment
-        cut_idx = int(np.argmin(deriv))
+        # The offset knee is where the plateau meets the fall — the second
+        # derivative is most negative (the plateau is accelerating into
+        # the fall).
+        #
+        # Detection fires at the bottom of the fall (threshold just crossed
+        # downward).  Walk BACKWARD one window at a time, averaging power
+        # in each window.  When the average stabilises (current ≈ previous,
+        # both high), we've reached the plateau.  The knee is between the
+        # plateau and the detection point.
+        pre_len = sum(len(w) for w in pre_snap)
+        det_idx = min(pre_len, len(envelope) - 1)
+
+        prev_avg = float(np.mean(envelope[max(0, det_idx - self._window):det_idx]))
+        plateau_start = max(0, det_idx - self._window)
+        for w in range(2, 20):
+            we = det_idx - (w - 1) * self._window
+            ws = max(0, det_idx - w * self._window)
+            if ws >= we:
+                break
+            avg = float(np.mean(envelope[ws:we]))
+            if avg > 0 and abs(avg - prev_avg) / avg < 0.1:
+                plateau_start = ws
+                break
+            prev_avg = avg
+            plateau_start = ws
+
+        # argmin(d2) in [plateau_start, detection] = the offset knee
+        search_lo = max(0, plateau_start)
+        search_hi = min(len(deriv2), det_idx)
+        search_hi = max(search_lo + 1, search_hi)
+        region = deriv2[search_lo:search_hi]
+        cut_idx = search_lo + int(np.argmin(region)) if len(region) > 0 else int(np.argmin(np.diff(envelope)))
 
         # Place the PA shutoff at 3/4 from the start of the snippet.
         # This uses snippet*3/4 samples of carrier (pre-cutoff) for xcorr
