@@ -11,6 +11,13 @@ from beagle_node.sdr.mock import MockReceiver
 from beagle_node.timing.clock import MockClock
 
 
+@pytest.fixture(autouse=True)
+def _reset_sync_calibrator():
+    """Reset the global SyncCalibrator before each test to prevent cross-test contamination."""
+    from beagle_server.tdoa import reset_sync_calibrator
+    reset_sync_calibrator()
+
+
 # ---------------------------------------------------------------------------
 # Shared constants
 # ---------------------------------------------------------------------------
