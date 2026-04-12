@@ -235,6 +235,22 @@ def run(args: argparse.Namespace | None = None) -> int:
             self-restart (exit code 75) so systemd brings us back up with
             the new config.
             """
+            # Log a summary of what changed at INFO level, including values.
+            _diff_fields = [
+                "sdr_mode", "carrier", "target_channels", "clock",
+                "sync_signal", "location", "reporter", "log_level",
+                "health_port", "freq_hop", "rspduo", "sync_sdr", "target_sdr",
+            ]
+            _changes = []
+            for _f in _diff_fields:
+                old_v = getattr(config, _f, None)
+                new_v = getattr(new_config, _f, None)
+                if old_v != new_v:
+                    _changes.append(_f)
+                    logger.info("Config change: %s: %r -> %r", _f, old_v, new_v)
+            if not _changes:
+                logger.info("Config update: version bumped but no field changes detected")
+
             need_restart = False
 
             # --- Restart-required: SDR hardware params ---
