@@ -83,6 +83,8 @@ class SyncCalibrator:
         # Key: tuple(sorted([node_a, node_b])), value: (correction_frac, count)
         # correction_frac is in fractional bit periods, canonical direction.
         self._pairs: dict[tuple[str, str], tuple[float, int]] = {}
+        # Track last sync_sample_index per node to detect restarts.
+        self._last_idx: dict[str, float] = {}
 
     def update(
         self,
@@ -96,6 +98,9 @@ class SyncCalibrator:
         Uses sync_sample_index and sync_sample_rate_correction (sent by
         every node in every carrier event) to compute the fractional-bit
         grid offset purely from sample counting — no wall-clock involved.
+
+        Detects node restarts (sync_sample_index drops) and resets the
+        affected pair's EMA so stale calibration doesn't persist.
         """
         key = tuple(sorted([node_a, node_b]))
         sign = 1.0 if key[0] == node_a else -1.0
@@ -110,6 +115,23 @@ class SyncCalibrator:
             est, count = self._pairs.get(key, (0.0, 0))
             return est * sign * _T_SYNC_NS if count >= self._min_samples else 0.0
 
+        # Detect node restarts: sync_sample_index drops significantly.
+        # A restart resets the pilot phase tracker, changing the grid offset,
+        # so all affected pair EMA states must be reset.
+        for nid, idx in [(node_a, sync_idx_a), (node_b, sync_idx_b)]:
+            prev = self._last_idx.get(nid)
+            if prev is not None and idx < prev * 0.5:
+                # Node restarted — reset all pairs involving this node.
+                stale = [k for k in self._pairs if nid in k]
+                for k in stale:
+                    del self._pairs[k]
+                if stale:
+                    logger.info(
+                        "sync_cal: node %s restarted (idx %.0f -> %.0f); "
+                        "reset %d pair(s)", nid, prev, idx, len(stale),
+                    )
+            self._last_idx[nid] = idx
+
         # Compute fractional-bit offset from sample indices.
         # sync_sample_index is in sync-decimated sample space (~250 kHz).
         sync_diff_samples = sync_idx_a - sync_idx_b
@@ -118,10 +140,20 @@ class SyncCalibrator:
         sync_diff_bits = sync_diff_samples / rds_bit_samples
         frac = sync_diff_bits - round(sync_diff_bits)
 
-        # Normalize to canonical key direction (sorted pair order)
+        # Sanity check: frac should be in [-0.5, 0.5].  If the existing EMA
+        # and the new measurement disagree by more than 0.25 (a quarter bit
+        # period = 210 us), the EMA is likely stale (e.g. from a restart we
+        # didn't catch, or initial convergence).  Reset.
         signed_frac = frac * sign
-
         est, count = self._pairs.get(key, (0.0, 0))
+        if count >= self._min_samples and abs(signed_frac - est) > 0.25:
+            logger.info(
+                "sync_cal: %s<->%s frac jumped %.4f -> %.4f; resetting EMA",
+                key[0], key[1], est, signed_frac,
+            )
+            est = signed_frac
+            count = 0
+
         if count == 0:
             est = signed_frac
         else:
