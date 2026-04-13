@@ -597,18 +597,6 @@ def compute_tdoa_s(
         node_b_lon=event_b["node_lon"],
     )
 
-    # Sync period disambiguation: resolve which RDS bit boundary each node
-    # referenced.  |true_TDOA| <= dist(A,B)/c << T_sync/2 = 421 usec.
-    n = round((raw_ns + correction_ns) / _T_SYNC_NS)
-    if n != 0:
-        logger.debug(
-            "Sync disambiguation %s<->%s (%s): n=%+d raw_ns=%+.0f->%+.0f ns",
-            node_a, node_b, event_type, n, raw_ns, raw_ns - n * _T_SYNC_NS,
-        )
-        raw_ns -= n * _T_SYNC_NS
-
-    coarse_tdoa_ns = raw_ns + correction_ns
-
     # --- xcorr: PA transition alignment across nodes ---
     #
     # Snippets are anchored at the detection point (threshold crossing),
@@ -618,14 +606,11 @@ def compute_tdoa_s(
     # the timing difference between where each node's detection landed
     # relative to the true PA edge.
     #
-    # The coarse TDOA (sync_delta) measures sync-to-detection-point; the
-    # xcorr correction adjusts for the detection-to-feature offset
-    # between nodes.  The sum gives the true TDOA.
-    #
-    # Geometric plausibility: the total TDOA (coarse + xcorr) must be
-    # within max_xcorr_baseline_km.  The xcorr lag itself can be large
-    # (hundreds of µs if detection points differ significantly) — this
-    # is expected and correct.
+    # xcorr is applied BEFORE disambiguation because the coarse raw_ns
+    # varies by hundreds of µs (depending on where detection fired on
+    # the PA curve).  Without xcorr correction first, disambiguation
+    # round() can land on different sides of the T_SYNC boundary for
+    # different events of the same transmission.
 
     xcorr_refinement_ns = 0.0
     xcorr_used = False
@@ -662,7 +647,23 @@ def compute_tdoa_s(
                 xcorr_snr, min_xcorr_snr, node_a, node_b, event_type,
             )
 
-    tdoa_ns = coarse_tdoa_ns + xcorr_refinement_ns
+    # Combine: raw sync_delta + grid calibration + xcorr feature alignment
+    # + FM path correction.  This is the full measurement before disambiguation.
+    combined_ns = raw_ns + xcorr_refinement_ns + correction_ns
+
+    # Sync period disambiguation: resolve which RDS bit boundary each node
+    # referenced.  Applied to the COMPLETE measurement (including xcorr)
+    # so that the round() decision is based on the true TDOA, not the
+    # noisy detection-point-based coarse value.
+    n = round(combined_ns / _T_SYNC_NS)
+    if n != 0:
+        logger.debug(
+            "Sync disambiguation %s<->%s (%s): n=%+d combined=%+.0f->%+.0f ns",
+            node_a, node_b, event_type, n, combined_ns, combined_ns - n * _T_SYNC_NS,
+        )
+        combined_ns -= n * _T_SYNC_NS
+
+    tdoa_ns = combined_ns
 
     # Geometric plausibility: when xcorr is used, the total TDOA must not
     # exceed the max physical TDOA for the node baseline.  This rejects false
@@ -679,6 +680,7 @@ def compute_tdoa_s(
             )
             return None
 
+    coarse_tdoa_ns = raw_ns + correction_ns  # for logging only
     if xcorr_used:
         logger.info(
             "TDOA (sync_delta+xcorr): %.1f ns (coarse=%.1f + xcorr=%.1f, SNR=%.2f, type=%s) %s<->%s",
