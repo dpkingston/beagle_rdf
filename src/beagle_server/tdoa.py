@@ -77,7 +77,7 @@ class SyncCalibrator:
     correction.
     """
 
-    def __init__(self, alpha: float = 0.02, min_samples: int = 5) -> None:
+    def __init__(self, alpha: float = 0.2, min_samples: int = 3) -> None:
         self._alpha = alpha
         self._min_samples = min_samples
         # Key: tuple(sorted([node_a, node_b])), value: (correction_frac, count)
