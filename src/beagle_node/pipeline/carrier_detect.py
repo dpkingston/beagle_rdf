@@ -65,7 +65,7 @@ _TIMING_DIAG = os.environ.get("BEAGLE_TIMING_DIAG") == "1"
 @dataclass(frozen=True)
 class CarrierOnset:
     """LMR carrier has appeared."""
-    sample_index: int           # In the continuous IQ stream
+    sample_index: float         # Sub-sample knee position in the continuous IQ stream
     power_db: float             # Instantaneous power at detection
     noise_floor_db: float = -100.0  # EMA of idle-state power; used to compute SNR
     iq_snippet: bytes = b""    # int8-interleaved IQ bytes for cross-correlation
@@ -76,7 +76,7 @@ class CarrierOnset:
 @dataclass(frozen=True)
 class CarrierOffset:
     """LMR carrier has disappeared."""
-    sample_index: int
+    sample_index: float         # Sub-sample knee position in the continuous IQ stream
     power_db: float
     iq_snippet: bytes = b""    # int8-interleaved IQ bytes for cross-correlation
     transition_start: int = 0  # Sample index within snippet where transition begins (plateau edge)
@@ -876,17 +876,32 @@ class CarrierDetector:
             plateau_end = we
 
         # argmin(d2) in [detection, plateau_end] = the onset knee
+        # Parabolic sub-sample interpolation for precision timing.
         search_lo = max(0, det_idx)
         search_hi = min(len(deriv2), plateau_end)
         search_hi = max(search_lo + 1, search_hi)
         region = deriv2[search_lo:search_hi]
-        rise_idx = search_lo + int(np.argmin(region)) if len(region) > 0 else int(np.argmax(np.diff(envelope)))
+        if len(region) > 0:
+            peak_idx = int(np.argmin(region))
+            sub_offset = 0.0
+            if 0 < peak_idx < len(region) - 1:
+                left = float(region[peak_idx - 1])
+                center = float(region[peak_idx])
+                right = float(region[peak_idx + 1])
+                denom = left - 2.0 * center + right
+                if denom != 0.0:
+                    sub_offset = 0.5 * (left - right) / denom
+                    sub_offset = max(-0.5, min(0.5, sub_offset))
+            rise_idx = float(search_lo + peak_idx) + sub_offset
+        else:
+            rise_idx = float(np.argmax(np.diff(envelope)))
 
         # Place the onset at 1/4 from the start of the snippet.
         # This gives snippet/4 noise (pre-onset) + 3*snippet/4 carrier
         # (post-onset) for xcorr, matching the server's onset trim [:3N//4].
         pre_target = self._snippet_samples // 4
-        start = max(0, rise_idx - pre_target)
+        rise_int = int(round(rise_idx))  # integer for array slicing
+        start = max(0, rise_int - pre_target)
         end = start + self._snippet_samples
         if end > len(iq_cat):
             end = len(iq_cat)
@@ -961,11 +976,25 @@ class CarrierDetector:
             plateau_start = ws
 
         # argmin(d2) in [plateau_start, detection] = the offset knee
+        # Parabolic sub-sample interpolation for precision timing.
         search_lo = max(0, plateau_start)
         search_hi = min(len(deriv2), det_idx)
         search_hi = max(search_lo + 1, search_hi)
         region = deriv2[search_lo:search_hi]
-        cut_idx = search_lo + int(np.argmin(region)) if len(region) > 0 else int(np.argmin(np.diff(envelope)))
+        if len(region) > 0:
+            peak_idx = int(np.argmin(region))
+            sub_offset = 0.0
+            if 0 < peak_idx < len(region) - 1:
+                left = float(region[peak_idx - 1])
+                center = float(region[peak_idx])
+                right = float(region[peak_idx + 1])
+                denom = left - 2.0 * center + right
+                if denom != 0.0:
+                    sub_offset = 0.5 * (left - right) / denom
+                    sub_offset = max(-0.5, min(0.5, sub_offset))
+            cut_idx = float(search_lo + peak_idx) + sub_offset
+        else:
+            cut_idx = float(np.argmin(np.diff(envelope)))
 
         # Place the PA shutoff at 3/4 from the start of the snippet.
         # This uses snippet*3/4 samples of carrier (pre-cutoff) for xcorr
@@ -973,7 +1002,8 @@ class CarrierDetector:
         # Both nodes independently center here, so the cutoff lands at the
         # same position in both snippets regardless of detection timing.
         pre_target = (self._snippet_samples * 3) // 4
-        start = max(0, cut_idx - pre_target)
+        cut_int = int(round(cut_idx))  # integer for array slicing
+        start = max(0, cut_int - pre_target)
         end = start + self._snippet_samples
         if end > len(iq_cat):
             end = len(iq_cat)
