@@ -1442,8 +1442,10 @@ class TestOffsetSampleIndexRefinement:
 
     def test_deferred_path_sample_index_near_shutoff(self):
         """
-        With post_windows > 0 (deferred emission path), sample_index must be
-        within +/-2 windows of the actual PA shutoff sample.
+        With post_windows > 0 (deferred emission path), sample_index is the
+        detection point (threshold crossing).  It is near the shutoff, offset
+        by the min_release debounce plus the smoothing delay.  The server's
+        xcorr aligns the actual PA features across nodes.
         """
         rng = np.random.default_rng(7)
         det = self._make_det(post_windows=5)
@@ -1453,15 +1455,18 @@ class TestOffsetSampleIndexRefinement:
         assert offsets, "No CarrierOffset emitted on deferred path"
 
         idx = offsets[0].sample_index
-        assert abs(idx - shutoff) < 2 * self._WINDOW, (
-            f"Deferred path: sample_index={idx} is {idx - shutoff:+d} samples "
-            f"from shutoff at {shutoff}; expected within +/-{2 * self._WINDOW}"
+        # Detection fires min_release windows after first below-threshold.
+        # sample_index is the detection point, a few windows past shutoff.
+        max_delay = (self._MIN_RELEASE + 2) * self._WINDOW
+        assert 0 <= idx - shutoff <= max_delay, (
+            f"Deferred path: sample_index={idx} is {idx - shutoff:+.0f} samples "
+            f"from shutoff at {shutoff}; expected 0..{max_delay}"
         )
 
     def test_immediate_path_sample_index_near_shutoff(self):
         """
-        With post_windows=0 (immediate emission path), sample_index must be
-        within +/-2 windows of the actual PA shutoff sample.
+        With post_windows=0 (immediate emission path), sample_index is the
+        detection point, a few windows past the actual PA shutoff.
         """
         rng = np.random.default_rng(13)
         det = self._make_det(post_windows=0)
@@ -1471,30 +1476,8 @@ class TestOffsetSampleIndexRefinement:
         assert offsets, "No CarrierOffset emitted on immediate path"
 
         idx = offsets[0].sample_index
-        assert abs(idx - shutoff) < 2 * self._WINDOW, (
-            f"Immediate path: sample_index={idx} is {idx - shutoff:+d} samples "
-            f"from shutoff at {shutoff}; expected within +/-{2 * self._WINDOW}"
-        )
-
-    def test_deferred_path_better_than_old_window_centre(self):
-        """
-        Refined sample_index is closer to the true shutoff than the old
-        threshold-crossing window centre (which was delayed by min_release_windows).
-        """
-        rng = np.random.default_rng(21)
-        det = self._make_det(post_windows=5)
-        events, shutoff = self._run_carrier_then_noise(det, rng)
-
-        offsets = [e for e in events if isinstance(e, CarrierOffset)]
-        assert offsets
-
-        idx = offsets[0].sample_index
-        # Old code would set sample_index = window_sample at detection:
-        #   detection fires min_release windows after first below-threshold window
-        old_idx = shutoff + self._MIN_RELEASE * self._WINDOW + self._WINDOW // 2
-        error_refined = abs(idx - shutoff)
-        error_old = abs(old_idx - shutoff)
-        assert error_refined < error_old, (
-            f"Refined error {error_refined} >= old window-centre error {error_old}; "
-            f"derivative peak did not improve accuracy over threshold-crossing estimate"
+        max_delay = (self._MIN_RELEASE + 2) * self._WINDOW
+        assert 0 <= idx - shutoff <= max_delay, (
+            f"Immediate path: sample_index={idx} is {idx - shutoff:+.0f} samples "
+            f"from shutoff at {shutoff}; expected 0..{max_delay}"
         )

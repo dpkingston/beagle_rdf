@@ -532,35 +532,31 @@ def test_compute_tdoa_xcorr_refinement_within_gate():
     assert abs(tdoa - prop_delay / fs) < 10e-6  # within 10 usec of true delay
 
 
-def test_compute_tdoa_xcorr_large_lag_rejected_onset():
+def test_compute_tdoa_xcorr_large_lag_accepted_onset():
     """
-    Onset xcorr lag exceeding the tight onset gate (50 usec) returns None.
-
-    10-sample prop delay at 64 kHz ~ 156 usec -- exceeds 50 usec onset gate.
+    Onset xcorr lag of ~156 usec is accepted — snippets are anchored on
+    detection points which can differ significantly between nodes.  The
+    xcorr correction aligns the PA features.  156 usec is within the
+    geometric plausibility limit for a 50 km baseline (~167 usec).
     """
     fs = 64_000.0
-    prop_delay = 10  # ~ 156 usec -- exceeds onset refinement gate
+    prop_delay = 10  # ~ 156 usec
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
                                      sample_rate_hz=fs, node_id="node-a", event_type="onset")
     ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b", event_type="onset")
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
-    assert tdoa is None, (
-        f"Expected None (onset xcorr refinement too large); got {tdoa}"
-    )
+    assert tdoa is not None, "Expected valid TDOA for plausible xcorr lag"
+    assert abs(tdoa * 1e6) < 200.0, f"TDOA {tdoa*1e6:.0f} usec seems too large"
 
 
-def test_compute_tdoa_xcorr_offset_same_gate_as_onset():
+def test_compute_tdoa_xcorr_large_lag_accepted_offset():
     """
-    With d2 knee-finding, offset snippets should be as well-anchored as
-    onset.  Both use the same 50 usec xcorr refinement gate.
-
-    10-sample prop delay at 64 kHz ~ 156 usec -- exceeds 50 usec gate
-    for both onset and offset.
+    Offset xcorr lag of ~156 usec is accepted — same rationale as onset.
     """
     fs = 64_000.0
-    prop_delay = 10  # ~ 156 usec -- exceeds 50 usec gate
+    prop_delay = 10  # ~ 156 usec
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0,
                                         event_type="offset")
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
@@ -568,9 +564,8 @@ def test_compute_tdoa_xcorr_offset_same_gate_as_onset():
     ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b", event_type="offset")
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
-    assert tdoa is None, (
-        f"Expected None (offset xcorr > 50µs gate); got {tdoa}"
-    )
+    assert tdoa is not None, "Expected valid TDOA for plausible xcorr lag"
+    assert abs(tdoa * 1e6) < 200.0, f"TDOA {tdoa*1e6:.0f} usec seems too large"
 
 
 def test_compute_tdoa_colocated_xcorr_near_zero():

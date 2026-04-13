@@ -577,28 +577,23 @@ def compute_tdoa_s(
 
     coarse_tdoa_ns = raw_ns + correction_ns
 
-    # --- xcorr: sub-sample refinement when IQ snippets are available ---
+    # --- xcorr: PA transition alignment across nodes ---
     #
-    # The xcorr lag measures the time offset between the PA transition
-    # positions in the two nodes' snippets.  Both snippets are anchored
-    # to the detected transition (onset at 25%, offset at 75%), so xcorr
-    # should produce a small lag (~few µs) that refines the coarse
-    # sync_delta-based TDOA.
+    # Snippets are anchored at the detection point (threshold crossing),
+    # NOT the PA transition knee.  Each node's detection fires at a
+    # different point on the PA curve (different thresholds, SNR).  The
+    # xcorr aligns the PA transition features across nodes, measuring
+    # the timing difference between where each node's detection landed
+    # relative to the true PA edge.
     #
-    # If the xcorr lag is large (> max_refinement), it means the
-    # sync_delta_ns and the snippet anchor are misaligned — the coarse
-    # TDOA is unreliable for this pair.  Rather than falling back to
-    # the noisy sync_delta value (which can scatter fixes by 100+ km),
-    # we return None so the solver works with fewer pairs or skips the
-    # event entirely.
+    # The coarse TDOA (sync_delta) measures sync-to-detection-point; the
+    # xcorr correction adjusts for the detection-to-feature offset
+    # between nodes.  The sum gives the true TDOA.
     #
-    # With d2 knee-finding on the nodes, both onset and offset snippets
-    # should be anchored on the same physical PA event across all nodes.
-    # The xcorr refinement should be small (< 50 µs).  A large refinement
-    # means the snippet anchoring failed — reject the pair rather than
-    # trust a potentially false xcorr peak.
-    _MAX_XCORR_REFINEMENT_NS = 50_000.0  # 50 µs ~ 3 samples at 62.5 kHz
-    _max_refinement_ns = _MAX_XCORR_REFINEMENT_NS
+    # Geometric plausibility: the total TDOA (coarse + xcorr) must be
+    # within max_xcorr_baseline_km.  The xcorr lag itself can be large
+    # (hundreds of µs if detection points differ significantly) — this
+    # is expected and correct.
 
     xcorr_refinement_ns = 0.0
     xcorr_used = False
@@ -626,18 +621,8 @@ def compute_tdoa_s(
             transition_b=trans_b,
         )
         if xcorr_snr >= min_xcorr_snr:
-            if abs(xcorr_lag_ns) <= _max_refinement_ns:
-                xcorr_refinement_ns = xcorr_lag_ns
-                xcorr_used = True
-            else:
-                logger.warning(
-                    "xcorr refinement too large: %.1f ns > %.0f ns limit "
-                    "for %s<->%s (%s, SNR=%.2f); pair skipped "
-                    "(sync_delta/snippet anchor misalignment)",
-                    xcorr_lag_ns, _max_refinement_ns,
-                    node_a, node_b, event_type, xcorr_snr,
-                )
-                return None
+            xcorr_refinement_ns = xcorr_lag_ns
+            xcorr_used = True
         else:
             logger.debug(
                 "xcorr SNR too low: %.2f < %.2f for %s<->%s (%s); "
@@ -646,6 +631,21 @@ def compute_tdoa_s(
             )
 
     tdoa_ns = coarse_tdoa_ns + xcorr_refinement_ns
+
+    # Geometric plausibility: when xcorr is used, the total TDOA must not
+    # exceed the max physical TDOA for the node baseline.  This rejects false
+    # xcorr peaks.  Without xcorr, the coarse TDOA passes through to the
+    # solver, which has its own outlier detection.
+    if xcorr_used and max_xcorr_baseline_km > 0:
+        max_tdoa_ns = max_xcorr_baseline_km * 1000.0 / _C_M_PER_S * 1e9
+        if abs(tdoa_ns) > max_tdoa_ns:
+            logger.warning(
+                "TDOA implausible: %.1f ns > %.0f ns max for %s<->%s "
+                "(%s, xcorr=%.1f, SNR=%.2f); pair skipped",
+                tdoa_ns, max_tdoa_ns, node_a, node_b, event_type,
+                xcorr_refinement_ns, xcorr_snr,
+            )
+            return None
 
     if xcorr_used:
         logger.info(

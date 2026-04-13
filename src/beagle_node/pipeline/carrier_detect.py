@@ -425,14 +425,11 @@ class CarrierDetector:
                 if self._pending_post_remaining <= 0 or opposite_fired:
                     ev: CarrierOnset | CarrierOffset
                     if self._pending_event_type == "onset":
-                        _onset_bytes, _rise_idx, _t_start, _t_end = self._encode_combined(
+                        _onset_bytes, _det_idx, _t_start, _t_end = self._encode_combined(
                             self._pending_pre_snap, self._pending_post_buf
                         )
-                        _onset_sample_index = (
-                            self._pending_pre_snap_start + _rise_idx
-                        )
                         ev = CarrierOnset(
-                            sample_index=_onset_sample_index,
+                            sample_index=self._pending_pre_snap_start + _det_idx,
                             power_db=self._pending_power_db,
                             noise_floor_db=self._pending_noise_floor_db,
                             iq_snippet=_onset_bytes,
@@ -448,7 +445,7 @@ class CarrierDetector:
                                     "event_type": "onset",
                                     "sample_index": ev.sample_index,
                                     "pre_snap_start": _pre_start,
-                                    "rise_idx_in_buf": _rise_idx,
+                                    "det_idx_in_buf": _det_idx,
                                     "transition_window": [_t_start, _t_end],
                                     "window_sample": self._pending_sample_index,
                                     "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
@@ -456,11 +453,11 @@ class CarrierDetector:
                                 }),
                             )
                     else:
-                        _offset_bytes, _cut_idx, _t_start, _t_end = self._encode_offset_snippet(
+                        _offset_bytes, _det_idx, _t_start, _t_end = self._encode_offset_snippet(
                             self._pending_pre_snap, self._pending_post_buf
                         )
                         ev = CarrierOffset(
-                            sample_index=self._pending_pre_snap_start + _cut_idx,
+                            sample_index=self._pending_pre_snap_start + _det_idx,
                             power_db=self._pending_power_db,
                             iq_snippet=_offset_bytes,
                             transition_start=_t_start,
@@ -698,14 +695,11 @@ class CarrierDetector:
         if self._pending_event_type is not None:
             ev: CarrierOnset | CarrierOffset
             if self._pending_event_type == "onset":
-                _onset_bytes, _rise_idx, _t_start, _t_end = self._encode_combined(
+                _onset_bytes, _det_idx, _t_start, _t_end = self._encode_combined(
                     self._pending_pre_snap, self._pending_post_buf
                 )
-                _onset_sample_index = (
-                    self._pending_pre_snap_start + _rise_idx
-                )
                 ev = CarrierOnset(
-                    sample_index=_onset_sample_index,
+                    sample_index=self._pending_pre_snap_start + _det_idx,
                     power_db=self._pending_power_db,
                     noise_floor_db=self._pending_noise_floor_db,
                     iq_snippet=_onset_bytes,
@@ -721,7 +715,7 @@ class CarrierDetector:
                             "event_type": "onset",
                             "sample_index": ev.sample_index,
                             "pre_snap_start": _pre_start,
-                            "rise_idx_in_buf": _rise_idx,
+                            "det_idx_in_buf": _det_idx,
                             "transition_window": [_t_start, _t_end],
                             "window_sample": self._pending_sample_index,
                             "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
@@ -730,11 +724,11 @@ class CarrierDetector:
                         }),
                     )
             else:
-                _offset_bytes, _cut_idx, _t_start, _t_end = self._encode_offset_snippet(
+                _offset_bytes, _det_idx, _t_start, _t_end = self._encode_offset_snippet(
                     self._pending_pre_snap, self._pending_post_buf
                 )
                 ev = CarrierOffset(
-                    sample_index=self._pending_pre_snap_start + _cut_idx,
+                    sample_index=self._pending_pre_snap_start + _det_idx,
                     power_db=self._pending_power_db,
                     iq_snippet=_offset_bytes,
                     transition_start=_t_start,
@@ -816,92 +810,37 @@ class CarrierDetector:
         self, pre_snap: list[np.ndarray], post_buf: list[np.ndarray]
     ) -> tuple[bytes, int]:
         """
-        Encode a transition-anchored onset snippet.
+        Encode a natural-position onset snippet.
 
-        Concatenates pre-event and post-event IQ, finds the carrier onset
-        (peak positive power derivative = steepest carrier rise), and places
-        it at 1/4 from the snippet start.
+        Concatenates pre-event and post-event IQ and trims to snippet_samples
+        centered on the detection point.  The IQ data is NOT repositioned —
+        the PA transition stays at its natural position within the snippet,
+        preserving the sample-boundary timing relationship needed for TDOA.
 
-        The derivative search is constrained to the transition zone around
-        the detection point using the smoothed power envelope.  The detection
-        point (end of pre_snap) is near the bottom of the rise — noise is
-        behind, plateau is ahead.  We walk backward to the noise floor and
-        forward to the plateau, then search for argmax(deriv) only within
-        that zone.  This prevents false peaks from noise features or AGC
-        transients deep in the ring buffer.
+        The server's xcorr aligns the PA features across nodes; no node-side
+        knee-finding is needed for timing.
 
         Returns
         -------
-        (bytes, rise_idx, transition_start, transition_end)
-            bytes is the encoded snippet; rise_idx is the position of the
-            onset within the concatenated pre+post buffer; transition_start
-            and transition_end are the bounds of the transition zone within
-            the trimmed snippet (for server-side xcorr windowing).
+        (bytes, det_idx, transition_start, transition_end)
+            bytes is the encoded snippet; det_idx is the detection point
+            within the concatenated pre+post buffer (used for sample_index);
+            transition_start and transition_end approximate the transition
+            zone within the trimmed snippet (for server-side xcorr windowing).
         """
         assert pre_snap or post_buf, "Both pre_snap and post_buf are empty - cannot happen"
         parts = list(pre_snap) + list(post_buf or [])
         iq_cat = np.concatenate(parts)
-        assert len(iq_cat) >= 32, "Onset IQ data too short for derivative - cannot happen"
+        assert len(iq_cat) >= 32, "Onset IQ data too short - cannot happen"
 
-        # Smoothed power envelope and its first/second derivatives
-        smooth = 16
-        power = iq_cat.real.astype(np.float64) ** 2 + iq_cat.imag.astype(np.float64) ** 2
-        kernel = np.ones(smooth) / smooth
-        envelope = np.convolve(power, kernel, mode='same')
-        deriv2 = np.diff(np.diff(envelope))
-
-        # The onset knee is where the rise meets the plateau — the second
-        # derivative is most negative (the rise is decelerating).
-        #
-        # Detection fires at the bottom of the rise (threshold just
-        # exceeded).  Walk FORWARD one window at a time, averaging power
-        # in each window.  When the average stabilises (current ≈ previous,
-        # both high), we've reached the plateau.  The knee is between the
-        # detection point and the plateau.
+        # Detection point: boundary between pre_snap and post_buf.
         pre_len = sum(len(w) for w in pre_snap)
-        det_idx = min(pre_len, len(envelope) - 1)
+        det_idx = min(pre_len, len(iq_cat) - 1)
 
-        plateau_end = min(len(envelope), det_idx + self._window)
-        prev_avg = float(np.mean(envelope[det_idx:plateau_end])) if plateau_end > det_idx else 0.0
-        for w in range(1, 20):
-            ws = det_idx + w * self._window
-            we = min(ws + self._window, len(envelope))
-            if we <= ws:
-                break
-            avg = float(np.mean(envelope[ws:we]))
-            if avg > 0 and abs(avg - prev_avg) / avg < 0.1:
-                plateau_end = we
-                break
-            prev_avg = avg
-            plateau_end = we
-
-        # argmin(d2) in [detection, plateau_end] = the onset knee
-        # Parabolic sub-sample interpolation for precision timing.
-        search_lo = max(0, det_idx)
-        search_hi = min(len(deriv2), plateau_end)
-        search_hi = max(search_lo + 1, search_hi)
-        region = deriv2[search_lo:search_hi]
-        if len(region) > 0:
-            peak_idx = int(np.argmin(region))
-            sub_offset = 0.0
-            if 0 < peak_idx < len(region) - 1:
-                left = float(region[peak_idx - 1])
-                center = float(region[peak_idx])
-                right = float(region[peak_idx + 1])
-                denom = left - 2.0 * center + right
-                if denom != 0.0:
-                    sub_offset = 0.5 * (left - right) / denom
-                    sub_offset = max(-0.5, min(0.5, sub_offset))
-            rise_idx = float(search_lo + peak_idx) + sub_offset
-        else:
-            rise_idx = float(np.argmax(np.diff(envelope)))
-
-        # Place the onset at 1/4 from the start of the snippet.
-        # This gives snippet/4 noise (pre-onset) + 3*snippet/4 carrier
-        # (post-onset) for xcorr, matching the server's onset trim [:3N//4].
+        # Trim to snippet_samples, keeping detection at ~1/4 from start
+        # so xcorr has noise (pre) and carrier (post) context.
         pre_target = self._snippet_samples // 4
-        rise_int = int(round(rise_idx))  # integer for array slicing
-        start = max(0, rise_int - pre_target)
+        start = max(0, det_idx - pre_target)
         end = start + self._snippet_samples
         if end > len(iq_cat):
             end = len(iq_cat)
@@ -915,10 +854,12 @@ class CarrierDetector:
         int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
         int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
 
-        # Transition bounds relative to the trimmed snippet
-        t_start = max(0, search_lo - start)
-        t_end = min(len(iq_trim), search_hi - start)
-        return int8_ri.tobytes(), rise_idx, t_start, t_end
+        # Approximate transition zone: detection is near bottom of rise,
+        # plateau is a few windows ahead.  Use a generous window so xcorr
+        # has the full transition to work with.
+        t_start = max(0, det_idx - start)
+        t_end = min(len(iq_trim), det_idx - start + 8 * self._window)
+        return int8_ri.tobytes(), det_idx, t_start, t_end
 
     def _encode_offset_snippet(
         self,
@@ -926,84 +867,28 @@ class CarrierDetector:
         post_buf: list[np.ndarray] | None = None,
     ) -> tuple[bytes, int, int, int]:
         """
-        Encode a snippet for a carrier-offset event anchored on the PA shutoff.
+        Encode a natural-position offset snippet.
 
-        Returns (bytes, cut_idx, transition_start, transition_end) where
-        transition_start/end are the bounds of the transition zone within
-        the trimmed snippet.
+        Concatenates pre-event and post-event IQ and trims to snippet_samples
+        centered on the detection point.  The IQ data is NOT repositioned —
+        the PA transition stays at its natural position within the snippet,
+        preserving the sample-boundary timing relationship needed for TDOA.
 
-        Using post_buf (from the deferred emission path) is strongly recommended:
-        it supplies post-cutoff noise samples that confirm the transition and
-        keep the target position inside the snippet.
+        Returns (bytes, det_idx, transition_start, transition_end).
         """
         parts = list(pre_snap) + list(post_buf or [])
         assert parts, "No IQ data for offset snippet - cannot happen"
         iq_cat = np.concatenate(parts)
-        assert len(iq_cat) >= 32, "Offset IQ data too short for derivative - cannot happen"
+        assert len(iq_cat) >= 32, "Offset IQ data too short - cannot happen"
 
-        # Smoothed power envelope and its first/second derivatives
-        smooth = 16
-        power = iq_cat.real.astype(np.float64) ** 2 + iq_cat.imag.astype(np.float64) ** 2
-        kernel = np.ones(smooth) / smooth
-        envelope = np.convolve(power, kernel, mode='same')
-        deriv2 = np.diff(np.diff(envelope))
-        assert len(deriv2) > 0, "Empty second derivative - cannot happen"
-
-        # The offset knee is where the plateau meets the fall — the second
-        # derivative is most negative (the plateau is accelerating into
-        # the fall).
-        #
-        # Detection fires at the bottom of the fall (threshold just crossed
-        # downward).  Walk BACKWARD one window at a time, averaging power
-        # in each window.  When the average stabilises (current ≈ previous,
-        # both high), we've reached the plateau.  The knee is between the
-        # plateau and the detection point.
+        # Detection point: boundary between pre_snap and post_buf.
         pre_len = sum(len(w) for w in pre_snap)
-        det_idx = min(pre_len, len(envelope) - 1)
+        det_idx = min(pre_len, len(iq_cat) - 1)
 
-        prev_avg = float(np.mean(envelope[max(0, det_idx - self._window):det_idx]))
-        plateau_start = max(0, det_idx - self._window)
-        for w in range(2, 20):
-            we = det_idx - (w - 1) * self._window
-            ws = max(0, det_idx - w * self._window)
-            if ws >= we:
-                break
-            avg = float(np.mean(envelope[ws:we]))
-            if avg > 0 and abs(avg - prev_avg) / avg < 0.1:
-                plateau_start = ws
-                break
-            prev_avg = avg
-            plateau_start = ws
-
-        # argmin(d2) in [plateau_start, detection] = the offset knee
-        # Parabolic sub-sample interpolation for precision timing.
-        search_lo = max(0, plateau_start)
-        search_hi = min(len(deriv2), det_idx)
-        search_hi = max(search_lo + 1, search_hi)
-        region = deriv2[search_lo:search_hi]
-        if len(region) > 0:
-            peak_idx = int(np.argmin(region))
-            sub_offset = 0.0
-            if 0 < peak_idx < len(region) - 1:
-                left = float(region[peak_idx - 1])
-                center = float(region[peak_idx])
-                right = float(region[peak_idx + 1])
-                denom = left - 2.0 * center + right
-                if denom != 0.0:
-                    sub_offset = 0.5 * (left - right) / denom
-                    sub_offset = max(-0.5, min(0.5, sub_offset))
-            cut_idx = float(search_lo + peak_idx) + sub_offset
-        else:
-            cut_idx = float(np.argmin(np.diff(envelope)))
-
-        # Place the PA shutoff at 3/4 from the start of the snippet.
-        # This uses snippet*3/4 samples of carrier (pre-cutoff) for xcorr
-        # and snippet/4 samples of noise (post-cutoff) as confirmation.
-        # Both nodes independently center here, so the cutoff lands at the
-        # same position in both snippets regardless of detection timing.
+        # Trim to snippet_samples, keeping detection at ~3/4 from start
+        # so xcorr has carrier (pre) and noise (post) context.
         pre_target = (self._snippet_samples * 3) // 4
-        cut_int = int(round(cut_idx))  # integer for array slicing
-        start = max(0, cut_int - pre_target)
+        start = max(0, det_idx - pre_target)
         end = start + self._snippet_samples
         if end > len(iq_cat):
             end = len(iq_cat)
@@ -1017,10 +902,11 @@ class CarrierDetector:
         int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
         int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
 
-        # Transition bounds relative to the trimmed snippet
-        t_start = max(0, search_lo - start)
-        t_end = min(len(iq_trim), search_hi - start)
-        return int8_ri.tobytes(), cut_idx, t_start, t_end
+        # Approximate transition zone: detection is near bottom of fall,
+        # plateau is a few windows behind.
+        t_start = max(0, det_idx - start - 8 * self._window)
+        t_end = min(len(iq_trim), det_idx - start)
+        return int8_ri.tobytes(), det_idx, t_start, t_end
 
     def _snippet_has_transition(self, snippet: bytes) -> bool:
         """Check that an encoded IQ snippet contains a genuine power transition.
