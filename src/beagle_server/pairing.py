@@ -166,6 +166,26 @@ class EventPairer:
         # Find an existing group whose T_sync anchor is within half the window.
         grp = self._find_group(base_key, t_sync_ns, event["node_id"])
 
+        # Prevent different transmissions from the same node being merged
+        # into one group.  Event amendments (same event_id) are fine — they
+        # overwrite the existing entry.  But a NEW event_id from a node that
+        # already has an event in the group means a different transmission
+        # landed within the correlation window; force it into its own group.
+        if grp is not None:
+            eid = event["event_id"]
+            nid = event["node_id"]
+            has_different_event = any(
+                e["node_id"] == nid and e["event_id"] != eid
+                for e in grp.events.values()
+            )
+            if has_different_event:
+                logger.info(
+                    "Rejecting group merge: node %s already has a different "
+                    "event in group [%s]; creating new group",
+                    nid, self._fmt_key(grp.key),
+                )
+                grp = None
+
         if grp is None:
             # No matching group - create one anchored to this event's T_sync.
             full_key = (*base_key, t_sync_ns)

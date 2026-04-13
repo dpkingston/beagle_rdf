@@ -367,6 +367,53 @@ async def test_same_node_rapid_keyups_not_merged_by_disambiguation():
 
 
 @pytest.mark.asyncio
+async def test_same_node_direct_match_not_merged():
+    """
+    Two transmissions from the same node with T_sync within the direct-match
+    half-window must NOT be merged into the same group.
+
+    This is the direct-match counterpart of
+    test_same_node_rapid_keyups_not_merged_by_disambiguation.
+    Without the per-node guard on the direct-match path, both events land
+    in the same group (3 events from 2 nodes), and the solver picks the
+    wrong event for one node.
+    """
+    received_groups: list[list] = []
+
+    async def cb(events):
+        received_groups.append(events)
+
+    pairer = EventPairer(cb, delivery_buffer_s=0.01, correlation_window_s=0.2,
+                         min_nodes=1)
+
+    # Transmission 1: node A and B
+    await pairer.add_event(make_event("A", event_id="t1-A",
+                                      onset_time_ns=_NOW_NS,
+                                      sync_delta_ns=500_000_000))
+    await pairer.add_event(make_event("B", event_id="t1-B",
+                                      onset_time_ns=_NOW_NS,
+                                      sync_delta_ns=500_000_000))
+
+    # Transmission 2: 50 ms later (within 100 ms half-window) — same node B
+    # sends a second event.  Must NOT join t1's group.
+    await pairer.add_event(make_event("B", event_id="t2-B",
+                                      onset_time_ns=_NOW_NS + 50_000_000,
+                                      sync_delta_ns=500_000_000))
+
+    await asyncio.sleep(0.05)
+
+    # Group 1 should have 2 events (A + B from t1), group 2 should have 1 (B from t2).
+    assert len(received_groups) == 2, (
+        f"Expected 2 groups (same-node direct-match guard); got {len(received_groups)}"
+    )
+    # First group should have exactly one event per node
+    group1_nodes = [e["node_id"] for e in received_groups[0]]
+    assert len(group1_nodes) == len(set(group1_nodes)), (
+        f"Group 1 has duplicate nodes: {group1_nodes}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_tsync_near_boundary_merged_into_one_group():
     """
     Regression test for the fixed-bucket boundary-split bug.
