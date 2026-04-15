@@ -620,13 +620,13 @@ def compute_tdoa_s(
         rate_a = float(event_a.get("channel_sample_rate_hz", 64_000.0))
         rate_b = float(event_b.get("channel_sample_rate_hz", 64_000.0))
 
-        # Extract transition bounds if the node provided them
-        t_a_start = int(event_a.get("transition_start", 0))
-        t_a_end = int(event_a.get("transition_end", 0))
-        t_b_start = int(event_b.get("transition_start", 0))
-        t_b_end = int(event_b.get("transition_end", 0))
-        trans_a = (t_a_start, t_a_end) if t_a_end > t_a_start else None
-        trans_b = (t_b_start, t_b_end) if t_b_end > t_b_start else None
+        # Do NOT pass transition bounds to xcorr.  Snippets are anchored
+        # on detection points which differ between nodes (different
+        # thresholds, SNR).  The PA transition sits at different absolute
+        # positions in the two snippets.  Full-snippet xcorr finds that
+        # offset, which IS the detection-point correction we need.
+        # Transition-bound trimming would center xcorr on each node's
+        # detection point and produce ~0 lag (defeating the purpose).
 
         xcorr_lag_ns, xcorr_snr = cross_correlate_snippets(
             iq_a, iq_b,
@@ -634,8 +634,6 @@ def compute_tdoa_s(
             sample_rate_hz_b=rate_b,
             target_rate_hz=xcorr_target_rate_hz,
             event_type=event_type,
-            transition_a=trans_a,
-            transition_b=trans_b,
         )
         if xcorr_snr >= min_xcorr_snr:
             xcorr_refinement_ns = xcorr_lag_ns
