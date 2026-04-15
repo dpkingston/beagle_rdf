@@ -65,22 +65,22 @@ _TIMING_DIAG = os.environ.get("BEAGLE_TIMING_DIAG") == "1"
 @dataclass(frozen=True)
 class CarrierOnset:
     """LMR carrier has appeared."""
-    sample_index: float         # Sub-sample knee position in the continuous IQ stream
+    sample_index: int           # Detection point in the continuous IQ stream (window boundary)
     power_db: float             # Instantaneous power at detection
     noise_floor_db: float = -100.0  # EMA of idle-state power; used to compute SNR
     iq_snippet: bytes = b""    # int8-interleaved IQ bytes for cross-correlation
-    transition_start: int = 0  # Sample index within snippet where transition begins
-    transition_end: int = 0    # Sample index within snippet where transition ends (plateau)
+    transition_start: int = 0  # Approximate transition zone start within snippet
+    transition_end: int = 0    # Approximate transition zone end within snippet
 
 
 @dataclass(frozen=True)
 class CarrierOffset:
     """LMR carrier has disappeared."""
-    sample_index: float         # Sub-sample knee position in the continuous IQ stream
+    sample_index: int           # Detection point in the continuous IQ stream (window boundary)
     power_db: float
     iq_snippet: bytes = b""    # int8-interleaved IQ bytes for cross-correlation
-    transition_start: int = 0  # Sample index within snippet where transition begins (plateau edge)
-    transition_end: int = 0    # Sample index within snippet where transition ends (noise)
+    transition_start: int = 0  # Approximate transition zone start within snippet
+    transition_end: int = 0    # Approximate transition zone end within snippet
 
 
 _State = Literal["idle", "active"]

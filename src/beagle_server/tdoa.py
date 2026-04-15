@@ -354,8 +354,6 @@ def cross_correlate_snippets(
     sample_rate_hz_b: float | None = None,
     target_rate_hz: float | None = None,
     event_type: str = "",
-    transition_a: tuple[int, int] | None = None,
-    transition_b: tuple[int, int] | None = None,
 ) -> tuple[float, float]:
     """
     Cross-correlate two int8 IQ snippets to find the inter-node TDOA.
@@ -365,13 +363,12 @@ def cross_correlate_snippets(
     peaks.  Uses FFT-based correlation with parabolic peak interpolation for
     sub-sample precision.
 
-    If ``transition_a`` and ``transition_b`` are provided (from the node's
-    knee-finding algorithm), the correlation is restricted to those sample
-    ranges within each snippet.  This focuses xcorr on the PA transition and
-    excludes noise/plateau regions that could produce false peaks.
-
-    If transition bounds are not available (legacy nodes), falls back to
-    fixed-fraction trimming based on event_type.
+    Snippets are correlated in full (no trimming).  Each node's snippet is
+    anchored on its detection point (threshold crossing), which fires at a
+    different position on the PA curve depending on each node's threshold
+    and SNR.  The PA transition therefore sits at different absolute positions
+    in the two snippets.  The xcorr lag measures this offset — it is the
+    detection-point correction that the coarse sync_delta needs.
 
     Parameters
     ----------
@@ -384,10 +381,7 @@ def cross_correlate_snippets(
     target_rate_hz : float or None
         Rate to resample both to before correlation.  None = lower of the two.
     event_type : str
-        "onset" or "offset" for legacy trimming fallback.
-    transition_a, transition_b : tuple[int, int] or None
-        (start, end) sample indices within each snippet bounding the PA
-        transition zone.  From the node's d2 knee-finding walk.
+        "onset" or "offset" (for logging only).
 
     Returns
     -------
@@ -396,8 +390,6 @@ def cross_correlate_snippets(
             Estimated TDOA in nanoseconds.  Positive = A arrives *later* than B.
         corr_snr : float
             Peak-to-sidelobe ratio of the cross-correlation (dimensionless).
-            Returns 0.0 if the transition window contains no signal (misaligned
-            snippet), triggering sync_delta fallback in compute_tdoa_s.
     """
     rate_b = sample_rate_hz_b if sample_rate_hz_b is not None else sample_rate_hz_a
     effective_rate = target_rate_hz if target_rate_hz is not None else min(sample_rate_hz_a, rate_b)
@@ -419,25 +411,14 @@ def cross_correlate_snippets(
     if abs(rate_b - effective_rate) / effective_rate > 1e-6:
         env_b = _resample_to_rate(env_b, rate_b, effective_rate)
 
-    # Trim to the transition region.  When the node provides transition
-    # bounds (from the d2 knee-finding walk), use them directly — they
-    # tightly bracket the PA edge.  Otherwise fall back to fixed-fraction
-    # trimming based on event_type.
-    if transition_a and transition_a[1] > transition_a[0]:
-        env_a = env_a[transition_a[0]:transition_a[1]]
-    elif event_type == "onset":
-        env_a = env_a[: 3 * len(env_a) // 4]
-    elif event_type == "offset":
-        env_a = env_a[len(env_a) // 2 :]
+    # No trimming: snippets are anchored on detection points which differ
+    # between nodes.  The PA transition sits at different absolute positions
+    # in the two snippets.  Full-envelope xcorr finds that offset, which is
+    # the detection-point correction needed to align the measurements.
+    # Any trimming (transition bounds or event_type-based) would center the
+    # PA feature in both snippets and produce ~0 lag.
 
-    if transition_b and transition_b[1] > transition_b[0]:
-        env_b = env_b[transition_b[0]:transition_b[1]]
-    elif event_type == "onset":
-        env_b = env_b[: 3 * len(env_b) // 4]
-    elif event_type == "offset":
-        env_b = env_b[len(env_b) // 2 :]
-
-    # Equalise lengths after resampling + trimming.  Different sample rates
+    # Equalise lengths after resampling.  Different sample rates
     # (e.g. 64 kHz RTL-SDR vs 62.5 kHz RSPduo) produce different-length
     # envelopes after resampling and proportional trimming.  Without this,
     # _xcorr_arrays' max_lag = min(len_a, len_b)//2 creates an edge artifact:

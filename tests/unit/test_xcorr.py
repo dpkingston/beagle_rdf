@@ -269,37 +269,43 @@ def test_onset_transition_windowing_recovers_correct_lag():
     assert snr > 1.5, f"Onset windowing SNR should exceed threshold 1.5, got {snr:.2f}"
 
 
-def test_misaligned_onset_snippet_returns_zero_snr():
+def test_full_snippet_xcorr_finds_transition_anywhere():
     """
-    If the PA transition is outside the first-3/4 window (misaligned snippet),
-    the xcorr trim contains only silence.  The power guard must return SNR=0.0.
+    With full-snippet xcorr (no trimming), the PA transition can be at any
+    position in the snippet.  xcorr measures the offset between where the
+    transition appears in the two snippets.
 
-    The onset trim now uses the first 3/4 of the snippet.  A transition in the
-    final 1/8 is well outside this window (no convolution bleed at 16 samples).
+    Transition at 7/8 of snippet — xcorr should still find a valid peak
+    when correlating the snippet with a shifted copy.
     """
     n = 1280
-    # Carrier starts at 7/8 of snippet (sample 1120) - completely outside the
-    # first-3/4 trim [0:960], with >= 160 samples of margin vs. the 16-sample
-    # smooth kernel, ensuring no power bleed into the trim window.
     sig = np.zeros(n, dtype=np.complex64)
     carrier = _bandlimited_noise(n, seed=20)
     carrier = carrier / (np.max(np.abs(carrier)) + 1e-30)
-    sig[7 * n // 8 :] = carrier[7 * n // 8 :]   # carrier only in last 1/8
+    sig[7 * n // 8 :] = carrier[7 * n // 8 :]
 
-    b64 = _encode_iq(sig)
+    lag_samples = 3
+    sig_b = np.roll(sig, lag_samples)
 
-    _, snr = cross_correlate_snippets(b64, b64, sample_rate_hz_a=62_500.0, event_type="onset")
-    assert snr == 0.0, f"Misaligned onset snippet should return SNR=0, got {snr:.2f}"
+    b64_a = _encode_iq(sig)
+    b64_b = _encode_iq(sig_b)
+    rate = 62_500.0
+
+    lag_ns, snr = cross_correlate_snippets(b64_a, b64_b, sample_rate_hz_a=rate, event_type="onset")
+    expected_ns = lag_samples * 1e9 / rate
+
+    assert snr > 1.3, f"Full-snippet xcorr should find transition, got SNR={snr:.2f}"
+    assert abs(lag_ns - expected_ns) < 2 * 1e9 / rate, (
+        f"Lag wrong: {lag_ns:.0f} ns vs {expected_ns:.0f} ns"
+    )
 
 
-def test_offset_transition_windowing_uses_second_half():
+def test_full_snippet_xcorr_offset_correct_lag():
     """
-    event_type="offset" should use the second half [N//2:] where the PA fall
-    is anchored at ~3/4 of the snippet.  The lag should still be correct.
+    Offset xcorr with full snippet (no trimming) should find the correct lag.
     """
     rng = np.random.default_rng(30)
     n = 1280
-    # Carrier in first 960 samples, then noise (PA cutoff at sample 960 = 3/4).
     carrier = _bandlimited_noise(n, seed=30)
     carrier = carrier / (np.max(np.abs(carrier)) + 1e-30)
     noise = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64) * 0.02
@@ -317,7 +323,7 @@ def test_offset_transition_windowing_uses_second_half():
     expected_ns = lag_samples * 1e9 / rate
     tol_ns = 1.5 * 1e9 / rate
 
-    assert snr > 1.5, f"Offset windowing SNR should be > 1.5, got {snr:.2f}"
+    assert snr > 1.5, f"Full-snippet offset xcorr SNR should be > 1.5, got {snr:.2f}"
     assert abs(lag_ns - expected_ns) < tol_ns, (
         f"Offset lag wrong: {lag_ns:.0f} ns vs {expected_ns:.0f} ns"
     )

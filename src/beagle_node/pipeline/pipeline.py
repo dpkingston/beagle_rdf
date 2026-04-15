@@ -336,11 +336,13 @@ class NodePipeline:
         for event in carrier_events:
             if isinstance(event, (CarrierOnset, CarrierOffset)):
                 # Convert target-dec sample index -> sync-dec sample index via raw:
-                #   sync_sample = event.sample_index * target_decimation / sync_decimation
-                # Uses float division to preserve sub-sample knee precision.
+                #   raw_sample  = event.sample_index * target_decimation
+                #   sync_sample = raw_sample         // sync_decimation
+                # Integer division is exact for detection points (integer window
+                # boundaries).  The server's xcorr finds the sub-sample knee.
                 event_in_sync_space = (
                     event.sample_index * self._cfg.target_decimation
-                    / self._cfg.sync_decimation
+                    // self._cfg.sync_decimation
                 )
                 if isinstance(event, CarrierOnset):
                     mapped = CarrierOnset(

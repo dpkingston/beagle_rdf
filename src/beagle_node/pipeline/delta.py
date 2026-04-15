@@ -291,7 +291,7 @@ class DeltaComputer:
         ]
         if not candidates:
             logger.debug(
-                "No sync event within %d samples of %s at %.1f "
+                "No sync event within %d samples of %s at %d "
                 "(newest sync: %.1f, total syncs: %d)",
                 self._max_age,
                 event_type,
