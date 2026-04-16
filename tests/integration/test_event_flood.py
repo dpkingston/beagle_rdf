@@ -106,6 +106,7 @@ def _flood_config(delivery_buffer_s: float = 0.15) -> ServerFullConfig:
             search_center_lat=47.6,
             search_center_lon=-122.3,
             search_radius_km=100.0,
+            min_xcorr_snr=0.0,  # load test — bypass xcorr SNR check
         ),
         map=MapConfig(output_dir="/tmp/tdoa_flood_test", max_age_s=3600.0),
     )
@@ -252,6 +253,7 @@ def _rate_limit_config(max_events: int = 3, window_s: float = 10.0) -> ServerFul
             search_center_lat=47.6,
             search_center_lon=-122.3,
             search_radius_km=100.0,
+            min_xcorr_snr=0.0,  # load test — bypass xcorr SNR check
         ),
         map=MapConfig(output_dir="/tmp/tdoa_flood_test", max_age_s=3600.0),
     )

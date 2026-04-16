@@ -141,21 +141,19 @@ class SolverConfig(BaseModel):
     A good fix with 3 GPS-disciplined nodes will have residual < 500 ns.
     NTP-clocked nodes may see 5000-50000 ns residuals; tune empirically.
     """
-    min_xcorr_snr: float = 1.5
+    min_xcorr_snr: float = 10.0
     """
-    Minimum power-envelope xcorr peak-to-sidelobe ratio to accept a snippet-based
-    TDOA measurement.  Below this threshold the pair falls back to coarse
-    sync_delta subtraction.
+    Minimum second-derivative xcorr SNR to accept a TDOA measurement.
+    Below this threshold the pair is rejected (no fallback — coarse
+    sync_delta has ~200 us noise and is not useful for a fix).
 
-    The server cross-correlates power envelopes (|IQ|^2) rather than raw complex
-    IQ to avoid LO phase incoherence between independent receivers (independent
-    RTL-SDRs can have +/-13 kHz LO offset at 443 MHz, which destroys complex xcorr
-    peaks but does not affect power envelope correlation).
+    The server cross-correlates the second derivative of the power envelope
+    to find the PA transition inflection points.  This gives sub-microsecond
+    precision on real signals (SNR ~28) and rejects noise-only snippets
+    (SNR ~4-5).
 
-    Typical values with transition windowing (onset/offset trimmed to half-snippet):
-      onset:  6-28  - clean PA rise; most signals well above threshold
-      offset: 1.5-2.5  - PA fall is slower; threshold of 1.5 admits most pairs
-      0.0      - always accept xcorr (use only for debugging)
+    Recommended: 10.0 (cleanly separates real transitions from noise).
+    0.0 = always accept (use only for debugging).
     """
     max_xcorr_baseline_km: float = 50.0
     """

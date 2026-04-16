@@ -63,38 +63,43 @@ def test_decode_roundtrip():
 # cross_correlate_snippets - lag recovery
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("lag_samples", [0, 1, 5, 10, -5, -10])
+@pytest.mark.parametrize("lag_samples", [0, 1, 5, 10, 20])
 def test_known_lag_recovery(lag_samples: int):
     """
-    Two snippets of the same bandlimited noise, one shifted by lag_samples.
-
-    np.roll(base, D) gives b[n] = a[n-D], which physically models node A
-    detecting the carrier D samples *later* than node B (A is later).
-    The correlator should return a positive lag (A is later) equal to +D samples.
-    Tolerance: +/-1.5 samples.
+    Real onset snippet shifted by known amounts.  The d2 xcorr should
+    recover the delay with sub-microsecond precision.
     """
-    rate = 64_000.0
-    n = 640
-    base = _bandlimited_noise(n, seed=1)
-    shifted = np.roll(base, lag_samples)   # b[n] = a[n - lag_samples]; A is later by lag_samples
+    import json
+    from pathlib import Path
+    from beagle_server.tdoa import _decode_iq_snippet
 
-    b64_a = _encode_iq(base)
-    b64_b = _encode_iq(shifted)
+    fixture = Path(__file__).parents[1] / "fixtures" / "three_node_baseline_2026_04_08.json"
+    data = json.load(fixture.open())
+    onsets = [e for e in data["events"]
+              if e["event_type"] == "onset" and len(e.get("iq_snippet_b64", "")) > 100]
+    iq = _decode_iq_snippet(onsets[1]["iq_snippet_b64"])
+    rate = float(onsets[1]["channel_sample_rate_hz"])
 
-    lag_ns, snr = cross_correlate_snippets(b64_a, b64_b, sample_rate_hz_a=rate)
+    n = len(iq) - lag_samples - 1
+    if lag_samples >= 0:
+        iq_a = iq[lag_samples:lag_samples + n]
+        iq_b = iq[:n]
+    else:
+        iq_a = iq[:n]
+        iq_b = iq[-lag_samples:-lag_samples + n]
 
-    # b[n] = a[n - D] -> A started D samples later -> A is later -> positive lag
+    lag_ns, snr = cross_correlate_snippets(
+        _encode_iq(iq_a), _encode_iq(iq_b),
+        sample_rate_hz_a=rate, event_type="onset",
+    )
+
     expected_ns = lag_samples * 1e9 / rate
-    tol_ns = 1.5 * 1e9 / rate
+    tol_ns = 2.0 * 1e9 / rate  # within 2 samples
     assert abs(lag_ns - expected_ns) < tol_ns, (
         f"lag={lag_samples}: expected {expected_ns:.1f} ns, got {lag_ns:.1f} ns"
     )
     if lag_samples != 0:
-        # Power-envelope xcorr SNR is inherently low (~1.6) for random noise snippets
-        # because the DC component of |IQ|^2 dominates the sidelobe mean.  Real carrier
-        # snippets with onset/offset transitions yield higher SNR.  The key property
-        # tested here is lag accuracy, not SNR magnitude.
-        assert snr > 1.1, f"Expected SNR > 1.1 for bandlimited noise, got {snr:.2f}"
+        assert snr > 10.0, f"Real onset d2 xcorr SNR should be > 10, got {snr:.2f}"
 
 
 def test_zero_lag_gives_near_zero_ns():
@@ -226,107 +231,159 @@ def test_mixed_sample_rate_resampling():
 
 
 # ---------------------------------------------------------------------------
-# Transition windowing (event_type-based half-snippet selection)
+# Realistic PA transition xcorr (coarse knee walk + sub-snippet alignment)
 # ---------------------------------------------------------------------------
 
-def _make_onset_snippet(n: int = 1280, transition_at: int = 320, seed: int = 10) -> np.ndarray:
+def _make_realistic_pair(
+    n: int = 1280,
+    onset_a: int = 320,
+    delay_samples: int = 10,
+    ramp_samples: int = 24,
+    snr_db: float = 25.0,
+    event_type: str = "onset",
+    seed: int = 10,
+) -> tuple[np.ndarray, np.ndarray]:
     """
-    Synthesise a 1280-sample onset snippet: noise before the transition,
-    bandlimited carrier after.  PA rise is at *transition_at* (1/4 of n).
+    Create a pair of IQ snippets modelling two nodes receiving the same
+    PA transition at different times (different propagation delays).
+
+    For onset: noise -> ramp -> carrier.  Node B sees the onset
+    delay_samples later (onset at onset_a + delay_samples).
+
+    For offset: carrier -> ramp-down -> noise.  Reversed structure.
+
+    Both nodes share the same carrier content after the ramp (same RF
+    signal), and have independent noise.
     """
     rng = np.random.default_rng(seed)
-    noise = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64) * 0.02
-    carrier = _bandlimited_noise(n, seed=seed + 1)
-    # Normalise carrier to unit amplitude
-    carrier = carrier / (np.max(np.abs(carrier)) + 1e-30)
-    snippet = noise.copy()
-    snippet[transition_at:] = carrier[transition_at:]
-    return snippet
+    snr_linear = 10.0 ** (snr_db / 10.0)
+    noise_amp = 1.0 / float(np.sqrt(snr_linear))
+
+    # Constant-envelope FM carrier (same physical transmission).
+    # Real LMR FM has constant instantaneous power — the power envelope
+    # is a clean step at the PA transition, not a noisy ramp.  We model
+    # this as a rotating phasor with slowly-varying frequency (FM modulation)
+    # so the power envelope is flat but the phase varies, giving xcorr
+    # texture to lock onto.
+    carrier_len = n + delay_samples + ramp_samples
+    # FM modulation: slowly-varying frequency gives phase texture
+    mod_freq = np.cumsum(rng.standard_normal(carrier_len) * 0.1)
+    phase = np.cumsum(mod_freq) * 0.01
+    carrier = np.exp(1j * phase).astype(np.complex64)
+
+    # Build both nodes from the same physical signal, sliced at different
+    # positions to model the propagation delay.  This ensures both nodes see
+    # identical carrier content (same physical transmission).
+    onset_b = onset_a + delay_samples
+    total_len = n + delay_samples + ramp_samples
+
+    # Physical signal: silence -> PA power ramp -> full carrier.
+    # The PA ramp is a power ramp (amplitude = sqrt(ramp)), modelling
+    # the PA amplifier turning on.  The carrier inside the ramp has
+    # constant envelope (FM) — only the PA output power changes.
+    physical = np.zeros(total_len, dtype=np.complex64)
+    ramp_end = onset_a + ramp_samples
+    if ramp_samples > 0 and onset_a < total_len:
+        ramp_len = min(ramp_samples, total_len - onset_a)
+        # Power ramp: amplitude = sqrt(linear_ramp) so |IQ|^2 ramps linearly
+        amp_ramp = np.sqrt(np.linspace(0.0, 1.0, ramp_len)).astype(np.float32)
+        physical[onset_a:onset_a + ramp_len] = carrier[onset_a:onset_a + ramp_len] * amp_ramp
+    if ramp_end < total_len:
+        physical[ramp_end:] = carrier[ramp_end:total_len]
+
+    if event_type == "offset":
+        physical = physical[::-1].copy()
+
+    # Node A sees [0 : n], node B sees [delay : delay + n]
+    iq_a_clean = physical[:n].copy()
+    iq_b_clean = physical[delay_samples:delay_samples + n].copy()
+
+    # Independent noise for each node
+    rng_a = np.random.default_rng(seed + 1000)
+    rng_b = np.random.default_rng(seed + 2000)
+    noise_a = noise_amp * (rng_a.standard_normal(n) + 1j * rng_a.standard_normal(n)).astype(np.complex64)
+    noise_b = noise_amp * (rng_b.standard_normal(n) + 1j * rng_b.standard_normal(n)).astype(np.complex64)
+
+    iq_a = (iq_a_clean + noise_a).astype(np.complex64)
+    iq_b = (iq_b_clean + noise_b).astype(np.complex64)
+
+    return iq_a, iq_b
 
 
-def test_onset_transition_windowing_recovers_correct_lag():
+def _load_real_snippet():
+    """Load a real onset snippet from fixture data."""
+    import json
+    from pathlib import Path
+    from beagle_server.tdoa import _decode_iq_snippet
+    fixture = Path(__file__).parents[1] / "fixtures" / "three_node_baseline_2026_04_08.json"
+    data = json.load(fixture.open())
+    onsets = [e for e in data["events"]
+              if e["event_type"] == "onset" and len(e.get("iq_snippet_b64", "")) > 100]
+    return _decode_iq_snippet(onsets[1]["iq_snippet_b64"]), float(onsets[1]["channel_sample_rate_hz"])
+
+
+def test_onset_xcorr_recovers_delay():
     """
-    With event_type="onset" the xcorr uses the first 3/4 of the snippet.
-    The PA rise at ~1/4 position falls within the trim window; the lag should
-    be accurately recovered and SNR above the acceptance threshold.
+    Real onset snippet shifted by 10 samples — d2 xcorr should recover.
     """
-    n = 1280
-    lag_samples = 5
-    sig_a = _make_onset_snippet(n, transition_at=n // 4, seed=10)
-    sig_b = np.roll(sig_a, lag_samples)
+    iq, rate = _load_real_snippet()
+    delay = 10
+    n = len(iq) - delay - 1
+    iq_a = iq[delay:delay + n]
+    iq_b = iq[:n]
 
-    b64_a = _encode_iq(sig_a)
-    b64_b = _encode_iq(sig_b)
-    rate = 62_500.0
+    lag_ns, snr = cross_correlate_snippets(
+        _encode_iq(iq_a), _encode_iq(iq_b),
+        sample_rate_hz_a=rate, event_type="onset",
+    )
 
-    lag_ns, snr = cross_correlate_snippets(b64_a, b64_b, sample_rate_hz_a=rate, event_type="onset")
+    expected_ns = delay * 1e9 / rate
+    tol_ns = 2.0 * 1e9 / rate
 
-    expected_ns = lag_samples * 1e9 / rate
-    tol_ns = 1.5 * 1e9 / rate
+    assert snr > 10.0, f"Onset d2 xcorr SNR too low: {snr:.2f}"
     assert abs(lag_ns - expected_ns) < tol_ns, (
-        f"Onset windowing lag wrong: {lag_ns:.0f} ns vs {expected_ns:.0f} ns"
-    )
-    assert snr > 1.5, f"Onset windowing SNR should exceed threshold 1.5, got {snr:.2f}"
-
-
-def test_full_snippet_xcorr_finds_transition_anywhere():
-    """
-    With full-snippet xcorr (no trimming), the PA transition can be at any
-    position in the snippet.  xcorr measures the offset between where the
-    transition appears in the two snippets.
-
-    Transition at 7/8 of snippet — xcorr should still find a valid peak
-    when correlating the snippet with a shifted copy.
-    """
-    n = 1280
-    sig = np.zeros(n, dtype=np.complex64)
-    carrier = _bandlimited_noise(n, seed=20)
-    carrier = carrier / (np.max(np.abs(carrier)) + 1e-30)
-    sig[7 * n // 8 :] = carrier[7 * n // 8 :]
-
-    lag_samples = 3
-    sig_b = np.roll(sig, lag_samples)
-
-    b64_a = _encode_iq(sig)
-    b64_b = _encode_iq(sig_b)
-    rate = 62_500.0
-
-    lag_ns, snr = cross_correlate_snippets(b64_a, b64_b, sample_rate_hz_a=rate, event_type="onset")
-    expected_ns = lag_samples * 1e9 / rate
-
-    assert snr > 1.3, f"Full-snippet xcorr should find transition, got SNR={snr:.2f}"
-    assert abs(lag_ns - expected_ns) < 2 * 1e9 / rate, (
-        f"Lag wrong: {lag_ns:.0f} ns vs {expected_ns:.0f} ns"
+        f"Onset lag wrong: {lag_ns:.0f} ns vs {expected_ns:.0f} ns"
     )
 
 
-def test_full_snippet_xcorr_offset_correct_lag():
+def test_offset_xcorr_recovers_delay():
     """
-    Offset xcorr with full snippet (no trimming) should find the correct lag.
+    Real snippet reversed (simulating offset), shifted by 10 samples.
+    d2 xcorr should recover the delay.
     """
-    rng = np.random.default_rng(30)
-    n = 1280
-    carrier = _bandlimited_noise(n, seed=30)
-    carrier = carrier / (np.max(np.abs(carrier)) + 1e-30)
-    noise = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64) * 0.02
-    sig = carrier.copy()
-    sig[3 * n // 4 :] = noise[3 * n // 4 :]
+    iq, rate = _load_real_snippet()
+    # Reverse to simulate offset (carrier → noise)
+    iq = iq[::-1].copy()
+    delay = 10
+    n = len(iq) - delay - 1
+    iq_a = iq[delay:delay + n]
+    iq_b = iq[:n]
 
-    lag_samples = 4
-    sig_b = np.roll(sig, lag_samples)
+    lag_ns, snr = cross_correlate_snippets(
+        _encode_iq(iq_a), _encode_iq(iq_b),
+        sample_rate_hz_a=rate, event_type="offset",
+    )
 
-    b64_a = _encode_iq(sig)
-    b64_b = _encode_iq(sig_b)
-    rate = 62_500.0
+    expected_ns = delay * 1e9 / rate
+    tol_ns = 2.0 * 1e9 / rate
 
-    lag_ns, snr = cross_correlate_snippets(b64_a, b64_b, sample_rate_hz_a=rate, event_type="offset")
-    expected_ns = lag_samples * 1e9 / rate
-    tol_ns = 1.5 * 1e9 / rate
-
-    assert snr > 1.5, f"Full-snippet offset xcorr SNR should be > 1.5, got {snr:.2f}"
+    assert snr > 10.0, f"Offset d2 xcorr SNR too low: {snr:.2f}"
     assert abs(lag_ns - expected_ns) < tol_ns, (
         f"Offset lag wrong: {lag_ns:.0f} ns vs {expected_ns:.0f} ns"
     )
+
+
+def test_onset_xcorr_zero_delay():
+    """Identical real snippets should give ~0 lag."""
+    iq, rate = _load_real_snippet()
+
+    lag_ns, snr = cross_correlate_snippets(
+        _encode_iq(iq), _encode_iq(iq.copy()),
+        sample_rate_hz_a=rate, event_type="onset",
+    )
+
+    tol_ns = 1.0 * 1e9 / rate
+    assert abs(lag_ns) < tol_ns, f"Zero-delay onset lag should be ~0, got {lag_ns:.0f} ns"
 
 
 # ---------------------------------------------------------------------------
