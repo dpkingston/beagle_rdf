@@ -146,7 +146,15 @@ def _iq_to_b64(iq: np.ndarray) -> str:
 def _make_event_with_snippet(
     node_lat, node_lon, sync_delta_ns, snippet_b64,
     sample_rate_hz=64_000.0, node_id="test", event_type="onset",
+    transition_start=None, transition_end=None,
 ):
+    # Defaults match _make_plateau_iq (n_samples=1280, onset_sample=512,
+    # ramp_samples=8): onset at sample 512, ramp ends ~520.
+    # For offset (reversed signal), the transition is at n - onset = 768.
+    if transition_start is None:
+        transition_start = 490 if event_type == "onset" else 746
+    if transition_end is None:
+        transition_end = 540 if event_type == "onset" else 790
     return {
         "node_id": node_id,
         "sync_delta_ns": sync_delta_ns,
@@ -157,6 +165,8 @@ def _make_event_with_snippet(
         "iq_snippet_b64": snippet_b64,
         "channel_sample_rate_hz": sample_rate_hz,
         "event_type": event_type,
+        "transition_start": transition_start,
+        "transition_end": transition_end,
     }
 
 

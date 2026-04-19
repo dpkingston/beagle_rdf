@@ -280,7 +280,17 @@ def _iq_to_b64(iq: np.ndarray) -> str:
     return base64.b64encode(raw.tobytes()).decode()
 
 
-def _make_event(node_lat, node_lon, sync_delta_ns, sync_tx_lat=47.6, sync_tx_lon=-122.3):
+def _make_event(node_lat, node_lon, sync_delta_ns, sync_tx_lat=47.6, sync_tx_lon=-122.3,
+                event_type="onset", transition_start=None, transition_end=None):
+    # Defaults match typical production values for 1280-sample snippets at 62.5 kHz:
+    #   onset:  detection at 3/4 minus 5 windows (~1152 samples back to 640)
+    #   offset: detection at 3/4 minus 8 windows (~960 samples back to 448)
+    # The real-data fixture's onset has argmax(d1) around sample 752 —
+    # within [640, 1152].
+    if transition_start is None:
+        transition_start = 640 if event_type == "onset" else 448
+    if transition_end is None:
+        transition_end = 1152 if event_type == "onset" else 960
     return {
         "node_id": "test",
         "sync_delta_ns": sync_delta_ns,
@@ -288,16 +298,26 @@ def _make_event(node_lat, node_lon, sync_delta_ns, sync_tx_lat=47.6, sync_tx_lon
         "sync_tx_lon": sync_tx_lon,
         "node_lat": node_lat,
         "node_lon": node_lon,
-        "event_type": "onset",
+        "event_type": event_type,
         "iq_snippet_b64": _make_real_snippet_b64(),
         "channel_sample_rate_hz": _REAL_RATE,
+        "transition_start": transition_start,
+        "transition_end": transition_end,
     }
 
 
 def _make_event_with_snippet(
     node_lat, node_lon, sync_delta_ns, snippet_b64,
     sample_rate_hz=64_000.0, node_id="test", event_type="onset",
+    transition_start=None, transition_end=None,
 ):
+    # Defaults target a 1280-sample snippet produced by _make_plateau_pair_iq
+    # (onset at sample ~320 with ramp_samples wide).  The knee is inside
+    # [onset_sample, onset_sample + 512].
+    if transition_start is None:
+        transition_start = 320 if event_type == "onset" else 64
+    if transition_end is None:
+        transition_end = 832 if event_type == "onset" else 576
     return {
         "node_id": node_id,
         "sync_delta_ns": sync_delta_ns,
@@ -308,6 +328,8 @@ def _make_event_with_snippet(
         "iq_snippet_b64": snippet_b64,
         "channel_sample_rate_hz": sample_rate_hz,
         "event_type": event_type,
+        "transition_start": transition_start,
+        "transition_end": transition_end,
     }
 
 
@@ -412,27 +434,34 @@ def test_compute_tdoa_xcorr_refines_sync_delta():
     xcorr provides sub-sample refinement on top of the sync_delta TDOA.
 
     Co-located nodes (same lat/lon) with sync_delta encoding a known delay.
-    The IQ snippets have a small sub-sample offset that xcorr should detect
-    and add to the coarse sync_delta TDOA.
+    The IQ snippets have a small sub-sample offset that the server-side
+    knee finder detects and corrects.
+
+    Physical interpretation of the test construction:
+      - sd_A - sd_B = +100 µs: A's *detection* fires 100 µs after B's.
+      - prop_delay = 2 samples: A's snippet shows the carrier onset 2 samples
+        EARLIER than B's (np.roll left).  With both snippets anchored at the
+        detection point, this means A's detection-to-knee delay is 2 samples
+        SHORTER than B's — i.e. A's knee occurred ~31 µs LESS after detection.
+      - Combined: A's knee fired 100 µs − 31 µs = 69 µs after B's knee.
     """
     fs = 64_000.0
-    # Small prop delay (2 samples) -- within the refinement gate
-    prop_delay = 2
+    prop_delay = 2    # samples of snippet shift
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
-    # sync_delta encodes 100 usec coarse TDOA
-    sd_a = 100_100_000  # 100.1 ms
-    sd_b = 100_000_000  # 100.0 ms -- difference = 100 usec
+    # sync_delta encodes 100 µs coarse difference in detection times
+    sd_a = 100_100_000
+    sd_b = 100_000_000
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=sd_a, snippet_b64=_iq_to_b64(iq_a),
                                      sample_rate_hz=fs, node_id="node-a")
     ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=sd_b, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b")
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
-    # Coarse TDOA = 100 usec, xcorr refinement adds ~31 usec (2 samples at 64 kHz)
-    # Combined should be ~131 usec
-    expected_coarse = 100_000 / 1e9  # 100 usec
-    expected_fine = prop_delay / fs   # ~31 usec
-    assert abs(tdoa - (expected_coarse + expected_fine)) < 40e-6  # within 40 usec (sub-snippet knee walk adds ~1 window uncertainty)
+    # Expected: 100 µs (detection diff) − 31 µs (knee-to-detection diff) = 69 µs
+    expected = (100_000 - prop_delay * 1e9 / fs) / 1e9   # ~69 µs
+    assert abs(tdoa - expected) < 40e-6, (
+        f"tdoa={tdoa*1e6:+.1f} µs expected={expected*1e6:+.1f} µs"
+    )
 
 
 def test_compute_tdoa_non_colocated_uses_sync_delta_geometry():
@@ -476,12 +505,16 @@ def test_compute_tdoa_non_colocated_uses_sync_delta_geometry():
     sd_b = int(base_ns + (d_target_b - d_sync_b) / _C_M_S * 1e9)
 
     # Both snippets have the transition at the SAME position (anchored).
-    # xcorr will measure ~0 lag between them.
+    # Knee finder should find ~same position in both → knee_adj ~0.
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=0, snr_db=25.0)
 
+    # _make_plateau_pair_iq places the onset at sample 320 with a 24-sample
+    # ramp.  Constrain the knee search to a tight window around the ramp
+    # so argmax(d1) doesn't latch onto AM-envelope variation in the plateau.
     ev_a = _make_event_with_snippet(
         node_a_pos[0], node_a_pos[1], sync_delta_ns=sd_a,
         snippet_b64=_iq_to_b64(iq_a), node_id="node-a",
+        transition_start=310, transition_end=370,
     )
     ev_a["sync_tx_lat"] = sync_tx[0]
     ev_a["sync_tx_lon"] = sync_tx[1]
@@ -489,6 +522,7 @@ def test_compute_tdoa_non_colocated_uses_sync_delta_geometry():
     ev_b = _make_event_with_snippet(
         node_b_pos[0], node_b_pos[1], sync_delta_ns=sd_b,
         snippet_b64=_iq_to_b64(iq_b), node_id="node-b",
+        transition_start=310, transition_end=370,
     )
     ev_b["sync_tx_lat"] = sync_tx[0]
     ev_b["sync_tx_lon"] = sync_tx[1]
@@ -557,15 +591,20 @@ def test_compute_tdoa_xcorr_geo_filter_rejects_implausible_lag():
 
 def test_compute_tdoa_xcorr_refinement_within_gate():
     """
-    xcorr lag within the refinement gate (50 usec) is accepted and added
-    to the sync_delta TDOA.
+    Small inter-snippet offset feeds into the knee-finder correction.
 
-    1-sample prop delay at 64 kHz ~ 15.6 usec -- well within the gate.
-    sync_delta is 0 for both co-located nodes, so the result should be
-    the xcorr refinement alone (~15.6 usec).
+    1-sample prop_delay_samples at 64 kHz = 15.6 µs.  In the new algorithm:
+    both nodes find their own knee; the knee positions in the snippets differ
+    by 1 sample because the snippet content was shifted.  knee_adj =
+    (knee_a - det_a)/fs - (knee_b - det_b)/fs contributes -1/fs = -15.6 µs.
+    With sync_delta_ns = 0 for both nodes, TDOA = -15.6 µs.
+
+    (Under the old xcorr-based algorithm this returned +15.6 µs because
+    the xcorr lag was added rather than absorbed into per-node knee
+    positions — that was physically wrong for a detection-anchored snippet.)
     """
     fs = 64_000.0
-    prop_delay = 1  # ~ 15.6 usec -- within 50 usec refinement gate
+    prop_delay = 1
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
     ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
                                      sample_rate_hz=fs, node_id="node-a")
@@ -573,59 +612,81 @@ def test_compute_tdoa_xcorr_refinement_within_gate():
                                      sample_rate_hz=fs, node_id="node-b")
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
     assert tdoa is not None
-    assert abs(tdoa - prop_delay / fs) < 20e-6  # within 20 usec (sub-snippet xcorr precision)
+    expected = -prop_delay / fs   # knee_adj is negative: A's knee appears earlier in A's snippet
+    assert abs(tdoa - expected) < 20e-6, (
+        f"tdoa={tdoa*1e6:+.1f} µs expected={expected*1e6:+.1f} µs"
+    )
 
 
 def test_compute_tdoa_xcorr_large_lag_accepted_onset():
     """
-    Onset xcorr lag of ~156 usec is accepted — snippets are anchored on
-    detection points which can differ significantly between nodes.  The
-    xcorr correction aligns the PA features.  156 usec is within the
-    geometric plausibility limit for a 50 km baseline (~167 usec).
+    Large inter-snippet offset (10 samples = 156 µs) is absorbed into the
+    knee finder's per-node knee position and appears in the final TDOA.
+    This is within the 50 km geometric plausibility limit (~167 µs).
     """
     fs = 64_000.0
-    prop_delay = 10  # ~ 156 usec
+    prop_delay = 10
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
-                                     sample_rate_hz=fs, node_id="node-a", event_type="onset")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
-                                     sample_rate_hz=fs, node_id="node-b", event_type="onset")
+    # _make_plateau_pair_iq places the onset ramp at ~320-344; narrow the
+    # search window so argmax(d1) doesn't latch onto AM-envelope variation.
+    ev_a = _make_event_with_snippet(
+        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+        sample_rate_hz=fs, node_id="node-a", event_type="onset",
+        transition_start=300, transition_end=380,
+    )
+    ev_b = _make_event_with_snippet(
+        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+        sample_rate_hz=fs, node_id="node-b", event_type="onset",
+        transition_start=300, transition_end=380,
+    )
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
-    assert tdoa is not None, "Expected valid TDOA for plausible xcorr lag"
-    assert abs(tdoa * 1e6) < 200.0, f"TDOA {tdoa*1e6:.0f} usec seems too large"
+    assert tdoa is not None, "Expected valid TDOA for plausible knee offset"
+    assert abs(tdoa * 1e6) < 200.0, f"TDOA {tdoa*1e6:.0f} µs seems too large"
 
 
 def test_compute_tdoa_xcorr_large_lag_accepted_offset():
     """
-    Offset xcorr lag of ~156 usec is accepted — same rationale as onset.
+    Offset-event version of the above.  `_make_plateau_pair_iq` reverses
+    the signal, so the falling edge is near the END of the snippet (samples
+    ~936-960 for the default 1280-sample construction).
     """
     fs = 64_000.0
-    prop_delay = 10  # ~ 156 usec
+    prop_delay = 10
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0,
                                         event_type="offset")
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
-                                     sample_rate_hz=fs, node_id="node-a", event_type="offset")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
-                                     sample_rate_hz=fs, node_id="node-b", event_type="offset")
+    ev_a = _make_event_with_snippet(
+        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+        sample_rate_hz=fs, node_id="node-a", event_type="offset",
+        transition_start=920, transition_end=1000,
+    )
+    ev_b = _make_event_with_snippet(
+        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+        sample_rate_hz=fs, node_id="node-b", event_type="offset",
+        transition_start=920, transition_end=1000,
+    )
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
-    assert tdoa is not None, "Expected valid TDOA for plausible xcorr lag"
-    assert abs(tdoa * 1e6) < 200.0, f"TDOA {tdoa*1e6:.0f} usec seems too large"
+    assert tdoa is not None, "Expected valid TDOA for plausible knee offset"
+    assert abs(tdoa * 1e6) < 200.0, f"TDOA {tdoa*1e6:.0f} µs seems too large"
 
 
 def test_compute_tdoa_colocated_xcorr_near_zero():
     """
-    Co-located nodes receiving the same transmission produce xcorr TDOA ~ 0.
-    This mirrors the co-located calibration scenario and validates that xcorr
-    does not introduce spurious bias.
+    Co-located nodes with identical snippets (no shift) should yield
+    TDOA ~ 0 — the knee finder finds the same position in each snippet.
     """
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=0, snr_db=25.0)
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
-                                     node_id="node-a")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
-                                     node_id="node-b")
+    # Narrow the transition window to avoid argmax latching on AM noise.
+    ev_a = _make_event_with_snippet(
+        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+        node_id="node-a", transition_start=300, transition_end=380,
+    )
+    ev_b = _make_event_with_snippet(
+        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+        node_id="node-b", transition_start=300, transition_end=380,
+    )
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
-    assert abs(tdoa) < 1e-4  # < 100 usec (one-sample at 64 kHz)
+    assert abs(tdoa) < 1e-4  # < 100 µs (one-sample at 64 kHz)
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +733,8 @@ def _make_event_with_onset_time(node_lat, node_lon, sync_delta_ns, onset_time_ns
         "onset_time_ns": onset_time_ns,
         "iq_snippet_b64": _make_real_snippet_b64(),
         "channel_sample_rate_hz": _REAL_RATE,
+        "transition_start": 640,
+        "transition_end": 1152,
     }
 
 
@@ -833,6 +896,9 @@ class TestSyncTxCoordinateMismatch:
     SD_B_NS = 2764024    # kb7ryy sync_delta_ns
 
     def _make_event(self, node_pos, sync_delta_ns, sync_tx, node_id):
+        # Using the fixture onset snippet (real data) — transition_start/end
+        # match its actual PA rise region.  The test is about sync_tx
+        # coordinate handling, not the event type itself.
         return {
             "node_id": node_id,
             "sync_delta_ns": sync_delta_ns,
@@ -840,9 +906,11 @@ class TestSyncTxCoordinateMismatch:
             "sync_tx_lon": sync_tx[1],
             "node_lat": node_pos[0],
             "node_lon": node_pos[1],
-            "event_type": "offset",
+            "event_type": "onset",
             "iq_snippet_b64": _make_real_snippet_b64(),
             "channel_sample_rate_hz": _REAL_RATE,
+            "transition_start": 640,
+            "transition_end": 1152,
         }
 
     def test_correct_sync_tx_gives_correct_tdoa(self):
@@ -969,3 +1037,136 @@ class TestSyncTxCoordinateMismatch:
                 f"Pair {i} TDOA {t:+.1f} usec > 3500 usec from truth -- "
                 f"disambiguation likely picked wrong n"
             )
+
+
+# ---------------------------------------------------------------------------
+# SyncCalibrator: bit counting uses the nominal RDS bit period (250000/1187.5),
+# NOT each node's reported crystal correction.
+# ---------------------------------------------------------------------------
+
+class TestSyncCalibratorNominalRate:
+    """
+    Empirical finding from 190 paired dpk-tdoa1/tdoa2 events over 36 hours:
+    sync_sample_index differences between nodes are near-integer multiples
+    of the NOMINAL bit period (250000/1187.5 samples).  Applying the reported
+    crystal correction to the division injects a spurious ~100 µs fractional
+    offset purely from applying ppm-scale adjustment to million-sample diffs.
+    These tests lock in the correct (nominal-rate) behavior.
+    """
+
+    _T_SYNC_NS = 1e9 / 1187.5   # 842,105.26 ns
+    _SPB_NOMINAL = 250_000.0 / 1187.5   # 210.52631578...
+
+    def _events(self, sync_idx_a, sync_idx_b, corr_a=1.0, corr_b=1.0,
+                sync_delta_a=500_000, sync_delta_b=500_000):
+        """Build a pair of events with the given sync_sample_index values."""
+        base = {
+            "sync_tx_lat": 47.6, "sync_tx_lon": -122.3,
+            "node_lat": 47.7, "node_lon": -122.3,
+            "event_type": "onset",
+            "iq_snippet_b64": _make_real_snippet_b64(),
+            "channel_sample_rate_hz": _REAL_RATE,
+        }
+        ev_a = {**base, "node_id": "a", "sync_delta_ns": sync_delta_a,
+                "sync_sample_index": sync_idx_a,
+                "sync_sample_rate_correction": corr_a}
+        ev_b = {**base, "node_id": "b", "sync_delta_ns": sync_delta_b,
+                "sync_sample_index": sync_idx_b,
+                "sync_sample_rate_correction": corr_b}
+        return ev_a, ev_b
+
+    def test_calibrator_is_public_surface(self):
+        """SyncCalibrator is the tested API — import from the public module."""
+        from beagle_server.tdoa import SyncCalibrator
+        assert SyncCalibrator is not None
+
+    def test_exact_integer_bits_at_nominal_yields_zero_correction(self):
+        """
+        When sync_idx_a - sync_idx_b is an exact integer multiple of the nominal
+        bit period, correction must be 0 regardless of reported crystal values.
+        """
+        from beagle_server.tdoa import SyncCalibrator
+        cal = SyncCalibrator(alpha=0.2, min_samples=1)
+        # Choose indices separated by exactly 12015 bit periods at nominal SPB.
+        idx_b = 28_176_745_397.0
+        idx_a = idx_b + 12015 * self._SPB_NOMINAL
+        # Reported crystal values: realistic ~10 ppm slow, slightly different.
+        ev_a, ev_b = self._events(
+            idx_a, idx_b, corr_a=0.99999078, corr_b=0.99998921
+        )
+        corr_ns = cal.update("a", "b", ev_a, ev_b)
+        assert abs(corr_ns) < 10.0, (
+            f"Correction should be ~0 at integer-bit diff; got {corr_ns:+.1f} ns"
+        )
+
+    def test_half_bit_offset_yields_half_period_correction(self):
+        """
+        When sync_idx_a - sync_idx_b has a known 0.1-bit fractional offset at
+        nominal SPB, correction reflects that (0.1 * T_sync ~ 84,210 ns).
+        """
+        from beagle_server.tdoa import SyncCalibrator
+        cal = SyncCalibrator(alpha=0.2, min_samples=1)
+        idx_b = 28_176_745_397.0
+        idx_a = idx_b + (12015 + 0.1) * self._SPB_NOMINAL
+        ev_a, ev_b = self._events(idx_a, idx_b,
+                                    corr_a=0.99999078, corr_b=0.99998921)
+        corr_ns = cal.update("a", "b", ev_a, ev_b)
+        # Correction magnitude ~ 0.1 * T_sync = 84,210 ns; sign depends on
+        # sort direction of the pair key, both are acceptable.
+        expected = 0.1 * self._T_SYNC_NS
+        assert abs(abs(corr_ns) - expected) < 50.0, (
+            f"|correction| should be {expected:.0f} ns; got {corr_ns:+.1f}"
+        )
+
+    def test_crystal_correction_is_ignored(self):
+        """
+        The SAME sync_idx diff with DIFFERENT reported crystals must yield the
+        SAME correction — confirming we don't multiply sample-diff leverage by
+        a ppm-scale rate adjustment.  (Before the fix, the corrections would
+        differ by ~100 µs.)
+        """
+        from beagle_server.tdoa import SyncCalibrator
+        idx_b = 28_176_745_397.0
+        idx_a = idx_b + 12015 * self._SPB_NOMINAL
+
+        cal1 = SyncCalibrator(alpha=0.2, min_samples=1)
+        cal2 = SyncCalibrator(alpha=0.2, min_samples=1)
+        # Two different crystal scenarios that would previously give very
+        # different "frac" values.
+        ev_a1, ev_b1 = self._events(idx_a, idx_b, corr_a=1.0, corr_b=1.0)
+        ev_a2, ev_b2 = self._events(idx_a, idx_b,
+                                      corr_a=0.99999078, corr_b=0.99998921)
+        c1 = cal1.update("a", "b", ev_a1, ev_b1)
+        c2 = cal2.update("a", "b", ev_a2, ev_b2)
+        assert abs(c1 - c2) < 5.0, (
+            f"Corrections must not depend on reported crystal: {c1:+.1f} vs {c2:+.1f}"
+        )
+
+    def test_legacy_zero_sync_idx_returns_no_correction(self):
+        """Legacy nodes send sync_sample_index=0 — must return 0 correction."""
+        from beagle_server.tdoa import SyncCalibrator
+        cal = SyncCalibrator(alpha=0.2, min_samples=1)
+        ev_a, ev_b = self._events(0.0, 0.0, corr_a=0.0, corr_b=0.0)
+        assert cal.update("a", "b", ev_a, ev_b) == 0.0
+
+    def test_restart_resets_pair_ema(self):
+        """A >50% drop in sync_sample_index on a node must reset pair EMAs."""
+        from beagle_server.tdoa import SyncCalibrator
+        cal = SyncCalibrator(alpha=1.0, min_samples=1)   # converge in one update
+        # Prime EMA with a 0.2-bit offset.
+        idx_b = 1_000_000_000.0
+        idx_a = idx_b + (12015 + 0.2) * self._SPB_NOMINAL
+        ev_a, ev_b = self._events(idx_a, idx_b)
+        cal.update("a", "b", ev_a, ev_b)
+        # Node "a" restarts: idx drops sharply.  Choose new indices so the
+        # post-restart diff is an exact integer multiple of the nominal bit
+        # period — then correction should be ~0 IF the old EMA was reset.
+        idx_a_restarted = 5000.0
+        idx_b_new = idx_a_restarted - 100 * self._SPB_NOMINAL
+        ev_a2, ev_b2 = self._events(idx_a_restarted, idx_b_new)
+        c = cal.update("a", "b", ev_a2, ev_b2)
+        assert abs(c) < 10.0, (
+            f"Post-restart correction should not retain old 0.2-bit EMA; "
+            f"got {c:+.1f} ns (expected ~0 because post-restart diff is "
+            f"an integer bit multiple)"
+        )

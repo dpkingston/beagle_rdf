@@ -198,6 +198,9 @@ def _make_event_payload(
         "node_software_version": "test",
         "iq_snippet_b64": _make_node_snippet_b64(sync_delta),
         "channel_sample_rate_hz": float(_SNIPPET_RATE_HZ),
+        # Give the knee finder a narrow window around the known ramp position.
+        "transition_start": _BASE_ONSET - 30,
+        "transition_end": _BASE_ONSET + _RAMP_SAMPLES + 30,
     }
 
 
@@ -220,6 +223,10 @@ def _test_config() -> ServerFullConfig:
             search_center_lat=47.6,
             search_center_lon=-122.3,
             search_radius_km=100.0,
+            # Lower SNR gate: synthetic test signal has modest d1 SNR
+            # because the post-ramp carrier has deterministic structure
+            # that contributes to the RMS-of-d1 "noise" metric.
+            min_xcorr_snr=1.5,
         ),
         map=MapConfig(output_dir="/tmp/tdoa_test_maps", max_age_s=3600.0),
     )

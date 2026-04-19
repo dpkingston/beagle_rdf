@@ -43,7 +43,7 @@ from math import gcd
 from typing import Any
 
 import numpy as np
-from scipy.signal import resample_poly
+from scipy.signal import resample_poly, savgol_filter
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +107,9 @@ class SyncCalibrator:
 
         sync_idx_a = event_a.get("sync_sample_index", 0.0)
         sync_idx_b = event_b.get("sync_sample_index", 0.0)
-        corr_a = event_a.get("sync_sample_rate_correction", 0.0)
-        corr_b = event_b.get("sync_sample_rate_correction", 0.0)
 
         # Need valid sample indices from both nodes.  Legacy nodes send 0.
-        if sync_idx_a == 0.0 or sync_idx_b == 0.0 or corr_a == 0.0 or corr_b == 0.0:
+        if sync_idx_a == 0.0 or sync_idx_b == 0.0:
             est, count = self._pairs.get(key, (0.0, 0))
             return est * sign * _T_SYNC_NS if count >= self._min_samples else 0.0
 
@@ -132,11 +130,16 @@ class SyncCalibrator:
                     )
             self._last_idx[nid] = idx
 
-        # Compute fractional-bit offset from sample indices.
-        # sync_sample_index is in sync-decimated sample space (~250 kHz).
+        # Compute fractional-bit offset from sample indices at the NOMINAL
+        # bit period (250000/1187.5 samples).  Do NOT apply the per-node
+        # crystal correction here: empirically (190 paired dpk-tdoa1/tdoa2
+        # events over 36 h) diff/SPB_nominal is within 1 µs of an integer,
+        # while diff/SPB_crystal injects a spurious ~100 µs offset purely
+        # as a numerical artifact of applying ppm-scale correction to
+        # sample differences in the millions.  The real crystal rates of
+        # the paired nodes are near-identical (std < 1.2 ppm over 36 h).
         sync_diff_samples = sync_idx_a - sync_idx_b
-        rate_avg = 250_000.0 * (corr_a + corr_b) / 2.0
-        rds_bit_samples = rate_avg / 1187.5
+        rds_bit_samples = 250_000.0 / 1187.5
         sync_diff_bits = sync_diff_samples / rds_bit_samples
         frac = sync_diff_bits - round(sync_diff_bits)
 
@@ -224,6 +227,88 @@ def _compute_power_envelope(iq: np.ndarray, smooth_samples: int = 16) -> np.ndar
     power = iq.real.astype(np.float64)**2 + iq.imag.astype(np.float64)**2
     kernel = np.ones(smooth_samples) / smooth_samples
     return np.convolve(power, kernel, mode='same')
+
+
+def _find_knee_sub_sample(
+    iq: np.ndarray,
+    event_type: str,
+    transition_start: int,
+    transition_end: int,
+    savgol_window: int = 15,
+    savgol_order: int = 3,
+) -> tuple[float, float] | None:
+    """
+    Find the sub-sample position of the PA transition knee in a snippet.
+
+    Uses Savitzky-Golay filter to compute the first derivative of the power
+    envelope, then finds the argmin (offset) or argmax (onset) within the
+    reported transition region.  Parabolic interpolation on the d1 peak
+    gives sub-sample precision.
+
+    Savgol is preferred over box-smooth-then-np.diff because it fits a
+    polynomial across the window, preserving the *position* of sharp
+    features.  Empirically (harness across 30 paired real snippets, Magnolia
+    ground truth) this gets ~116 µs median TDOA error at 62.5 kHz vs ~198 µs
+    with box-16 smoothing + np.diff.
+
+    Parameters
+    ----------
+    iq : complex64 array, the snippet.
+    event_type : "onset" or "offset".
+    transition_start, transition_end : int
+        Reported snippet positions bracketing the PA transition (both nodes
+        report these based on their detector anchoring).
+    savgol_window, savgol_order : Savgol filter parameters.
+
+    Returns
+    -------
+    (knee_position_samples, snr) or None.
+      knee_position_samples : float sub-sample position in the snippet.
+      snr : peak |d1| within the transition region vs RMS of d1 outside it —
+            analogous to xcorr SNR, usable as a confidence gate.
+    Returns None if the snippet is too short or the transition window is empty.
+    """
+    n = len(iq)
+    if n < savgol_window + 4:
+        return None
+    power = iq.real.astype(np.float64) ** 2 + iq.imag.astype(np.float64) ** 2
+    d1 = savgol_filter(power, savgol_window, savgol_order, deriv=1, mode="nearest")
+
+    lo = max(2, int(transition_start))
+    hi = min(len(d1) - 2, int(transition_end))
+    if hi <= lo + 2:
+        return None
+
+    d1_region = d1[lo:hi]
+    if event_type == "onset":
+        peak_rel = int(np.argmax(d1_region))
+    else:
+        peak_rel = int(np.argmin(d1_region))
+    peak_idx = peak_rel + lo
+    peak_val = float(d1[peak_idx])
+
+    # Sub-sample parabolic interpolation on the d1 peak.
+    if 0 < peak_idx < len(d1) - 1:
+        y0 = float(d1[peak_idx - 1])
+        y2 = float(d1[peak_idx + 1])
+        denom = y0 - 2.0 * peak_val + y2
+        sub = 0.0 if denom == 0.0 else 0.5 * (y0 - y2) / denom
+        sub = float(np.clip(sub, -0.5, 0.5))
+        knee_pos = float(peak_idx) + sub
+    else:
+        knee_pos = float(peak_idx)
+
+    # SNR: peak |d1| vs RMS of d1 samples OUTSIDE the transition region.
+    mask = np.ones(len(d1), dtype=bool)
+    mask[max(0, peak_idx - 3) : peak_idx + 4] = False
+    noise = d1[mask]
+    if len(noise) > 0:
+        noise_rms = float(np.sqrt(np.mean(noise ** 2)))
+    else:
+        noise_rms = 1e-30
+    snr = abs(peak_val) / max(noise_rms, 1e-30)
+
+    return knee_pos, snr
 
 
 def _find_peak_derivative_sample(
@@ -460,48 +545,51 @@ def compute_tdoa_s(
     and sync transmitter).  The path-delay correction is applied using the
     sync transmitter coordinates and node locations carried in each event.
 
-    Method selection
-    ----------------
-    1. **xcorr** (primary): when both events carry ``iq_snippet_b64``, the
-       power-envelope cross-correlation is computed.  If SNR >= min_xcorr_snr
-       AND |lag| <= max physical TDOA for max_xcorr_baseline_km, the xcorr lag
-       is returned directly as the TDOA - no path correction is applied because
-       xcorr measures the physical carrier arrival time difference between nodes
-       directly, bypassing the sync-event reference.  The geometric plausibility
-       filter rejects false detections caused by snippets where the PA transition
-       is absent (e.g. false offset triggers), which produce random large lags.
+    Method
+    ------
+    1. Compute raw_ns = sync_delta_a - sync_delta_b (sync-to-detection diff)
+    2. Apply per-pair grid calibration (removes node-pair pilot phase offset)
+    3. Find the PA transition *knee* in each snippet using Savgol-smoothed
+       first derivative (argmin for offset, argmax for onset) within the
+       reported transition region.  Gives sub-sample position.
+    4. Compute knee_adj_ns = (knee_a - det_a)/rate_a - (knee_b - det_b)/rate_b,
+       which shifts each node's reference from detection to the physical PA
+       edge.  Detection position comes from ``transition_start``/``transition_end``.
+    5. Apply path correction (sync-transmitter geometry)
+    6. Disambiguate modulo RDS bit period.
+    7. Geometric plausibility check against max_xcorr_baseline_km.
 
-    2. **sync_delta** (fallback): when snippets are absent, xcorr SNR is below
-       threshold, or the xcorr lag fails the geometric plausibility check.
-       Computes sync_delta_A - sync_delta_B with pilot disambiguation (requires
-       onset_time_ns) and adds the sync-tx path-delay correction.
+    Previously used inter-node cross-correlation on d2-of-envelope (see
+    ``cross_correlate_snippets``), but empirically that pipeline was dominated
+    by boundary artifacts of the zero-pad convolution, locking xcorr on the
+    wrong feature.  Per-node knee finding with Savgol avoids this and gives
+    ~40% lower median per-event error on a corpus of real Magnolia fixes.
 
     Parameters
     ----------
     event_a, event_b : dicts with keys:
         sync_delta_ns, sync_tx_lat, sync_tx_lon, node_lat, node_lon,
-        event_type, node_id.
-        onset_time_ns (optional): wall-clock time of the carrier edge in ns;
-        used by the sync_delta fallback for pilot disambiguation.
-        iq_snippet_b64 (optional): base64 IQ snippet; enables xcorr method.
-        channel_sample_rate_hz (optional): snippet sample rate (default 64 kHz).
+        event_type, node_id, iq_snippet_b64, channel_sample_rate_hz,
+        transition_start, transition_end.
+        onset_time_ns (optional): wall-clock time of the carrier edge in ns.
     min_xcorr_snr : float
-        Minimum xcorr peak-to-sidelobe ratio to accept the xcorr result.
-        Below this threshold the function falls back to sync_delta.
+        Minimum knee-finder SNR (peak |d1| vs out-of-region RMS of d1) to
+        accept the result.  Pairs failing this gate are dropped.
+        Retains the old parameter name for config compatibility.
     xcorr_target_rate_hz : float or None
-        Resample both envelopes to this rate before xcorr.
-        None = use the lower of the two snippet rates.
+        Currently unused (retained for API compatibility).  Previously used
+        to resample envelopes before inter-node xcorr.
     max_xcorr_baseline_km : float
         Maximum node-pair separation in km.  Used as a geometric plausibility
-        filter: any xcorr lag whose magnitude exceeds the corresponding maximum
-        physical TDOA (baseline / c) is treated as a false detection and falls
-        back to sync_delta.  Defaults to 100 km (~ 333 usec max TDOA).
+        filter: any TDOA whose magnitude exceeds (baseline / c) after
+        disambiguation is treated as a false detection and rejected.
 
     Returns
     -------
     float or None
-        TDOA in seconds, or None if sync_delta_ns is missing and xcorr
-        is unavailable.  Positive -> A heard the carrier *later* than B.
+        TDOA in seconds, or None on missing data, failed knee finding,
+        low SNR, or geometric implausibility.  Positive -> A heard the
+        carrier *later* than B.
     """
     node_a = event_a.get("node_id", "?")
     node_b = event_b.get("node_id", "?")
@@ -525,12 +613,13 @@ def compute_tdoa_s(
         corr_a = event_a.get("sync_sample_rate_correction", 1.0)
         corr_b = event_b.get("sync_sample_rate_correction", 1.0)
         if dsamp_a != 0.0 or dsamp_b != 0.0:
-            # Sync sample difference in RDS bit periods — should be near an
-            # integer if both nodes are counting bit boundaries consistently.
+            # Sync sample difference in RDS bit periods, at nominal rate
+            # (no crystal correction — see SyncCalibrator for rationale).
+            # Should be near an integer if both nodes are counting bit
+            # boundaries consistently.
             sync_diff_samples = sync_idx_a - sync_idx_b
-            rate_avg = 250_000.0 * (corr_a + corr_b) / 2.0
-            rds_bit_samples = rate_avg / 1187.5
-            sync_diff_bits = sync_diff_samples / rds_bit_samples if rds_bit_samples > 0 else 0.0
+            rds_bit_samples = 250_000.0 / 1187.5
+            sync_diff_bits = sync_diff_samples / rds_bit_samples
             sync_diff_frac = sync_diff_bits - round(sync_diff_bits)
             logger.info(
                 "sync_diag %s<->%s (%s): delta_ns=[%s, %s]  delta_samp=[%.1f, %.1f]  "
@@ -578,28 +667,25 @@ def compute_tdoa_s(
         node_b_lon=event_b["node_lon"],
     )
 
-    # --- xcorr: PA transition alignment across nodes ---
+    # --- Server-side knee finding ---
     #
-    # Snippets are anchored at the detection point (threshold crossing),
-    # NOT the PA transition knee.  Each node's detection fires at a
-    # different point on the PA curve (different thresholds, SNR).  The
-    # xcorr aligns the PA transition features across nodes, measuring
-    # the timing difference between where each node's detection landed
-    # relative to the true PA edge.
+    # Each node's `sync_delta_ns` measures from a pilot bit boundary to
+    # its *detection point* (threshold crossing), which varies per event
+    # by hundreds of µs due to noise floor and instantaneous signal level.
     #
-    # xcorr is applied BEFORE disambiguation because the coarse raw_ns
-    # varies by hundreds of µs (depending on where detection fired on
-    # the PA curve).  Without xcorr correction first, disambiguation
-    # round() can land on different sides of the T_SYNC boundary for
-    # different events of the same transmission.
-
-    # xcorr on the second derivative of the power envelope finds the PA
-    # transition with sub-microsecond precision.  Without a valid xcorr
-    # result, the coarse sync_delta has ~200 us noise (detection-point
-    # jitter) and is not useful for a fix.  Reject the pair.
-    iq_a = event_a.get("iq_snippet_b64", "")
-    iq_b = event_b.get("iq_snippet_b64", "")
-    if not iq_a or not iq_b:
+    # We refine to the *knee* — the steepest point of the PA transition
+    # — using Savitzky-Golay first-derivative on each snippet's power
+    # envelope.  The knee is a physical property of the transmitter PA,
+    # observed at essentially the same instant by all receivers (minus
+    # propagation delay), so (knee_A - knee_B) gives the true inter-node
+    # TDOA modulo bit periods.
+    #
+    # Empirically this gives ~116 µs per-event median error at 62.5 kHz
+    # (vs ~172 µs with the older inter-node xcorr on d2-of-envelope).
+    # Quick scaling check suggests this drops to ~30-60 µs at 250 kHz.
+    iq_a_b64 = event_a.get("iq_snippet_b64", "")
+    iq_b_b64 = event_b.get("iq_snippet_b64", "")
+    if not iq_a_b64 or not iq_b_b64:
         logger.warning(
             "Missing IQ snippet for %s<->%s (%s); pair skipped",
             node_a, node_b, event_type,
@@ -609,28 +695,65 @@ def compute_tdoa_s(
     rate_a = float(event_a.get("channel_sample_rate_hz", 64_000.0))
     rate_b = float(event_b.get("channel_sample_rate_hz", 64_000.0))
 
-    xcorr_lag_ns, xcorr_snr = cross_correlate_snippets(
-        iq_a, iq_b,
-        sample_rate_hz_a=rate_a,
-        sample_rate_hz_b=rate_b,
-        target_rate_hz=xcorr_target_rate_hz,
-        event_type=event_type,
-    )
-    if xcorr_snr < min_xcorr_snr:
+    # Detection position within each node's snippet — needed to convert
+    # the knee position into a "sync_to_knee" time.
+    #   For onset: detection fires at rising-edge threshold, which sits at
+    #     ``transition_start`` in the encoded snippet.
+    #   For offset: detection fires at falling-edge threshold, at
+    #     ``transition_end``.
+    det_a = int(event_a.get(
+        "transition_start" if event_type == "onset" else "transition_end", 0
+    ))
+    det_b = int(event_b.get(
+        "transition_start" if event_type == "onset" else "transition_end", 0
+    ))
+    ts_a = int(event_a.get("transition_start", 0))
+    te_a = int(event_a.get("transition_end", 0))
+    ts_b = int(event_b.get("transition_start", 0))
+    te_b = int(event_b.get("transition_end", 0))
+
+    iq_a = _decode_iq_snippet(iq_a_b64)
+    iq_b = _decode_iq_snippet(iq_b_b64)
+
+    knee_a_result = _find_knee_sub_sample(iq_a, event_type, ts_a, te_a)
+    knee_b_result = _find_knee_sub_sample(iq_b, event_type, ts_b, te_b)
+    if knee_a_result is None or knee_b_result is None:
         logger.warning(
-            "xcorr SNR too low: %.2f < %.2f for %s<->%s (%s); pair skipped",
-            xcorr_snr, min_xcorr_snr, node_a, node_b, event_type,
+            "Knee finding failed for %s<->%s (%s); pair skipped",
+            node_a, node_b, event_type,
+        )
+        return None
+    knee_a, snr_a = knee_a_result
+    knee_b, snr_b = knee_b_result
+
+    # SNR gate: reject when either node's knee is not clearly distinguishable
+    # from envelope noise.  Reuses the min_xcorr_snr config so the existing
+    # threshold continues to apply (semantics are similar — peak |d1| vs
+    # out-of-region RMS).
+    min_snr = min(snr_a, snr_b)
+    if min_snr < min_xcorr_snr:
+        logger.warning(
+            "Knee SNR too low: min(%.2f, %.2f) < %.2f for %s<->%s (%s); pair skipped",
+            snr_a, snr_b, min_xcorr_snr, node_a, node_b, event_type,
         )
         return None
 
-    # Combine: raw sync_delta + grid calibration + xcorr feature alignment
-    # + FM path correction.  This is the full measurement before disambiguation.
-    combined_ns = raw_ns + xcorr_lag_ns + correction_ns
+    # Convert each node's knee position to a (knee − detection) offset in ns,
+    # then take the inter-node difference.  This is what we add to raw_ns to
+    # shift the measurement from "sync-to-detection" to "sync-to-knee".
+    knee_adj_a_ns = (knee_a - det_a) * 1e9 / rate_a
+    knee_adj_b_ns = (knee_b - det_b) * 1e9 / rate_b
+    knee_adj_ns = knee_adj_a_ns - knee_adj_b_ns
+
+    # Combine: raw sync_delta (sync-to-detection) + knee adjustment +
+    # FM path correction.  The knee adjustment moves each node's reference
+    # from its noisy detection point to the physical PA edge.
+    combined_ns = raw_ns + knee_adj_ns + correction_ns
 
     # Sync period disambiguation: resolve which RDS bit boundary each node
-    # referenced.  Applied to the COMPLETE measurement (including xcorr)
-    # so that the round() decision is based on the true TDOA, not the
-    # noisy detection-point-based coarse value.
+    # referenced.  Applied AFTER the knee adjustment so the round() decision
+    # is based on the refined TDOA, not the detection-jitter-dominated
+    # coarse value.
     n = round(combined_ns / _T_SYNC_NS)
     if n != 0:
         logger.debug(
@@ -648,15 +771,17 @@ def compute_tdoa_s(
         if abs(tdoa_ns) > max_tdoa_ns:
             logger.warning(
                 "TDOA implausible: %.1f ns > %.0f ns max for %s<->%s "
-                "(%s, xcorr=%.1f, SNR=%.2f); pair skipped",
+                "(%s, knee_adj=%.1f, SNR=[%.2f,%.2f]); pair skipped",
                 tdoa_ns, max_tdoa_ns, node_a, node_b, event_type,
-                xcorr_lag_ns, xcorr_snr,
+                knee_adj_ns, snr_a, snr_b,
             )
             return None
 
     coarse_tdoa_ns = raw_ns + correction_ns
     logger.info(
-        "TDOA (d2_xcorr): %.1f ns (coarse=%.1f + xcorr=%.1f, SNR=%.2f, type=%s) %s<->%s",
-        tdoa_ns, coarse_tdoa_ns, xcorr_lag_ns, xcorr_snr, event_type, node_a, node_b,
+        "TDOA (savgol_knee): %.1f ns (coarse=%.1f + knee_adj=%.1f, "
+        "SNR=[%.2f,%.2f], type=%s) %s<->%s",
+        tdoa_ns, coarse_tdoa_ns, knee_adj_ns, snr_a, snr_b, event_type,
+        node_a, node_b,
     )
     return float(tdoa_ns / 1e9)

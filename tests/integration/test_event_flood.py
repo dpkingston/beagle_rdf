@@ -53,6 +53,30 @@ _NODES = {
 }
 
 
+def _minimal_onset_snippet_b64() -> str:
+    """
+    Minimal 128-sample synthetic onset snippet for load tests.
+
+    Low noise for first 64 samples, then full-scale carrier.  Knee-finder
+    will return a position near sample 64 — sufficient for compute_tdoa_s
+    to produce a fix; actual TDOA accuracy isn't validated here.
+    """
+    import numpy as np
+    import base64 as _b64
+    n = 128
+    iq = np.zeros(n, dtype=np.complex64)
+    iq[:64] = 0.02 * (np.random.default_rng(0).standard_normal(64)
+                       + 1j * np.random.default_rng(1).standard_normal(64)).astype(np.complex64)
+    iq[64:] = 0.9 * np.exp(1j * np.linspace(0, 4 * np.pi, n - 64)).astype(np.complex64)
+    raw = np.empty(n * 2, dtype=np.int8)
+    raw[0::2] = np.clip(np.round(iq.real * 127), -127, 127).astype(np.int8)
+    raw[1::2] = np.clip(np.round(iq.imag * 127), -127, 127).astype(np.int8)
+    return _b64.b64encode(raw.tobytes()).decode()
+
+
+_FLOOD_SNIPPET_B64 = _minimal_onset_snippet_b64()
+
+
 def _make_sync_delta_ns(node_lat: float, node_lon: float) -> int:
     K = 500_000_000
     d_target = haversine_m(_TARGET_LAT, _TARGET_LON, node_lat, node_lon)
@@ -85,8 +109,10 @@ def _make_event(node_id: str, node_lat: float, node_lon: float,
         "onset_time_ns": onset_ns,
         "sync_corr_peak": 0.9,
         "node_software_version": "test-flood",
-        "iq_snippet_b64": "AAAA",
+        "iq_snippet_b64": _FLOOD_SNIPPET_B64,
         "channel_sample_rate_hz": 64000.0,
+        "transition_start": 56,
+        "transition_end": 80,
     }
 
 

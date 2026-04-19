@@ -141,16 +141,16 @@ class SolverConfig(BaseModel):
     A good fix with 3 GPS-disciplined nodes will have residual < 500 ns.
     NTP-clocked nodes may see 5000-50000 ns residuals; tune empirically.
     """
-    min_xcorr_snr: float = 10.0
+    min_xcorr_snr: float = 3.0
     """
-    Minimum second-derivative xcorr SNR to accept a TDOA measurement.
-    Below this threshold the pair is rejected (no fallback — coarse
-    sync_delta has ~200 us noise and is not useful for a fix).
+    Minimum SNR of the knee-finder's d1 peak (peak magnitude vs RMS of d1
+    samples outside the peak region) to accept a TDOA measurement.  Pairs
+    failing this gate are rejected (no fallback — coarse sync_delta has
+    ~200 µs noise and is not useful).
 
-    The server cross-correlates the second derivative of the power envelope
-    to find the PA transition inflection points.  This gives sub-microsecond
-    precision on real signals (SNR ~28) and rejects noise-only snippets
-    (SNR ~4-5).
+    Empirically ~3-5 for clean real-world signals at 62.5 kHz target rate;
+    dropping toward 1.5 at higher sample rates or for edge cases.  The
+    threshold also rejects noise-only snippets (SNR <2).
 
     Recommended: 10.0 (cleanly separates real transitions from noise).
     0.0 = always accept (use only for debugging).
@@ -180,19 +180,24 @@ class SolverConfig(BaseModel):
     Target sample rate (Hz) to resample IQ snippets to before cross-correlation
     when two nodes captured at different rates.
 
-    Mixed-hardware deployments produce snippets at different rates:
-      RTL-SDR:  2,048,000 / 32 = 64,000 Hz
-      RSPduo:   2,000,000 / 32 = 62,500 Hz
-    Correlating them at different rates introduces a ~2.4% lag error (~7 km for
-    a 1 ms TDOA), which is eliminated by resampling to a common rate first.
+    Mixed-hardware deployments produce snippets at different rates.
+    With target_decimation=8 (post-2026-04-19):
+      RTL-SDR:  2,048,000 / 8 = 256,000 Hz
+      RSPduo:   2,000,000 / 8 = 250,000 Hz
+    Correlating them at different rates introduces a ~2.4% lag error, which
+    is eliminated by resampling to a common rate first.
 
     None (default): automatically use the lower of the two node rates for each
     pair (prefer downsampling; no interpolated data introduced; PA transition
     bandwidth is ~few kHz, well below either node's Nyquist).
 
     Set explicitly to force all pairs to a specific rate regardless of hardware:
-      62500.0  - RSPduo native rate (all nodes downsampled if needed)
-      64000.0  - RTL-SDR native rate (RSPduo nodes upsampled if needed)
+      250000.0 - RSPduo native rate (all nodes downsampled if needed)
+      256000.0 - RTL-SDR native rate (RSPduo nodes upsampled if needed)
+
+    NOTE: this setting only applied to the legacy inter-node xcorr pipeline
+    (cross_correlate_snippets).  The current per-node knee finder works in
+    each snippet's native rate independently and does not resample.
     """
 
 

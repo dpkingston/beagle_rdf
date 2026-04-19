@@ -163,6 +163,10 @@ def make_synthetic_events(
     events = []
     for (node_id, nlat, nlon), sync_delta_ns in zip(NODES, sync_deltas):
         carrier_delay = round((sync_delta_ns - min_delta) * _SNIPPET_RATE_HZ / 1e9)
+        # Snippet onset at _SNIPPET_BASE (2500) + carrier_delay.  Give the
+        # knee finder a generous transition window that covers all nodes'
+        # possible onset positions.
+        onset_pos = _SNIPPET_BASE + carrier_delay
         events.append({
             "event_id":               f"uuid-{node_id}",
             "node_id":                node_id,
@@ -178,6 +182,8 @@ def make_synthetic_events(
             "onset_time_ns":          1_700_000_000_000_000_000,
             "iq_snippet_b64":         _make_snippet_b64(carrier_delay),
             "channel_sample_rate_hz": float(_SNIPPET_RATE_HZ),
+            "transition_start":       max(0, onset_pos - 50),
+            "transition_end":         onset_pos + _RAMP_SAMPLES + 50,
         })
     return events
 
@@ -320,6 +326,10 @@ def test_solve_fix_outlier_node_detected_and_excluded():
     events = []
     for (node_id, nlat, nlon), sync_delta_ns in zip(four_nodes, sync_deltas):
         carrier_delay = round((sync_delta_ns - min_delta) * _SNIPPET_RATE_HZ / 1e9)
+        # Snippet onset at _SNIPPET_BASE (2500) + carrier_delay.  Give the
+        # knee finder a generous transition window that covers all nodes'
+        # possible onset positions.
+        onset_pos = _SNIPPET_BASE + carrier_delay
         events.append({
             "event_id":               f"uuid-{node_id}",
             "node_id":                node_id,
@@ -335,6 +345,8 @@ def test_solve_fix_outlier_node_detected_and_excluded():
             "onset_time_ns":          1_700_000_000_000_000_000,
             "iq_snippet_b64":         _make_snippet_b64(carrier_delay),
             "channel_sample_rate_hz": float(_SNIPPET_RATE_HZ),
+            "transition_start":       max(0, onset_pos - 50),
+            "transition_end":         onset_pos + _RAMP_SAMPLES + 50,
         })
 
     # Corrupt node-D's sync_delta_ns: add 400 usec (~120 km equivalent) of
