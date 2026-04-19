@@ -191,6 +191,7 @@ def solve_fix(
     search_radius_km: float = 100.0,
     min_xcorr_snr: float = 1.3,
     max_xcorr_baseline_km: float = 50.0,
+    savgol_window_us: float = 240.0,
 ) -> FixResult | None:
     """
     Compute a transmitter fix from a list of events from the same transmission.
@@ -252,6 +253,7 @@ def solve_fix(
                 node_events[i], node_events[j],
                 min_xcorr_snr=min_xcorr_snr,
                 max_xcorr_baseline_km=max_xcorr_baseline_km,
+                savgol_window_us=savgol_window_us,
             )
             if tdoa is not None:
                 pairs.append((i, j, tdoa))

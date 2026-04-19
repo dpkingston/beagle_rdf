@@ -161,6 +161,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     search_radius_km=cfg.solver.search_radius_km,
                     min_xcorr_snr=cfg.solver.min_xcorr_snr,
                     max_xcorr_baseline_km=cfg.solver.max_xcorr_baseline_km,
+                    savgol_window_us=cfg.solver.savgol_window_us,
                 ),
             )
 

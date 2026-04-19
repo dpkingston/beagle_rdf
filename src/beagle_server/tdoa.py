@@ -234,7 +234,8 @@ def _find_knee_sub_sample(
     event_type: str,
     transition_start: int,
     transition_end: int,
-    savgol_window: int = 15,
+    sample_rate_hz: float = 62_500.0,
+    savgol_window_us: float = 240.0,
     savgol_order: int = 3,
 ) -> tuple[float, float] | None:
     """
@@ -251,6 +252,10 @@ def _find_knee_sub_sample(
     ground truth) this gets ~116 µs median TDOA error at 62.5 kHz vs ~198 µs
     with box-16 smoothing + np.diff.
 
+    The Savgol window is specified in TIME (µs) so it auto-adapts to the
+    snippet sample rate — 240 µs ≈ 15 samples at 62.5 kHz and 60 samples
+    at 250 kHz, preserving the same smoothing bandwidth regardless of rate.
+
     Parameters
     ----------
     iq : complex64 array, the snippet.
@@ -258,7 +263,15 @@ def _find_knee_sub_sample(
     transition_start, transition_end : int
         Reported snippet positions bracketing the PA transition (both nodes
         report these based on their detector anchoring).
-    savgol_window, savgol_order : Savgol filter parameters.
+    sample_rate_hz : float
+        Snippet sample rate.  Used to convert savgol_window_us to samples.
+    savgol_window_us : float
+        Savgol window width in microseconds.  Converted to an odd number of
+        samples at the snippet rate.  Default 240 µs is the empirical sweet
+        spot — narrower admits more noise (SNR drops); wider smears the knee
+        position.
+    savgol_order : int
+        Savgol polynomial order.
 
     Returns
     -------
@@ -268,11 +281,16 @@ def _find_knee_sub_sample(
             analogous to xcorr SNR, usable as a confidence gate.
     Returns None if the snippet is too short or the transition window is empty.
     """
+    # Convert the desired smoothing duration (µs) to an odd sample count.
+    # Savgol requires window > order and an odd length.
+    window = max(savgol_order + 2, int(round(savgol_window_us * sample_rate_hz / 1e6)))
+    if window % 2 == 0:
+        window += 1
     n = len(iq)
-    if n < savgol_window + 4:
+    if n < window + 4:
         return None
     power = iq.real.astype(np.float64) ** 2 + iq.imag.astype(np.float64) ** 2
-    d1 = savgol_filter(power, savgol_window, savgol_order, deriv=1, mode="nearest")
+    d1 = savgol_filter(power, window, savgol_order, deriv=1, mode="nearest")
 
     lo = max(2, int(transition_start))
     hi = min(len(d1) - 2, int(transition_end))
@@ -537,6 +555,7 @@ def compute_tdoa_s(
     min_xcorr_snr: float = 1.3,
     xcorr_target_rate_hz: float | None = None,
     max_xcorr_baseline_km: float = 100.0,
+    savgol_window_us: float = 240.0,
 ) -> float | None:
     """
     Compute the corrected TDOA between two events in **seconds**.
@@ -583,6 +602,12 @@ def compute_tdoa_s(
         Maximum node-pair separation in km.  Used as a geometric plausibility
         filter: any TDOA whose magnitude exceeds (baseline / c) after
         disambiguation is treated as a false detection and rejected.
+    savgol_window_us : float
+        Savgol smoothing window in microseconds (auto-converted to an odd
+        number of samples at each snippet's rate).  240 µs is the empirical
+        sweet spot: narrower admits more AM noise, wider smears the knee
+        position.  Kept time-domain so the same value works across target
+        channel rates.
 
     Returns
     -------
@@ -715,8 +740,14 @@ def compute_tdoa_s(
     iq_a = _decode_iq_snippet(iq_a_b64)
     iq_b = _decode_iq_snippet(iq_b_b64)
 
-    knee_a_result = _find_knee_sub_sample(iq_a, event_type, ts_a, te_a)
-    knee_b_result = _find_knee_sub_sample(iq_b, event_type, ts_b, te_b)
+    knee_a_result = _find_knee_sub_sample(
+        iq_a, event_type, ts_a, te_a,
+        sample_rate_hz=rate_a, savgol_window_us=savgol_window_us,
+    )
+    knee_b_result = _find_knee_sub_sample(
+        iq_b, event_type, ts_b, te_b,
+        sample_rate_hz=rate_b, savgol_window_us=savgol_window_us,
+    )
     if knee_a_result is None or knee_b_result is None:
         logger.warning(
             "Knee finding failed for %s<->%s (%s); pair skipped",

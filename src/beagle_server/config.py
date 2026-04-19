@@ -141,16 +141,20 @@ class SolverConfig(BaseModel):
     A good fix with 3 GPS-disciplined nodes will have residual < 500 ns.
     NTP-clocked nodes may see 5000-50000 ns residuals; tune empirically.
     """
-    min_xcorr_snr: float = 3.0
+    min_xcorr_snr: float = 1.5
     """
     Minimum SNR of the knee-finder's d1 peak (peak magnitude vs RMS of d1
     samples outside the peak region) to accept a TDOA measurement.  Pairs
     failing this gate are rejected (no fallback — coarse sync_delta has
     ~200 µs noise and is not useful).
 
-    Empirically ~3-5 for clean real-world signals at 62.5 kHz target rate;
-    dropping toward 1.5 at higher sample rates or for edge cases.  The
-    threshold also rejects noise-only snippets (SNR <2).
+    Counter-intuitive finding: wider Savgol windows give better per-event
+    precision but LOWER SNR (the d1 peak flattens as the smoothing spreads
+    it across more samples, while AM-modulation noise on the plateau only
+    partially attenuates).  At 240 µs window and 250 kHz snippet rate,
+    real PA transitions typically give SNR 2-4 (vs 5-10 at 62.5 kHz with
+    the same window in samples).  A 1.5 gate accepts those while still
+    rejecting noise-only snippets (SNR < 1.2).
 
     Recommended: 10.0 (cleanly separates real transitions from noise).
     0.0 = always accept (use only for debugging).
@@ -167,6 +171,19 @@ class SolverConfig(BaseModel):
     For a 50 km deployment: |lag| <= ~167 usec.  Out-of-range results are almost
     always side-lobe noise artefacts from the power-envelope correlation.
     0.0 = disable the check (accept all xcorr lags regardless of magnitude).
+    """
+    savgol_window_us: float = 240.0
+    """
+    Savitzky-Golay smoothing window for knee finding, in microseconds.
+    The server converts this to an odd number of samples at each snippet's
+    rate, so the same value works across mixed-hardware deployments.
+
+    240 µs is the empirical sweet spot:
+      - Narrower → more AM noise admitted, SNR drops below the gate.
+      - Wider → smears the knee position, reduces per-event precision.
+
+    At 62.5 kHz this gives a 15-sample Savgol kernel (historical default).
+    At 250 kHz it gives a 61-sample kernel — same effective bandwidth.
     """
     sync_diag: bool = False
     """
