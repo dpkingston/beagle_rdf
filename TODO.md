@@ -109,24 +109,22 @@ xcorr peaks that fail the lag or SNR gate.
 Offset xcorr provides +/-7 usec TDOA accuracy when it works, so offset-only
 fixes are viable. But onset detection would double the fix rate.
 
-**Ideas to explore (post-deployment):**
-- Alternative onset snippet anchoring (e.g. matched filter for known PA
-  ramp profiles, or energy-onset detection instead of derivative-peak)
-- Frequency-domain xcorr with phase weighting (GCC-PHAT) which may be
-  more robust to amplitude ramp differences between nodes
-- Onset-from-offset: use the offset TDOA to predict what the onset TDOA
-  should be for the same transmission (same transmitter position)
-- Longer onset snippets or adaptive snippet length based on transition
-  sharpness
-- Hardware-specific snippet processing: the RTL-SDR raw IQ shows a 5-10 dB
-  power ramp at the start of each target block (R820T gain settling beyond
-  the PLL settling period); this distorts onset snippets for weaker signals
+**Update (2026-04-19):** Switched the server from inter-node d2-envelope
+xcorr to per-node knee finding using Savitzky-Golay first derivative.
+On-corpus median per-event error dropped ~40% (198 µs → 116 µs at 62.5 kHz).
+Onset/offset median bias nearly cancels (mean error ±5 µs), unlike the old
+approach.  Also raised target-channel decimation from 32 to 8 (62.5 kHz →
+250 kHz) which is expected to drop per-event error to ~30-60 µs based on
+downsample scaling.  See docs/xcorr-improvement-plan.md.
 
-**Current state (2026-03-26):** Offset xcorr is the reliable path.
-node-discovery (RTL-SDR freq_hop) participates in ~50% of groups (limited by
-70% target duty cycle). When offset xcorr succeeds for all 3 nodes, the
-3-node fix residual is 5-8 usec. The server falls back to sync_delta
-(+/-3.5 ms) when xcorr fails, which makes that node an outlier.
+**Ideas still worth exploring:**
+- Alternative onset snippet anchoring (matched filter for known PA ramp
+  profiles, or energy-onset detection)
+- User's proposed two-line intersection (slope + plateau level) — tested
+  at 62.5 kHz and did not beat Savgol; retest at 250 kHz where slope fit
+  has 4x more data
+- Hardware-specific snippet processing: the RTL-SDR raw IQ shows a 5-10 dB
+  power ramp at the start of each target block (R820T gain settling)
 
 ---
 

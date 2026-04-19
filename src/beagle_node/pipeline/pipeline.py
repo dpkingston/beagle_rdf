@@ -64,12 +64,19 @@ class PipelineConfig:
     sync_cutoff_hz: float = 128_000.0
     sync_mode: str = "rds"              # sync detector type
 
-    # Target channel (LMR)
-    target_decimation: int = 32         # 2.048 MHz -> 64 kHz
+    # Target channel (LMR).  Decimation 8 gives 250 kHz at 2.0 MHz SDR
+    # (or 256 kHz at 2.048 MHz), matching the sync-channel rate.  The
+    # higher sample rate improves per-event knee-timing precision: at
+    # 62.5 kHz the PA transition resolves to ~200 µs per-event std;
+    # scaling simulations predict ~50 µs at 250 kHz.
+    target_decimation: int = 8          # 2.0 MHz -> 250 kHz
     target_cutoff_hz: float = 25_000.0
     carrier_onset_db: float = -30.0
     carrier_offset_db: float = -40.0
-    carrier_window_samples: int = 64
+    # Detector window: 256 samples = ~1 ms at 250 kHz (same duration as
+    # the previous 64 samples at 62.5 kHz).  Detection thresholds are
+    # in the same dB range; timing semantics preserved.
+    carrier_window_samples: int = 256
     # Require this many consecutive above-threshold windows before onset is
     # declared.  min_hold=1 (default) matches old behaviour; min_hold=4 means
     # the carrier must be present for >=4 * window_samples before triggering,
@@ -80,7 +87,10 @@ class PipelineConfig:
     # real-world signals to prevent chattering when power briefly dips below
     # the offset threshold mid-transmission.
     carrier_min_release_windows: int = 1
-    carrier_snippet_samples: int = 640
+    # Snippet size: 5120 samples = ~20.5 ms at 250 kHz (same duration as
+    # 1280 samples at 62.5 kHz in the old config).  ~10 KB raw, ~14 KB
+    # base64-encoded — within the agreed 5-10 KB budget.
+    carrier_snippet_samples: int = 5120
     carrier_snippet_post_windows: int = 5     # Collect 5 windows after onset/offset detection.
     # _encode_combined() places the transition at the snippet midpoint,
     # independent of min_hold_windows.  This ensures consistent snippet
@@ -91,8 +101,8 @@ class PipelineConfig:
     # min_release_windows after the signal first crosses offset_db; if the fade
     # is gradual the shutoff may be many windows back.  Setting this well above
     # snippet_samples / window_samples guarantees the shutoff is captured for
-    # any realistic fade.  Default: 3 x snippet windows (at 62.5 kHz with
-    # snippet=1280 and window=64: 3 x 20 = 60 windows = ~61 ms lookback).
+    # any realistic fade.  Default: 3 x snippet windows (at 250 kHz with
+    # snippet=5120 and window=256: 3 x 20 = 60 windows = ~61 ms lookback).
     # None -> use 3x the snippet window count (same as the default).
     carrier_ring_lookback_windows: int | None = None
     # Minimum above-threshold windows since prime_state() before a CarrierOffset

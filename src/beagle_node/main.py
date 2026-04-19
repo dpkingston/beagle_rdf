@@ -585,9 +585,11 @@ def run(args: argparse.Namespace | None = None) -> int:
     )
 
     # Target channel decimated sample rate - used to annotate CarrierEvents so
-    # the server cross-correlator can convert lag samples to nanoseconds.
-    # PipelineConfig.target_decimation is fixed at 32 (2 MSPS -> 64 kHz / 62.5 kHz).
-    _target_sample_rate_hz: float = receiver.config.sample_rate_hz / 32
+    # the server's knee finder can convert positions to nanoseconds.
+    # PipelineConfig.target_decimation default is 8 (2 MSPS -> 250 kHz).
+    _target_sample_rate_hz: float = (
+        receiver.config.sample_rate_hz / PipelineConfig.target_decimation
+    )
 
     pipeline = NodePipeline(
         config=PipelineConfig(

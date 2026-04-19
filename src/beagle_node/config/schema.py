@@ -267,7 +267,7 @@ class CarrierDetectConfig(BaseModel):
 
     Trade-offs:
     - Latency: each event is delayed by snippet_post_windows x window_samples /
-      sample_rate_hz (e.g. 5 windows x 64 samples / 62500 Hz ~ 5 ms).
+      sample_rate_hz (e.g. 5 windows x 256 samples / 250000 Hz ~ 5 ms).
     - If an offset occurs during post-collection for an onset (or vice versa), the
       pending event is emitted immediately with only the pre-event snippet."""
 

@@ -127,22 +127,21 @@ carrier:
   # near the offset threshold and chattering.  8 windows ~8 ms hold time.
   onset_db: -30.0
   offset_db: -40.0
-  window_samples: 64
+  window_samples: 256        # 256 samples ~= 1 ms at 250 kHz target rate.
   min_hold_windows: 1      # Onset: require N consecutive above-threshold windows
   min_release_windows: 1   # Offset: require N consecutive below-threshold windows
                            # Set to 4-8 to suppress mid-transmission chattering
-  snippet_samples: 640     # IQ samples captured per event (pre-event ring buffer).
-                           # 640 = 10 ms at 64 kHz (~1.7 KB/event base64-encoded).
-                           # Increase to 2560 (40 ms) for calibration runs, then
-                           # scale back after running --analyze-snippets to find
-                           # the minimum that covers your transmitters' rise/fall.
+  snippet_samples: 5120    # IQ samples captured per event (pre-event ring buffer).
+                           # 5120 = ~20.5 ms at 250 kHz (~13 KB/event base64-encoded).
+                           # Contains pre-event noise, the PA transition, and post-
+                           # event context for robust server-side knee finding.
   snippet_post_windows: 0  # Post-event windows appended to each IQ snippet.
                            # When > 0, the event is held until N additional windows
                            # have been captured after the threshold crossing. The
                            # snippet then covers the full carrier rise/fall shape,
-                           # improving xcorr accuracy for gradual-onset transmitters
+                           # improving knee precision for gradual-onset transmitters
                            # where co-located nodes may cross the threshold at
-                           # slightly different times. Each window ~ 1 ms at 62.5 kHz.
+                           # slightly different times. Each window ~ 1 ms at 250 kHz.
                            # Recommended: 5-10. 0 = disabled (emit immediately).
   ring_lookback_windows: 60  # Depth of the IQ ring buffer in detector windows.
                              # Must be large enough to contain the PA shutoff at the
@@ -150,10 +149,10 @@ carrier:
                              # min_release_windows consecutive below-threshold windows,
                              # which is min_release * window_samples after the fade
                              # crosses offset_db - but a gradual fade can push the
-                             # actual shutoff much further back.  60 windows x 64
-                             # samples = 3840 samples = ~61 ms at 62.5 kHz.  This
+                             # actual shutoff much further back.  60 windows x 256
+                             # samples = 15360 samples = ~61 ms at 250 kHz.  This
                              # safely covers any LMR transmitter fade.  Memory cost
-                             # is ~60 x 64 x 8 bytes = ~30 KB/channel (negligible).
+                             # is ~60 x 256 x 8 bytes = ~120 KB/channel (negligible).
                              # Use analyze_fade_timing.py to tune after data collection.
 
 reporter:
