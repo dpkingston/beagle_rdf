@@ -34,11 +34,26 @@ snippets from `dpk-tdoa1`, `dpk-tdoa2`, and `kb7ryy`, suitable for end-to-end
 pipeline regression tests that need to see the same physical transmission
 across all three nodes simultaneously.
 
-**Status:** pre-bugfix baseline. The pairwise `sync_delta_ns` differences in
-this capture have ~245 us standard deviation (vs ~10 us expected for healthy
-nodes), reflecting an unidentified noise source in the timing pipeline.
-Once the bug is fixed, this fixture should be re-used as a regression test:
-"replay these events; expect cross-pair sync_delta std under 30 us".
+**Status (2026-04-19): needs regeneration.**  This capture predates:
+
+- the Mueller-Muller → pilot-phase-derived sync fix (commits `4041b9d`,
+  `1880637`, `7a0b6db`) that reduced cross-node onset spread from ~250 µs
+  to ~105 ns
+- the target channel rate bump from 62.5 kHz to ~250 kHz (commit `46a43c8`)
+- the switch to server-side argmin(d2) knee finding with a 5120-sample
+  snippet (commits `08eb316`, `5c2740d`, `e33e100`)
+- auto-tracked carrier thresholds (commits `abda5ef`, `4d0617b`)
+
+The pairwise `sync_delta_ns` differences in this capture have ~245 µs
+standard deviation -- not because of an unidentified bug, but because the
+nodes were running code that has since been fixed.  The IQ snippets are
+also captured at 62.5 kHz / 1280 samples, so server-side knee finding
+runs on much coarser data than the current pipeline produces.
+
+A replacement capture from the current deployment is needed before the
+fixture is useful for regression testing.  When regenerated, target a
+baseline that can assert "cross-pair sync_delta std under 10 µs, and
+median per-event knee TDOA error under 100 µs".
 
 ---
 

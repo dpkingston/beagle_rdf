@@ -203,13 +203,14 @@ OK: RDS sync detection looks good
 ```
 
 - **Rate ~1188/s** after warmup -- one event per RDS bit transition
-  (1187.5 Hz = pilot/16 exactly).  The first second is lower because of M&M
-  warmup; steady state should be > 1100/s.
+  (1187.5 Hz = pilot/16 exactly).  The first second or two is lower because
+  the 19 kHz pilot phase lock is still converging; steady state should be
+  > 1100/s.
 - **PilotCor > 0.65** - the RDS detector still extracts the pilot internally
   for crystal calibration; a drop below 0.4 indicates antenna or LNA issue
 - **Crystal < +/-50 ppm** - normal for RSPduo TCXO
-- **Bit interval stdev < 0.1 samples** (~ 0.4 usec) -- M&M timing loop is
-  stable.  Larger values indicate weak RDS or strong multipath.
+- **Bit interval stdev < 0.1 samples** (~ 0.4 usec) -- pilot phase lock is
+  stable.  Larger values indicate weak pilot or strong multipath.
 - **Power -25 to -40 dBFS** - adjust `sync_lna_state` if outside this range:
   - Too high (> -10 dBFS): increase `sync_lna_state` (more attenuation)
   - Too low (< -40 dBFS): decrease `sync_lna_state` (less attenuation)

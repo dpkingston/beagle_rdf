@@ -50,10 +50,12 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
   "snr_db":          23.8,
   "sync_corr_peak":   0.84,
 
-  "node_software_version": "0.1.0",
+  "node_software_version": "abda5ef",
 
   "iq_snippet_b64":        "<base64-encoded int8 IQ>",
-  "channel_sample_rate_hz": 62500.0
+  "channel_sample_rate_hz": 250000.0,
+  "transition_start":       3840,
+  "transition_end":         4352
 }
 ```
 
@@ -106,14 +108,23 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 | `snr_db` | float | Signal-to-noise ratio (dB) |
 | `sync_corr_peak` | float | FM pilot cross-correlation quality at the matched SyncEvent (0-1).  Values below ~0.3 indicate a weak or noisy pilot. |
 
-#### IQ cross-correlation (required)
+#### IQ snippet + transition zone (required)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `iq_snippet_b64` | string | **Required.** Base64-encoded int8-interleaved IQ samples captured at the carrier edge.  Used by the server to cross-correlate matched events from different nodes for usec-level TDOA refinement.  Encoding: interleaved real/imag int8, so N complex samples -> 2N bytes.  The node captures `carrier.snippet_samples` (default 1280) complex samples centred on the transition edge. |
-| `channel_sample_rate_hz` | float | **Required.** Sample rate of the IQ snippet in Hz (`sdr_rate_hz / target_decimation`).  The server uses this to convert the xcorr peak lag (samples) to nanoseconds. |
+| `iq_snippet_b64` | string | **Required.** Base64-encoded int8-interleaved IQ samples captured at the carrier edge.  Used by the server's Savgol d2 knee finder to locate the ramp-to-plateau corner (onset top-of-rise / offset start-of-fall) for sub-sample-precision TDOA.  Encoding: interleaved real/imag int8, so N complex samples -> 2N bytes.  The node captures `carrier.snippet_samples` (default 5120 ~ 20.5 ms at 250 kHz) complex samples bracketing the transition. |
+| `channel_sample_rate_hz` | float | **Required.** Sample rate of the IQ snippet in Hz (`sdr_rate_hz / target_decimation`; typically ~250 kHz post-2026-04).  The server converts knee positions from samples to nanoseconds at this rate. |
+| `transition_start` | int | **Required.** Index within the snippet of the start of the detector's reported PA transition zone.  The server's knee finder searches `argmin(d2)` only within `[transition_start, transition_end]` to avoid locking onto noise elsewhere in the snippet. |
+| `transition_end` | int | **Required.** Index within the snippet of the end of the reported transition zone.  Must be > `transition_start`. |
 
-The server rejects any event missing either field with HTTP 422.
+The server rejects any event missing a required field with HTTP 422.
+
+The `transition_start` / `transition_end` values are emitted by the node's
+carrier detector: for onset events the zone begins at the threshold-crossing
+detection point and extends forward a few power windows; for offset events
+it extends backward from the detection point.  The zone is wider than the
+actual PA edge so the server has headroom to locate the knee under varying
+ramp shapes.
 
 ---
 

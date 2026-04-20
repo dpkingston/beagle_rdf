@@ -96,17 +96,32 @@ time (plus propagation delay).
 
 ### Timing precision
 
-The recovered bit timing comes from a Mueller-Muller timing-recovery loop with
-sub-sample interpolation.  On synthetic FM IQ with a clean RDS signal, the
-inter-bit interval jitter is < 0.01 usec.  On a live RSPduo capture of KUOW
-94.9 (Seattle), the measured jitter is ~0.06 usec.  The SyncEvent
-`sample_index` is a **float** carrying full sub-sample precision, propagated
-end-to-end through the server's TDOA calculation.
+Recovered bit boundaries are derived directly from the unwrapped phase of
+the 19 kHz FM stereo pilot and the `pilot/16` bit clock relationship.  An
+earlier implementation used a Mueller-Muller timing-recovery loop on the
+57 kHz RDS subcarrier, but that would not lock reliably on live FM signals
+(recovered symbols were approximately uniformly distributed across the bit
+cell rather than centred on boundaries).  The pilot-phase derivation is
+deterministic and shape-independent: every node locked to the same FM
+station identifies the same pilot cycle, and therefore the same RDS bit
+edge, as the same physical event.
 
-Per-event timing precision is therefore not the limiting factor in Beagle's
-overall accuracy budget; the carrier detector's 1 ms power window
-(~290 usec uniform-noise sigma) dominates.  See
-[03-timing-model.md](03-timing-model.md) for the full error budget.
+A first-order phase-offset slew (alpha=0.01, ~1 s time constant) tracks
+residual drift between the pilot and the bit clock so the recovered
+boundaries stay aligned under crystal drift.
+
+On synthetic FM IQ with a clean RDS signal, the inter-bit interval jitter
+is < 0.01 usec.  On a live RSPduo capture of KUOW 94.9 (Seattle) the
+measured jitter is ~0.06 usec.  Cross-node sample_index spread across a
+paired-node fixture dropped from ~250 µs (M&M era) to ~105 ns after the
+switch to pilot-derived timing.  The SyncEvent `sample_index` is a
+**float** carrying full sub-sample precision, propagated end-to-end
+through the server's TDOA calculation.
+
+Per-event sync-side timing precision is therefore not the limiting factor
+in Beagle's overall accuracy budget; target-side PA-transition timing
+dominates (see [03-timing-model.md](03-timing-model.md) for the full
+budget).
 
 ---
 
@@ -131,19 +146,20 @@ correction error - negligible for the system's overall accuracy target.
 
 - **Verify the station carries RDS.**  Run `verify_rds_sync.py` against a
   candidate station and confirm the event rate reaches ~1188/s after the
-  M&M warmup.  Nearly all NPR affiliates and most commercial FM stations
-  in the US carry RDS, but check before committing.  Stations that broadcast
-  in mono only (no stereo, no pilot, no RDS) are unusable.
+  pilot-phase lock converges.  Nearly all NPR affiliates and most commercial
+  FM stations in the US carry RDS, but check before committing.  Stations
+  that broadcast in mono only (no stereo, no pilot, no RDS) are unusable.
 - Prefer stations with transmitters **distant from the node by different
   amounts across your node network** - this maximises the path-delay
   correction variation and makes calibration cross-checks more sensitive.
 - Prefer stations with **strong local signal** (`PilotCor` consistently
   >0.6).  Set `min_corr_peak: 0.3` in `sync_signal` as a minimum quality
   threshold.
-- For urban nodes with strong multipath, the narrow 100 Hz BPF in the pilot
-  extractor significantly reduces multipath effects.  RDS itself is fairly
-  robust to multipath thanks to the BPSK + CRC structure (the M&M loop will
-  drop out if multipath is severe, but most urban environments are fine).
+- For urban nodes with strong multipath, the narrow ~100 Hz complex
+  correlation around 19 kHz significantly reduces multipath effects.  Pilot
+  phase locking is the limiting factor: if multipath drives pilot SNR below
+  ~10 dB, `corr_peak` drops and sync events are rejected by
+  `min_corr_peak`.  Most urban environments are fine.
 - All nodes in a deployment **must use the same primary station** for their
   `sync_delta_ns` measurements to be comparable.
 

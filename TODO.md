@@ -4,7 +4,6 @@
 
 **Outstanding**
 - [Remote node restart trigger](#remote-node-restart-trigger)
-- [Report node code version (git sha) in heartbeat / health](#report-node-code-version-git-sha-in-heartbeat--health)
 - [Onset xcorr: investigate alternative detection methods](#onset-xcorr-investigate-alternative-detection-methods)
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
 - [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
@@ -72,7 +71,14 @@ node doesn't restart in a loop.
 
 ---
 
-### Report node code version (git sha) in heartbeat / health
+### ✓ Report node code version (git sha) in heartbeat / health
+
+**Completed 2026-04 (commit 2e32ca3):** node reports git short sha at
+startup.  Shipped in `/health`, the long-poll heartbeat body, and the
+GUI node details modal.  Falls back to `"unknown"` when the node was
+installed without git history.
+
+Original context preserved below for future reference:
 
 There is currently no way to tell which code revision a remote node is
 running.  When debugging cross-node behavior we end up suspecting "maybe

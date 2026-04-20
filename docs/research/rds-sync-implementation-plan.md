@@ -1,5 +1,14 @@
 # RDS-Based Sync Event Implementation Plan
 
+> **Status (2026-04-19): archived.** This plan was executed.  The initial
+> Mueller-Muller + Costas implementation described below was built and
+> shipped in `d0b2562` and `a95f02d`, then replaced in `4041b9d`,
+> `1880637`, and `7a0b6db` by a pilot-phase-derived bit-boundary approach
+> (M&M would not lock reliably on live FM signals).  The design in
+> [docs/design/04-sync-signal.md](../design/04-sync-signal.md) reflects
+> the as-shipped system.  This document is kept for context on why the
+> move from pilot zero-crossings to RDS bit edges was necessary.
+
 ## The Problem
 
 The current sync event system is fundamentally broken for **all** node pairs,

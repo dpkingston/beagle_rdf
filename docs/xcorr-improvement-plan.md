@@ -1,5 +1,18 @@
 # xcorr Improvement Plan — PA knee alignment
 
+> **Status (2026-04-19): archived.** The work this plan describes was
+> carried out across commits `311f545`, `5b932c7`, `6661230`, `08eb316`,
+> `46a43c8`, `aa72744`, `e33e100`, and `5c2740d`.  The landing point
+> diverged from the plan in one important way: we ended up replacing the
+> inter-node envelope cross-correlation entirely with **per-node
+> argmin(d2) knee finding** on the Savgol-smoothed power envelope, rather
+> than fixing the xcorr boundary artifacts.  Current median |err| on the
+> Magnolia corpus is ~59 µs; see
+> [plateau-detection-tuning.md](plateau-detection-tuning.md) for
+> parameters and [TimingAnalysis.md](TimingAnalysis.md) for the full
+> history.  The rest of this document is preserved for archaeological
+> context.
+
 Driving observation (fix 1762, dpk-tdoa1 vs dpk-tdoa2 offset, Magnolia target):
 d2 xcorr returned only +199 ns when the true detection-to-PA-knee offset
 between the two nodes is ~4 ms. Root cause: `np.convolve(mode='same')` on
