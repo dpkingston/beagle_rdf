@@ -474,3 +474,164 @@ def test_map_nodes_surfaces_updated_status(
     cr = nodes[_NODE_ID].get("config_reload")
     assert cr is not None
     assert cr["status"] == "updated"
+
+
+# ---------------------------------------------------------------------------
+# Force resync: discard in-memory JSON edits and reload whatever the file
+# specifies.  Used by the GUI "Revert to File" button.
+# ---------------------------------------------------------------------------
+
+def test_force_reload_overrides_mtime_check(
+    registry_path: str, config_file: Path
+) -> None:
+    """With force=True the reload happens even when the file's mtime has
+    not advanced.  The scenario this covers: operator edits the JSON via
+    the API, DB config_json diverges from the file, operator clicks
+    Revert to File -> the DB is reset to the file content without
+    requiring them to touch the file first."""
+    async def _go():
+        # Step 1: establish a normal "unchanged" baseline.
+        db, row = await _open_and_fetch(registry_path)
+        r0 = await db_module.maybe_reload_node_config(db, row)
+        assert r0["status"] == "unchanged"
+
+        # Step 2: write in-memory-only JSON edit that diverges from file.
+        edited = json.loads(json.dumps(_VALID_CONFIG))
+        edited["target_channels"][0]["label"] = "EDITED-IN-DB"
+        await db_module.update_node_config(
+            db, _NODE_ID, json.dumps(edited),
+            changed_by="test", diff_note="simulated UI edit",
+        )
+        row_edited = dict(await db_module.fetch_node(db, _NODE_ID))
+        assert json.loads(row_edited["config_json"])["target_channels"][0]["label"] \
+            == "EDITED-IN-DB"
+
+        # Step 3: WITHOUT force, a reload call still sees unchanged mtime
+        # and does not touch the DB -> edit remains.
+        r_nf = await db_module.maybe_reload_node_config(db, row_edited)
+        assert r_nf["status"] == "unchanged"
+        row_still = dict(await db_module.fetch_node(db, _NODE_ID))
+        assert json.loads(row_still["config_json"])["target_channels"][0]["label"] \
+            == "EDITED-IN-DB"
+
+        # Step 4: WITH force, the DB is overwritten from the file.
+        r_f = await db_module.maybe_reload_node_config(
+            db, row_still, force=True, changed_by="admin-revert"
+        )
+        assert r_f["status"] == "updated"
+        row_final = dict(await db_module.fetch_node(db, _NODE_ID))
+        # The file still has the original _VALID_CONFIG label.
+        assert json.loads(row_final["config_json"])["target_channels"][0]["label"] \
+            == _VALID_CONFIG["target_channels"][0]["label"]
+        # A history row was written with the force note.
+        async with db.execute(
+            "SELECT diff_note FROM node_config_history "
+            "WHERE node_id = ? ORDER BY changed_at DESC LIMIT 1",
+            (_NODE_ID,),
+        ) as cur:
+            note = (await cur.fetchone())["diff_note"]
+        assert "force" in note.lower()
+        await db.close()
+    asyncio.run(_go())
+
+
+def test_force_reload_validation_error_preserves_db(
+    registry_path: str, config_file: Path
+) -> None:
+    """force=True on a broken file still fails cleanly and leaves the
+    DB's config_json untouched."""
+    async def _go():
+        # Corrupt the file but bump mtime to before "now" so the non-force
+        # path would also treat it as "unchanged" (i.e. the only way to
+        # trigger the reload is force=True).
+        config_file.write_text("{ this is : definitely [ not valid yaml")
+
+        db, row = await _open_and_fetch(registry_path)
+        r = await db_module.maybe_reload_node_config(db, row, force=True)
+        assert r["status"] == "parse_error"
+        row_after = dict(await db_module.fetch_node(db, _NODE_ID))
+        assert row_after["config_json"] == row["config_json"]
+        assert row_after["config_version"] == row["config_version"]
+        await db.close()
+    asyncio.run(_go())
+
+
+def test_reload_endpoint_force_resyncs(
+    client: TestClient, config_file: Path
+) -> None:
+    """POST /api/v1/nodes/{id}/config/reload?force=1 overwrites an in-memory
+    edit with the file content."""
+    # Simulate a GUI edit via the PATCH endpoint.
+    edited = json.loads(json.dumps(_VALID_CONFIG))
+    edited["target_channels"][0]["label"] = "EDITED-IN-DB"
+    r_patch = client.patch(
+        f"/api/v1/nodes/{_NODE_ID}",
+        headers={**_admin_hdrs(), "Content-Type": "application/json"},
+        json={"config_json": edited},
+    )
+    assert r_patch.status_code == 200
+
+    # Force reload.
+    r_reload = client.post(
+        f"/api/v1/nodes/{_NODE_ID}/config/reload",
+        headers=_admin_hdrs(),
+        params={"force": "1"},
+    )
+    assert r_reload.status_code == 200, r_reload.text
+    body = r_reload.json()
+    assert body["status"] == "updated"
+
+    # Poll for config: should be the file's version.
+    r_poll = client.get(
+        f"/api/v1/nodes/{_NODE_ID}/config",
+        headers=_node_hdrs(),
+        params={"wait": 0, "since_version": 0},
+    )
+    assert r_poll.status_code == 200
+    assert r_poll.json()["config"]["target_channels"][0]["label"] == \
+        _VALID_CONFIG["target_channels"][0]["label"]
+
+
+def test_reload_endpoint_unknown_node_404(client: TestClient) -> None:
+    r = client.post(
+        "/api/v1/nodes/no-such-node/config/reload",
+        headers=_admin_hdrs(),
+        params={"force": "1"},
+    )
+    assert r.status_code == 404
+
+
+def test_config_file_endpoint_returns_parsed_content(
+    client: TestClient, config_file: Path
+) -> None:
+    """GET /api/v1/nodes/{id}/config/file returns the parsed file content
+    so the UI can diff it against the DB's config_json."""
+    r = client.get(
+        f"/api/v1/nodes/{_NODE_ID}/config/file",
+        headers=_admin_hdrs(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["node_id"] == _NODE_ID
+    assert body["has_file"] is True
+    assert body["exists"] is True
+    assert body["error"] is None
+    assert body["content"]["node_id"] == _NODE_ID
+
+
+def test_config_file_endpoint_surfaces_parse_error(
+    client: TestClient, config_file: Path
+) -> None:
+    """A broken file is surfaced as content=None, raw=<bad text>,
+    error=<message> -- so the UI can render a diagnostic banner."""
+    broken = "{ this is : definitely [ not valid yaml"
+    config_file.write_text(broken)
+    r = client.get(
+        f"/api/v1/nodes/{_NODE_ID}/config/file",
+        headers=_admin_hdrs(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["content"] is None
+    assert body["error"] is not None
+    assert body["raw"] == broken

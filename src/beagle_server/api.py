@@ -1739,6 +1739,138 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         return {"results": results, "updated": len(updated)}
 
     # -------------------------------------------------------------------
+    # POST /api/v1/nodes/{node_id}/config/reload
+    # Force-resync one node's config from its attached file, overwriting
+    # any in-memory JSON edits made via the GUI editor or PATCH endpoint.
+    # -------------------------------------------------------------------
+    @app.post("/api/v1/nodes/{node_id}/config/reload")
+    async def reload_node_config(
+        node_id: str,
+        request: Request,
+        force: bool = False,
+        registry_db: aiosqlite.Connection = Depends(get_registry_db),
+    ) -> dict[str, Any]:
+        """Reload one node's config from its config_file_path.
+
+        ``force=true`` bypasses the mtime check so in-memory JSON edits
+        are reverted to whatever the file currently specifies.  Without
+        force the call behaves like the automatic poll (reloads only if
+        mtime has advanced).
+        """
+        await auth_module.require_admin(request, registry_db)
+        node_row = await db_module.fetch_node(registry_db, node_id)
+        if node_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown node: {node_id}",
+            )
+        result = await db_module.maybe_reload_node_config(
+            registry_db, dict(node_row),
+            changed_by="admin-revert" if force else "admin-reload",
+            force=force,
+        )
+        if result["status"] == "updated":
+            request.app.state.known_nodes.pop(node_id, None)
+        return result
+
+    # -------------------------------------------------------------------
+    # GET /api/v1/nodes/{node_id}/config/file
+    # Read the raw content of the config file that would be loaded on
+    # the next reload.  Used by the UI to detect divergence between the
+    # in-memory JSON and the file on disk.
+    # -------------------------------------------------------------------
+    @app.get("/api/v1/nodes/{node_id}/config/file")
+    async def read_node_config_file(
+        node_id: str,
+        request: Request,
+        registry_db: aiosqlite.Connection = Depends(get_registry_db),
+    ) -> dict[str, Any]:
+        """Return the current on-disk content of the node's config file.
+
+        Response shape:
+          {"node_id": str,
+           "has_file": bool,
+           "path": str | null,
+           "exists": bool,
+           "content": <parsed JSON/YAML as dict> | null,
+           "raw": str | null,
+           "error": str | null}
+
+        ``content`` is the parsed object suitable for diffing against the
+        stored ``config_json``.  On parse error the raw text is returned
+        instead so the UI can show the operator what's broken.
+        """
+        await auth_module.require_admin(request, registry_db)
+        node_row = await db_module.fetch_node(registry_db, node_id)
+        if node_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown node: {node_id}",
+            )
+        file_path = node_row.get("config_file_path") if isinstance(
+            node_row, dict
+        ) else node_row["config_file_path"]
+        if not file_path:
+            return {
+                "node_id": node_id,
+                "has_file": False,
+                "path": None,
+                "exists": False,
+                "content": None,
+                "raw": None,
+                "error": None,
+            }
+        import os as _os
+        if not _os.path.exists(file_path):
+            return {
+                "node_id": node_id,
+                "has_file": True,
+                "path": file_path,
+                "exists": False,
+                "content": None,
+                "raw": None,
+                "error": "file not found",
+            }
+        try:
+            with open(file_path) as _f:
+                raw = _f.read()
+        except OSError as exc:
+            return {
+                "node_id": node_id,
+                "has_file": True,
+                "path": file_path,
+                "exists": True,
+                "content": None,
+                "raw": None,
+                "error": f"read failed: {exc}",
+            }
+        try:
+            if file_path.lower().endswith((".yaml", ".yml")):
+                import yaml  # type: ignore[import]
+                parsed = yaml.safe_load(raw)
+            else:
+                parsed = json.loads(raw)
+        except Exception as exc:
+            return {
+                "node_id": node_id,
+                "has_file": True,
+                "path": file_path,
+                "exists": True,
+                "content": None,
+                "raw": raw,
+                "error": f"parse error: {exc}",
+            }
+        return {
+            "node_id": node_id,
+            "has_file": True,
+            "path": file_path,
+            "exists": True,
+            "content": parsed,
+            "raw": raw,
+            "error": None,
+        }
+
+    # -------------------------------------------------------------------
     # Frequency groups CRUD (admin-gated)
     # -------------------------------------------------------------------
 

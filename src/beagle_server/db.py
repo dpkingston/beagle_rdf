@@ -655,6 +655,7 @@ async def maybe_reload_node_config(
     node_row: dict[str, Any],
     *,
     changed_by: str = "auto-reload",
+    force: bool = False,
 ) -> dict[str, Any]:
     """Stat one node's config_file_path and reload it if it has changed.
 
@@ -663,16 +664,22 @@ async def maybe_reload_node_config(
       - If the file does not exist: return status "missing".  config_json
         and config_file_mtime are left untouched.
       - If stat() raises: return status "error".
-      - If the file's mtime is unchanged from config_file_mtime: return
-        status "unchanged".
-      - If the file is newer: read, parse (YAML or JSON), validate against
-        NodeConfig.model_validate(), and update config_json + bump
-        config_version + record new mtime + write a history row.  Return
-        status "updated".
+      - If the file's mtime is unchanged from config_file_mtime AND
+        ``force`` is False: return status "unchanged".
+      - If the file is newer OR ``force`` is True: read, parse (YAML or
+        JSON), validate against NodeConfig.model_validate(), and update
+        config_json + bump config_version + record new mtime + write a
+        history row.  Return status "updated".
       - If reading or parsing fails OR validation fails: return status
         "parse_error" or "validation_error".  config_json and
         config_file_mtime are LEFT UNCHANGED so the next call retries
         automatically once the operator fixes the file.
+
+    ``force=True`` is used by the "Revert to file" operator action to
+    discard any in-memory JSON edits and resync to whatever the file
+    currently specifies, regardless of mtime.  It does NOT clear the
+    stored mtime, because clearing it would trigger a second
+    "unchanged -> reload" cycle on the next automatic poll.
 
     The validation step uses beagle_node.config.schema.NodeConfig so that
     structurally valid YAML with the wrong field names (or missing required
@@ -723,7 +730,7 @@ async def maybe_reload_node_config(
             "message": f"stat failed: {exc}",
         }
 
-    if old_mtime is not None and current_mtime <= old_mtime:
+    if not force and old_mtime is not None and current_mtime <= old_mtime:
         return {"node_id": node_id, "status": "unchanged"}
 
     # File is newer -- read, parse, validate.
@@ -767,6 +774,9 @@ async def maybe_reload_node_config(
         "config_file_mtime = ? WHERE node_id = ?",
         (config_json, new_version, current_mtime, node_id),
     )
+    diff_note = (
+        f"resynced from {fpath} (force)" if force else f"reloaded from {fpath}"
+    )
     await db.execute(
         """
         INSERT INTO node_config_history
@@ -774,7 +784,7 @@ async def maybe_reload_node_config(
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (node_id, new_version, config_json, changed_by,
-         time.time(), f"reloaded from {fpath}"),
+         time.time(), diff_note),
     )
     await db.commit()
     return {

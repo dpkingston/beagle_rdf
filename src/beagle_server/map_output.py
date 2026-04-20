@@ -1946,11 +1946,29 @@ window._tdoaOpenDetail = function (nodeId) {
             catch (e) { cfgText = node.config_json; }
         }
         html += '<div style="margin-top:8px"><span class="tp-key">Config JSON:</span></div>';
+        // Divergence banner placeholder - populated by the config/file fetch below.
+        html += '<div id="ncfg-divergence-' + _esc(nodeId) + '"></div>';
         html += '<textarea class="tp-node-config-ta" id="ncfg-' + _esc(nodeId) + '">'
               + _esc(cfgText) + '</textarea>';
+        html += '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">';
         html += '<button class="tdoa-btn-sm ton" onclick="window._tdoaSaveConfig(&apos;'
               + _esc(nodeId) + '&apos;)">Save Config</button>';
+        // Revert button only shown when a config_file_path is attached.
+        if (node.config_file_path) {
+            html += '<button class="tdoa-btn-sm" style="background:rgba(231,76,60,0.15);color:#e74c3c;border-color:rgba(231,76,60,0.3)"'
+                  + ' onclick="window._tdoaRevertConfig(&apos;' + _esc(nodeId) + '&apos;)"'
+                  + ' title="Discard in-memory edits; re-import whatever the file on disk currently specifies">'
+                  + 'Revert to File</button>';
+        }
+        html += '</div>';
         modal.innerHTML = html;
+
+        // Divergence check: fetch the file content and compare to the stored
+        // config_json.  If they differ, show a banner so the operator knows
+        // any JSON edits will be overwritten on the next file change.
+        if (node.config_file_path) {
+            window._tdoaCheckConfigDivergence(nodeId, node.config_json);
+        }
     })
     .catch(function (e) {
         modal.innerHTML = '<h3><span>' + _esc(nodeId) + '</span>'
@@ -1976,6 +1994,111 @@ window._tdoaSaveConfig = function (nodeId) {
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function () { _nodeEditing = false; loadNodes(); })
     .catch(function (e) { console.error('[Beagle] config save error:', e); });
+};
+
+/* Revert in-memory config JSON to whatever the node's config file specifies.
+   Discards any GUI/PATCH edits the file has not picked up.  Admin-only.   */
+window._tdoaRevertConfig = function (nodeId) {
+    if (!confirm('Revert ' + nodeId + "'s config to the file on disk?\n\n" +
+                 'Any in-memory JSON edits that the file does not currently ' +
+                 'contain will be lost.')) {
+        return;
+    }
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId) + '/config/reload?force=1'), {
+        method: 'POST',
+        headers: _hdr()
+    })
+    .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    })
+    .then(function (result) {
+        if (result.status === 'updated') {
+            // Close and reopen the modal so the textarea reloads from the DB.
+            window._tdoaCloseDetail();
+            window._tdoaOpenDetail(nodeId);
+        } else if (result.status === 'missing') {
+            alert('Config file not found: ' + (result.path || '(unknown)'));
+        } else if (result.status === 'parse_error' || result.status === 'validation_error') {
+            alert('Revert failed (' + result.status + '): ' + (result.message || ''));
+        } else {
+            alert('Revert returned status "' + result.status + '"' +
+                  (result.message ? ': ' + result.message : ''));
+        }
+    })
+    .catch(function (e) { alert('Revert failed: ' + e.message); });
+};
+
+/* Check whether the DB config_json and the on-disk config file have diverged.
+   If they differ, render a banner in #ncfg-divergence-<nodeId> warning that
+   JSON edits will be overwritten on the next file change.                  */
+window._tdoaCheckConfigDivergence = function (nodeId, dbConfigJson) {
+    var banner = document.getElementById('ncfg-divergence-' + nodeId);
+    if (!banner) return;
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId) + '/config/file'), {
+        headers: _hdr()
+    })
+    .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    })
+    .then(function (info) {
+        if (!info.has_file) return;
+        if (!info.exists) {
+            banner.innerHTML =
+                '<div style="margin:4px 0;padding:6px 8px;background:rgba(231,76,60,0.12);' +
+                'border-left:3px solid #e74c3c;color:#e74c3c;font-size:11px;border-radius:2px">' +
+                '<b>Config file missing:</b> ' + _esc(info.path || '(unknown)') +
+                '. The in-memory JSON will be used until the file reappears.' +
+                '</div>';
+            return;
+        }
+        if (info.error) {
+            banner.innerHTML =
+                '<div style="margin:4px 0;padding:6px 8px;background:rgba(231,76,60,0.12);' +
+                'border-left:3px solid #e74c3c;color:#e74c3c;font-size:11px;border-radius:2px">' +
+                '<b>Config file error:</b> ' + _esc(info.error) +
+                '</div>';
+            return;
+        }
+        // Compare the stored DB JSON to the file-derived content.  Both are
+        // parsed as JS objects and stringified canonically (sorted keys) so
+        // whitespace / key-ordering differences don't trigger false banners.
+        var dbObj = null;
+        if (dbConfigJson) {
+            try { dbObj = JSON.parse(dbConfigJson); } catch (e) { dbObj = null; }
+        }
+        var a = window._tdoaCanonicalJson(dbObj);
+        var b = window._tdoaCanonicalJson(info.content);
+        if (a === b) return;  // identical — no banner
+        banner.innerHTML =
+            '<div style="margin:4px 0;padding:6px 8px;background:rgba(243,156,18,0.15);' +
+            'border-left:3px solid #f39c12;color:#f39c12;font-size:11px;border-radius:2px">' +
+            '<b>DB and file have diverged.</b> Edits saved here will be reverted ' +
+            'the next time ' + _esc(info.path) + ' changes on disk.  ' +
+            'Click <i>Revert to File</i> to resync now.' +
+            '</div>';
+    })
+    .catch(function (e) {
+        console.warn('[Beagle] divergence check failed for', nodeId, e);
+    });
+};
+
+/* Canonical JSON: stable sorted keys so "same object" compares equal regardless
+   of field order or formatting.                                              */
+window._tdoaCanonicalJson = function (obj) {
+    if (obj === null || obj === undefined) return 'null';
+    if (Array.isArray(obj)) {
+        return '[' + obj.map(window._tdoaCanonicalJson).join(',') + ']';
+    }
+    if (typeof obj !== 'object') return JSON.stringify(obj);
+    var keys = Object.keys(obj).sort();
+    var parts = [];
+    for (var i = 0; i < keys.length; i++) {
+        parts.push(JSON.stringify(keys[i]) + ':' +
+                   window._tdoaCanonicalJson(obj[keys[i]]));
+    }
+    return '{' + parts.join(',') + '}';
 };
 
 /* Save carrier thresholds by merging into config_json */
