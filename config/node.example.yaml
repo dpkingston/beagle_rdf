@@ -143,17 +143,14 @@ carrier:
                            # where co-located nodes may cross the threshold at
                            # slightly different times. Each window ~ 1 ms at 250 kHz.
                            # Recommended: 5-10. 0 = disabled (emit immediately).
-  ring_lookback_windows: 60  # Depth of the IQ ring buffer in detector windows.
-                             # Must be large enough to contain the PA shutoff at the
-                             # moment offset detection fires.  Detection fires after
-                             # min_release_windows consecutive below-threshold windows,
-                             # which is min_release * window_samples after the fade
-                             # crosses offset_db - but a gradual fade can push the
-                             # actual shutoff much further back.  60 windows x 256
-                             # samples = 15360 samples = ~61 ms at 250 kHz.  This
-                             # safely covers any LMR transmitter fade.  Memory cost
-                             # is ~60 x 256 x 8 bytes = ~120 KB/channel (negligible).
-                             # Use analyze_fade_timing.py to tune after data collection.
+  # ring_lookback_windows: null  # Depth of the IQ ring buffer in detector windows.
+                                  # Auto-sized (default: 3 x snippet_windows, or the
+                                  # minimum needed to fill snippet_samples, whichever
+                                  # is larger).  Set explicitly only if your transmitter
+                                  # has fades longer than ~3 x snippet length.  If set
+                                  # too small to fill the snippet, a warning is logged
+                                  # at startup.  Use analyze_fade_timing.py to tune
+                                  # after data collection.
 
 reporter:
   server_url: "https://tdoa.example.com"

@@ -205,8 +205,30 @@ class CarrierDetector:
         # size so gradual fades (10-50 ms) are always captured regardless of the
         # shipped snippet length.  Defaults to 3x the snippet window count so
         # that even a fade spanning the full snippet still has the shutoff inside.
+        #
+        # Minimum viable depth: the concatenated pre+post buffer must be long
+        # enough to fill snippet_samples, otherwise the emitted snippet is
+        # silently truncated.  min_ring = ceil(snippet_samples/window) - post.
         _snippet_windows = max(1, -(-self._snippet_samples // self._window))
-        _ring_capacity = int(ring_lookback_windows) if ring_lookback_windows is not None else _snippet_windows * 3
+        _min_ring_for_full_snippet = max(1, _snippet_windows - self._post_windows)
+        if ring_lookback_windows is None:
+            _ring_capacity = max(_snippet_windows * 3, _min_ring_for_full_snippet)
+        else:
+            _ring_capacity = int(ring_lookback_windows)
+            if _ring_capacity < _min_ring_for_full_snippet:
+                logger.warning(
+                    "ring_lookback_windows=%d is too small to fill snippet_samples=%d "
+                    "at window_samples=%d with snippet_post_windows=%d. "
+                    "Emitted snippets will be truncated to %d samples (%.1f ms at %.0f Hz) "
+                    "instead of %d samples. Raise ring_lookback_windows to >= %d "
+                    "(or leave it unset to auto-size).",
+                    _ring_capacity, self._snippet_samples, self._window, self._post_windows,
+                    (_ring_capacity + self._post_windows) * self._window,
+                    (_ring_capacity + self._post_windows) * self._window / self._rate * 1000.0,
+                    self._rate,
+                    self._snippet_samples,
+                    _min_ring_for_full_snippet,
+                )
         self._iq_ring: deque[np.ndarray] = deque(maxlen=_ring_capacity)
 
         # Deferred-emission state (used when snippet_post_windows > 0).

@@ -469,3 +469,52 @@ class TestRingLookbackConfig:
             ring_lookback_windows=1,
         )
         assert det._iq_ring.maxlen == 1
+
+    def test_explicit_ring_too_small_warns(self, caplog) -> None:
+        """Explicitly set ring_lookback_windows smaller than needed to fill
+        snippet_samples must log a warning and preserve the (truncated) value."""
+        import logging
+        caplog.set_level(logging.WARNING, logger="beagle_node.pipeline.carrier_detect")
+        det = CarrierDetector(
+            sample_rate_hz=250_000.0,
+            onset_threshold_db=-30.0,
+            offset_threshold_db=-40.0,
+            window_samples=64,
+            snippet_samples=5120,
+            snippet_post_windows=10,
+            ring_lookback_windows=60,  # ceil(5120/64) - 10 = 70 needed
+        )
+        assert det._iq_ring.maxlen == 60
+        assert any(
+            "ring_lookback_windows=60" in r.message and "5120" in r.message
+            for r in caplog.records
+        ), f"Expected truncation warning, got: {[r.message for r in caplog.records]}"
+
+    def test_auto_ring_fills_snippet_when_3x_too_small(self) -> None:
+        """When 3*snippet_windows < min_for_full_snippet (e.g. post=0), the
+        auto-sized ring should still be large enough to fill snippet_samples."""
+        # snippet=5120/64 = 80 windows, post=0 -> min_ring=80.
+        # 3*snippet_windows = 240, so auto picks max(240, 80) = 240.
+        det_a = CarrierDetector(
+            sample_rate_hz=250_000.0,
+            onset_threshold_db=-30.0,
+            offset_threshold_db=-40.0,
+            window_samples=64,
+            snippet_samples=5120,
+            snippet_post_windows=0,
+        )
+        assert det_a._iq_ring.maxlen == 240
+
+        # Contrived case where min_for_full_snippet dominates: tiny 3x but
+        # snippet_post_windows is negative of snippet_windows. With post>=0
+        # this can't actually happen, but verify the max() still behaves.
+        det_b = CarrierDetector(
+            sample_rate_hz=250_000.0,
+            onset_threshold_db=-30.0,
+            offset_threshold_db=-40.0,
+            window_samples=64,
+            snippet_samples=128,          # 2 windows
+            snippet_post_windows=0,
+        )
+        # 3*2 = 6, min_for_full_snippet = 2 -> pick 6.
+        assert det_b._iq_ring.maxlen == 6

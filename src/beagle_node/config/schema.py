@@ -227,16 +227,18 @@ class CarrierDetectConfig(BaseModel):
 
     For offset events the PA shutoff must lie within this buffer at detection
     time.  Detection fires min_release_windows after offset_db is first crossed,
-    but a gradual fade can push the shutoff further back.  Setting this well
-    above snippet_samples / window_samples guarantees the shutoff is always
-    captured.
+    but a gradual fade can push the shutoff further back.
 
-      None  -> 3 x ceil(snippet_samples / window_samples) (safe default)
-      60    -> 60 x 64 = 3840 samples = ~61 ms at 62.5 kHz (recommended)
+    None (recommended) -> auto-sized as max(3 x snippet_windows, min_for_full_snippet).
+    This covers both offset fade headroom and the minimum needed to fully populate
+    snippet_samples after concatenating with snippet_post_windows of post-event IQ.
 
-    Memory cost: ring_lookback_windows x window_samples x 8 bytes ~ 30 KB at
-    the recommended setting (negligible).  Use analyze_fade_timing.py after
-    data collection to confirm the ring is large enough for your transmitters."""
+    Set explicitly only if your transmitter has fades longer than ~3 x snippet
+    length.  If set too small to fill snippet_samples (i.e. below
+    ceil(snippet_samples/window_samples) - snippet_post_windows), a warning is
+    logged at startup and emitted snippets are silently truncated.
+
+    Memory cost: ring_lookback_windows x window_samples x 8 bytes."""
     min_active_windows_for_offset: int = 0
     """Minimum above-threshold windows required before a CarrierOffset is emitted.
 
