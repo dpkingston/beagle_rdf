@@ -125,8 +125,17 @@ carrier:
   # Increase to 4-8 if you see bursts of measurements (multiple onset/offset events
   # per transmission) spaced by ~1 ms - that pattern means the power is hovering
   # near the offset threshold and chattering.  8 windows ~8 ms hold time.
+  # onset_db / offset_db below serve as initial values; when
+  # auto_threshold_margins is true (the default) they are overridden at runtime
+  # by noise_floor + {onset,offset}_margin_db once the noise-floor EMA has
+  # warmed up.  Set auto_threshold_margins: false to use these as static
+  # thresholds.
   onset_db: -30.0
   offset_db: -40.0
+  auto_threshold_margins: true        # Track noise floor automatically.
+  onset_margin_db: 12.0               # onset  = noise_floor + 12 dB
+  offset_margin_db:  6.0              # offset = noise_floor +  6 dB (hysteresis)
+  auto_threshold_update_interval_s: 2.0
   window_samples: 256        # 256 samples ~= 1 ms at 250 kHz target rate.
   min_hold_windows: 1      # Onset: require N consecutive above-threshold windows
   min_release_windows: 1   # Offset: require N consecutive below-threshold windows

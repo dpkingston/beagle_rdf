@@ -518,3 +518,108 @@ class TestRingLookbackConfig:
         )
         # 3*2 = 6, min_for_full_snippet = 2 -> pick 6.
         assert det_b._iq_ring.maxlen == 6
+
+
+class TestAutoThresholdMargins:
+    """Tests for the auto-threshold tracking feature.
+
+    Auto-threshold mode keeps onset/offset at fixed margins above the tracked
+    noise-floor EMA, following real-world noise changes without static tuning.
+    """
+
+    @staticmethod
+    def _noise_buffer(n_samples: int, power_db: float, seed: int = 0) -> np.ndarray:
+        """Gaussian IQ noise whose average |s|^2 = 10^(power_db/10)."""
+        rng = np.random.default_rng(seed)
+        # |s|^2 per sample = re^2 + im^2.  For iid N(0, sigma^2) real/imag,
+        # E[|s|^2] = 2*sigma^2.  Pick sigma so that 2*sigma^2 = 10^(power_db/10).
+        target_power = 10.0 ** (power_db / 10.0)
+        sigma = float(np.sqrt(target_power / 2.0))
+        return (sigma * (rng.standard_normal(n_samples)
+                         + 1j * rng.standard_normal(n_samples))).astype(np.complex64)
+
+    def test_auto_off_keeps_static_thresholds(self) -> None:
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+            auto_threshold_margins=False,  # explicit static mode
+            onset_margin_db=12.0, offset_margin_db=6.0,
+            auto_threshold_update_interval_s=0.05,
+        )
+        # Feed enough noise at -60 dB to completely warm up the EMA
+        noise = self._noise_buffer(64_000, power_db=-60.0)
+        det.process(noise, start_sample=0)
+        # Thresholds must NOT have changed despite well-defined noise floor
+        assert det._onset_db == -30.0
+        assert det._offset_db == -40.0
+
+    def test_auto_on_tracks_floor_after_warmup(self) -> None:
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+            auto_threshold_margins=True,
+            onset_margin_db=12.0, offset_margin_db=6.0,
+            auto_threshold_update_interval_s=0.05,  # update every ~3 windows
+        )
+        # 1 second of -60 dB noise at 64k/64 = 1000 windows >> 500 warmup updates
+        noise = self._noise_buffer(64_000, power_db=-60.0)
+        det.process(noise, start_sample=0)
+        # Onset/offset should have moved close to -48 and -54 (floor -60 +12 / +6)
+        assert det._noise_floor_db < -55.0, det._noise_floor_db
+        assert abs(det._onset_db - (det._noise_floor_db + 12.0)) < 0.5
+        assert abs(det._offset_db - (det._noise_floor_db + 6.0)) < 0.5
+
+    def test_auto_on_no_update_before_warmup(self) -> None:
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+            auto_threshold_margins=True,
+            onset_margin_db=12.0, offset_margin_db=6.0,
+            auto_threshold_update_interval_s=0.001,  # pretend to update every window
+        )
+        # Only 200 samples at 64k/64 = ~3 windows, far below the 500-update warmup.
+        noise = self._noise_buffer(2_000, power_db=-60.0)
+        det.process(noise, start_sample=0)
+        # Static thresholds must remain because warmup hasn't elapsed.
+        assert det._onset_db == -30.0
+        assert det._offset_db == -40.0
+
+    def test_auto_onset_clamped_to_safety_max(self) -> None:
+        """Severe noise/interference must not push onset above the safety cap."""
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+            auto_threshold_margins=True,
+            onset_margin_db=12.0, offset_margin_db=6.0,
+            auto_threshold_update_interval_s=0.05,
+        )
+        # Force the EMA to a very high floor directly, then feed more idle
+        # samples so warmup counter accumulates.  Use noise at -5 dB so
+        # floor + 12 = +7 which exceeds the safety max (-10 dB).
+        det._noise_floor_db = -5.0
+        det._auto_floor_updates = det._auto_warmup_floor_updates  # skip warmup
+        noise = self._noise_buffer(64_000, power_db=-5.0)
+        det.process(noise, start_sample=0)
+        assert det._onset_db <= det._auto_max_onset_db + 1e-6
+        # Offset keeps at least 1 dB hysteresis below onset
+        assert det._offset_db < det._onset_db - 0.5
+
+    def test_invalid_margins_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            CarrierDetector(
+                sample_rate_hz=64_000.0,
+                onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+                window_samples=64,
+                onset_margin_db=6.0, offset_margin_db=12.0,  # inverted
+            )
+        with pytest.raises(ValueError):
+            CarrierDetector(
+                sample_rate_hz=64_000.0,
+                onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+                window_samples=64,
+                auto_threshold_update_interval_s=0.0,
+            )

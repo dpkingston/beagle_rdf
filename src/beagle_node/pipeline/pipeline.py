@@ -110,6 +110,15 @@ class PipelineConfig:
     # freq_hop mode to suppress carrier-tail offsets anchored to the block boundary.
     carrier_min_active_windows_for_offset: int = 0
 
+    # Auto-threshold tracking (matches GUI "Auto-Calibrate" button, applied
+    # continuously so thresholds follow changing noise conditions without
+    # operator intervention).  When enabled, static carrier_onset_db /
+    # carrier_offset_db are used only during noise-floor warmup.
+    carrier_auto_threshold_margins: bool = True
+    carrier_onset_margin_db: float = 12.0
+    carrier_offset_margin_db: float = 6.0
+    carrier_auto_threshold_update_interval_s: float = 2.0
+
     # Delta computer
     max_sync_age_samples: int = 20_480  # ~80 ms at 256 kHz (8x sync period)
     min_corr_peak: float = 0.1
@@ -166,6 +175,10 @@ class NodePipeline:
             snippet_post_windows=c.carrier_snippet_post_windows,
             ring_lookback_windows=c.carrier_ring_lookback_windows,
             min_active_windows_for_offset=c.carrier_min_active_windows_for_offset,
+            auto_threshold_margins=c.carrier_auto_threshold_margins,
+            onset_margin_db=c.carrier_onset_margin_db,
+            offset_margin_db=c.carrier_offset_margin_db,
+            auto_threshold_update_interval_s=c.carrier_auto_threshold_update_interval_s,
         )
 
         # Delta computer

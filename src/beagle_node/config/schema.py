@@ -192,10 +192,36 @@ class CarrierDetectConfig(BaseModel):
     """
 
     onset_db: float = -30.0
-    """Power level (dBFS) that triggers CarrierOnset."""
+    """Power level (dBFS) that triggers CarrierOnset.
+
+    When ``auto_threshold_margins`` is True this value is used only as the
+    initial threshold during the noise-floor warmup period; after warmup the
+    threshold tracks the noise floor at ``onset_margin_db`` above it."""
     offset_db: float = -40.0
     """Power level (dBFS) below which CarrierOffset fires.
-    Must be lower (more negative) than onset_db."""
+    Must be lower (more negative) than onset_db.  Same warmup caveat as
+    ``onset_db`` when ``auto_threshold_margins`` is True."""
+    auto_threshold_margins: bool = True
+    """If True, onset/offset thresholds track the tracked noise floor at the
+    margins below; static onset_db/offset_db apply only during warmup (before
+    the noise-floor EMA has stabilised).  If False, thresholds stay fixed at
+    the static values regardless of noise floor changes.
+
+    Matches the GUI "Auto-Calibrate" button (onset = floor + 12,
+    offset = floor + 6) but applied continuously at runtime so the detector
+    follows changing noise conditions without operator intervention."""
+    onset_margin_db: float = 12.0
+    """dB above the tracked noise floor at which onset fires when
+    ``auto_threshold_margins`` is True.  Ignored otherwise."""
+    offset_margin_db: float = 6.0
+    """dB above the tracked noise floor at which offset fires when
+    ``auto_threshold_margins`` is True.  Must be less than
+    ``onset_margin_db`` to preserve hysteresis.  Ignored otherwise."""
+    auto_threshold_update_interval_s: float = 2.0
+    """How often (seconds) to re-evaluate and apply auto-tracked thresholds.
+    Smaller values track noise changes faster at the cost of slightly more
+    log noise; the noise-floor EMA's ~100-window time constant (~0.1 s at
+    64-sample windows / 64 kHz) sets the practical lower bound."""
     window_samples: int = 64
     """IQ samples averaged per power measurement window.
     At 62.5 kHz target rate: 64 samples ~ 1 ms."""
@@ -279,6 +305,16 @@ class CarrierDetectConfig(BaseModel):
             raise ValueError(
                 f"carrier.offset_db ({self.offset_db}) must be less than "
                 f"carrier.onset_db ({self.onset_db})"
+            )
+        if self.offset_margin_db >= self.onset_margin_db:
+            raise ValueError(
+                f"carrier.offset_margin_db ({self.offset_margin_db}) must be less "
+                f"than carrier.onset_margin_db ({self.onset_margin_db})"
+            )
+        if self.auto_threshold_update_interval_s <= 0.0:
+            raise ValueError(
+                f"carrier.auto_threshold_update_interval_s must be > 0, "
+                f"got {self.auto_threshold_update_interval_s}"
             )
         return self
 

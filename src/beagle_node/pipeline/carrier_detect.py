@@ -125,6 +125,10 @@ class CarrierDetector:
         snippet_post_windows: int = 5,
         ring_lookback_windows: int | None = None,
         min_active_windows_for_offset: int = 0,
+        auto_threshold_margins: bool = False,
+        onset_margin_db: float = 12.0,
+        offset_margin_db: float = 6.0,
+        auto_threshold_update_interval_s: float = 2.0,
     ) -> None:
         if offset_threshold_db >= onset_threshold_db:
             raise ValueError(
@@ -142,6 +146,16 @@ class CarrierDetector:
         if min_active_windows_for_offset < 0:
             raise ValueError(
                 f"min_active_windows_for_offset must be >= 0, got {min_active_windows_for_offset}"
+            )
+        if offset_margin_db >= onset_margin_db:
+            raise ValueError(
+                f"offset_margin_db ({offset_margin_db}) must be < "
+                f"onset_margin_db ({onset_margin_db})"
+            )
+        if auto_threshold_update_interval_s <= 0.0:
+            raise ValueError(
+                f"auto_threshold_update_interval_s must be > 0, "
+                f"got {auto_threshold_update_interval_s}"
             )
 
         self._rate = float(sample_rate_hz)
@@ -161,6 +175,38 @@ class CarrierDetector:
         # Alpha = 0.01 -> time constant ~ 100 windows (~ 100 ms at 64 kHz / 64-sample window).
         self._noise_floor_db: float = float(offset_threshold_db)
         self._noise_floor_alpha: float = 0.01
+
+        # Auto-tracking thresholds relative to the EMA noise floor.  When
+        # enabled, onset/offset thresholds are periodically set to
+        # noise_floor + margin_db.  Static onset_db/offset_db only apply
+        # until the EMA has warmed up enough (warmup_floor_updates) for the
+        # tracked value to be meaningful.
+        self._auto_threshold_margins: bool = bool(auto_threshold_margins)
+        self._onset_margin_db: float = float(onset_margin_db)
+        self._offset_margin_db: float = float(offset_margin_db)
+        # Convert the update cadence from seconds to detector windows.
+        self._auto_update_interval_windows: int = max(
+            1, int(round(auto_threshold_update_interval_s * self._rate / self._window))
+        )
+        self._windows_since_auto_update: int = 0
+        # Count of idle windows observed where the noise-floor EMA was
+        # actually updated; this is what we use to determine "warmup"
+        # rather than wall-clock windows, because the EMA is only moved
+        # by idle-state samples.
+        self._auto_floor_updates: int = 0
+        # Require enough EMA updates for the estimate to be ~5 time constants
+        # in from the initial (offset_threshold_db) value, i.e. settled to
+        # within ~0.7% of the true floor.  alpha=0.01 -> 5/alpha = 500 updates.
+        self._auto_warmup_floor_updates: int = max(
+            50, int(round(5.0 / self._noise_floor_alpha))
+        )
+        # Minimum change to apply (dB) — avoids churning update_thresholds
+        # (and its info log) on every sub-dB EMA jitter.
+        self._auto_min_change_db: float = 0.5
+        # Maximum absolute threshold value (dBFS) for safety, so runaway
+        # noise or strong interference doesn't push thresholds above where a
+        # legitimate full-scale carrier would lie.
+        self._auto_max_onset_db: float = -10.0
         # freq_hop block-start onset suppression.
         # Counts below-threshold (idle) windows seen since the last
         # prime_state() call.  An onset is only emitted once this count
@@ -345,6 +391,34 @@ class CarrierDetector:
             self._min_active_for_offset,
         )
 
+    def _apply_auto_thresholds(self) -> None:
+        """Re-evaluate onset/offset thresholds from the current noise floor EMA.
+
+        Called periodically from ``process()`` once the noise-floor EMA has
+        warmed up.  Computes target thresholds as
+        ``noise_floor + {onset,offset}_margin_db``, clamps onset to
+        ``_auto_max_onset_db`` for safety, and applies via
+        ``update_thresholds`` if the change from the current settings is
+        larger than ``_auto_min_change_db`` (to avoid churn on sub-dB EMA
+        jitter).
+        """
+        floor = self._noise_floor_db
+        new_onset = min(floor + self._onset_margin_db, self._auto_max_onset_db)
+        new_offset = min(floor + self._offset_margin_db,
+                         new_onset - 1.0)  # preserve at least 1 dB hysteresis
+        if (abs(new_onset - self._onset_db) < self._auto_min_change_db
+                and abs(new_offset - self._offset_db) < self._auto_min_change_db):
+            return
+        logger.info(
+            "Auto-threshold update: noise_floor=%.1f dB -> onset=%.1f offset=%.1f "
+            "(was onset=%.1f offset=%.1f)",
+            floor, new_onset, new_offset, self._onset_db, self._offset_db,
+        )
+        self.update_thresholds(
+            onset_threshold_db=new_onset,
+            offset_threshold_db=new_offset,
+        )
+
     # ------------------------------------------------------------------
     # Processing
     # ------------------------------------------------------------------
@@ -386,6 +460,14 @@ class CarrierDetector:
             # Accumulate this window into the ring buffer (used for snippet capture).
             self._iq_ring.append(window_iq)
             self._windows_since_prime += 1
+
+            # Periodic auto-threshold tracking based on the noise-floor EMA.
+            self._windows_since_auto_update += 1
+            if (self._auto_threshold_margins
+                    and self._windows_since_auto_update >= self._auto_update_interval_windows):
+                self._windows_since_auto_update = 0
+                if self._auto_floor_updates >= self._auto_warmup_floor_updates:
+                    self._apply_auto_thresholds()
 
             # --- Periodic power diagnostics ---
             pwr = float(powers_db[i])
@@ -639,6 +721,8 @@ class CarrierDetector:
                     self._noise_floor_db += self._noise_floor_alpha * (
                         power_db - self._noise_floor_db
                     )
+                    # Count EMA updates for auto-threshold warmup tracking.
+                    self._auto_floor_updates += 1
 
             elif self._state == "active":
                 if power_db <= self._offset_db:

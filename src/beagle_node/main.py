@@ -605,6 +605,10 @@ def run(args: argparse.Namespace | None = None) -> int:
             carrier_snippet_post_windows=config.carrier.snippet_post_windows,
             carrier_ring_lookback_windows=config.carrier.ring_lookback_windows,
             carrier_min_active_windows_for_offset=config.carrier.min_active_windows_for_offset,
+            carrier_auto_threshold_margins=config.carrier.auto_threshold_margins,
+            carrier_onset_margin_db=config.carrier.onset_margin_db,
+            carrier_offset_margin_db=config.carrier.offset_margin_db,
+            carrier_auto_threshold_update_interval_s=config.carrier.auto_threshold_update_interval_s,
         ),
         on_measurement=on_measurement,
     )
