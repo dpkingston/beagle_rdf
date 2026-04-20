@@ -16,25 +16,38 @@ SDR IQ (2 MSPS complex64)
      |                                FMDemodulator
      |                                      |   -> 256 kHz float32 audio (Hz)
      |                                RDSSyncDetector
-     |                                  (-57 kHz freq shift, LPF, /10,
-     |                                   M&M timing recovery + Costas loop)
+     |                                  (19 kHz pilot phase lock;
+     |                                   bit boundaries derived from
+     |                                   unwrapped pilot phase at
+     |                                   pilot/16 = 1187.5 Hz)
      |                                      |
      |                                SyncEvent (sample_index, corr_peak,
      |                                           sample_rate_correction)
      |                                  one event per RDS bit transition
      |                                  (~1188/sec, ~842 usec apart)
      |
-     +------------------------------> target_decimator (32x, LPF 25 kHz)
-                                            |   -> 64 kHz complex IQ
+     +------------------------------> target_decimator (8x, LPF 100 kHz)
+                                            |   -> ~250 kHz complex IQ
                                       [DC removal: iq - mean(iq)]
                                        CarrierDetector
+                                       (auto-tracked onset/offset
+                                        thresholds = noise_floor + margin)
                                             |
                                CarrierOnset / CarrierOffset
-                               (sample_index in sync-dec space)
+                               (sample_index + IQ snippet +
+                                transition_start/end zone bounds)
                                             |
                                       DeltaComputer
                                             |
                                    TDOAMeasurement (sync_delta_ns)
+                                            |
+                                      +-----v-----+
+                                      |  Server    |
+                                      |  Savgol d2 |
+                                      |  knee      |
+                                      |  finder +  |
+                                      |  SyncCal   |
+                                      +------------+
 ```
 
 > **Historical note**: Beagle previously used `FMPilotSyncDetector`, which
@@ -78,11 +91,15 @@ The I and Q channels are filtered separately (both are real-valued within
 |-------|-----------|--------|--------|-------------|
 | Sync (RTL-SDR) | 2.048 MSPS | /8 | 128 kHz | **256 kHz** |
 | Sync (RSPduo)  | 2.000 MSPS | /8 | 128 kHz | **250 kHz** |
-| Target (both)  | 2.048/2.000 MSPS | /32 | 25 kHz | **64/62.5 kHz** |
+| Target (both)  | 2.048/2.000 MSPS | /8 | 100 kHz | **~256/250 kHz** |
 
 The 128 kHz sync cutoff passes the full +/-75 kHz FM deviation including the
-stereo pilot at 19 kHz and pilot sidebands at 23-53 kHz.  The 25 kHz target
-cutoff matches the 25 kHz channel bandwidth of narrowband LMR.
+stereo pilot at 19 kHz and pilot sidebands at 23-53 kHz.  The target chain
+uses the same /8 decimation as the sync chain, keeping the wider bandwidth
+so the Savgol-based knee finder on the server sees fine enough temporal
+structure in the PA transition (at 250 kHz one sample is 4 µs).  An earlier
+deployment used /32 -> 62.5 kHz to save CPU, but per-event timing precision
+improved significantly when the target rate was raised in commit 46a43c8.
 
 ### Sample-index arithmetic
 
@@ -157,75 +174,59 @@ an unresolvable cross-node ambiguity.
 audio (256 kHz, real, instantaneous freq in Hz)
   |
   v
- [normalise to unit RMS]               -- so M&M loop gain is signal-independent
+ [19 kHz BPF + complex correlation in 10 ms windows]
+  |      -- corr = sum(audio x conj(exp(j 2pi 19000 t)))
+  v
+ [unwrap pilot phase across windows]
   |
   v
- [freq shift -57 kHz]                  -- multiply by exp(-j 2pi 57000 t)
-  |
+ [derive RDS bit boundaries at pilot/16]
+  |  -- bit timing is locked to the pilot by the IEC 62106 / NRSC-4-B
+  |     standard.  Given the running unwrapped pilot phase, the next bit
+  |     boundary is the sample where phase/(2pi) mod 16 returns to zero.
+  |     A first-order phase-offset slew (alpha=0.01, ~1 s time constant)
+  |     tracks residual drift between the pilot's frequency and the bit
+  |     clock, so the recovered boundaries stay aligned to real RDS
+  |     bit edges even under crystal drift.
   v
- [LPF: 101-tap firwin, 7.5 kHz cutoff]
-  |
-  v
- [decimate by 10]                      -- working rate now 25 kHz
-  |
-  v
- [Mueller-Muller timing recovery]      -- cubic interpolation, 16 sps nominal
-  |                                       (RDS rate: 25000 / 1187.5 = ~21.05 sps)
-  |  one symbol per ~21 input samples (~842 usec)
-  v
- [Costas loop]                         -- residual phase/frequency correction
-  |
-  v
- [bit decisions + differential decode]
-  |
-  v
- SyncEvent at the input-stream sample index of each bit boundary
+ SyncEvent at the sub-sample index of each bit boundary
 ```
 
-The detector emits one `SyncEvent` per recovered bit (after a configurable
-warmup period during which the M&M timing loop converges; default 50 symbols
-= ~42 ms).  Each event carries:
+This replaced an earlier chain that used Mueller-Muller timing recovery
+followed by a Costas loop (BPSK slicer).  M&M would not lock reliably on
+live FM signals -- the recovered symbols were effectively uniformly
+distributed across the RDS bit cell rather than centred on bit boundaries.
+The pilot-phase derivation is deterministic and shape-independent: every
+node locked to the same FM station identifies the same pilot cycle, and
+therefore the same RDS bit edge, as the same physical event.
+
+The detector emits one `SyncEvent` per bit boundary (after a short warmup
+period during which the pilot phase lock converges).  Each event carries:
 
 - `sample_index` (float, sub-sample precision in the 256 kHz sync-dec stream)
-- `corr_peak` -- the most recent **pilot** correlation value (the detector
-  still extracts the pilot internally for crystal calibration; see below)
+- `corr_peak` -- the most recent pilot correlation value (useful for
+  diagnostics and as a min_corr_peak gate)
 - `sample_rate_correction` -- the current `CrystalCalibrator` factor
 - `pilot_phase_rad` -- accumulated unwrapped pilot phase
 
-### Pilot extraction (for crystal calibration)
+### Crystal calibration (reused pilot phase)
 
-The RDS detector contains a parallel pilot extraction path that runs alongside
-the RDS chain.  Every 10 ms it does a 19 kHz BPF + complex correlation against
-a `exp(j 2pi 19000 t)` template (the same algorithm `FMPilotSyncDetector`
-uses), feeds the unwrapped phase into `CrystalCalibrator`, and stores the
-resulting correction factor on the next emitted `SyncEvent`.
+The same per-window pilot phase is also fed into `CrystalCalibrator`,
+which tracks a rolling-median correction factor over the last 100 windows
+(~1 s) to pin the SDR's effective sample rate to the pilot's standards-body
+precision (the broadcast station's reference is traceable to GPS/UTC).
+Correction factor is attached to every `SyncEvent` and applied by
+`DeltaComputer` when converting sample indices to nanoseconds.
 
-This is **only** used for crystal calibration -- the SyncEvent sample index
-itself comes from the M&M timing loop, not the pilot.  The pilot's role is
-reduced to "report the SDR's true sample rate so we can convert sample indices
-to nanoseconds accurately."
+### Sub-sample precision
 
-### M&M timing loop and sub-sample precision
-
-Mueller-Muller is a feedback timing-recovery algorithm for symbol-synchronous
-demodulation: it adjusts a fractional sample-position estimate (`mu`) at each
-symbol so that successive samples land on the symbol centre.  Beagle's
-implementation interpolates the input stream with a Catmull-Rom cubic so the
-sample position can move in continuous fractional steps.
-
-The output `sample_index` is the float-valued input-stream position at which
-the bit transition was recovered, with full sub-sample precision (the float
-value is propagated all the way through to the server's TDOA calculation).
-On synthetic data the per-bit interval jitter is < 0.01 usec; on a healthy
-RSPduo capture of KUOW 94.9 it's measured at ~0.06 usec.
-
-### Costas loop
-
-The recovered symbols still carry residual phase/frequency offset (the FM
-demod centre frequency vs. the RDS subcarrier are not exactly 57 kHz apart in
-the receiver's view because of LO offset and crystal error).  A standard
-2nd-order Costas loop in the M&M output stream corrects this and produces
-real-valued bit values at the slicer.
+Pilot phase unwrapping + the bit-boundary derivation produces float-valued
+sample indices with full sub-sample precision (the float value is
+propagated through to the server's TDOA calculation).  On synthetic data
+the per-bit interval jitter is < 0.01 µs; on a healthy RSPduo capture of
+KUOW 94.9 it's measured at ~0.06 µs.  Cross-node onset sample_index spread
+dropped from ~250 µs (M&M era) to ~105 ns (pilot-derived era) over the
+same fixture.
 
 ### Buffer management and gap handling
 
@@ -279,7 +280,7 @@ over any window >10 ms.
 ### Power measurement (`pipeline/carrier_detect.py`)
 
 After decimation the IQ stream is divided into non-overlapping windows of
-`window_samples` (default 64 samples ~ 1 ms at 64 kHz).  For each window:
+`window_samples` (default 256 samples ~ 1 ms at 250 kHz).  For each window:
 
 ```
 power_lin = mean(|iq|^2)
@@ -295,12 +296,33 @@ scale, all real-world signals are negative).
 the threshold:
 
 ```
-State IDLE  ->  ACTIVE  when power_db >= onset_threshold_db  (default -30 dBFS)
-State ACTIVE -> IDLE    when power_db <= offset_threshold_db  (default -40 dBFS)
+State IDLE  ->  ACTIVE  when power_db >= onset_threshold_db
+State ACTIVE -> IDLE    when power_db <= offset_threshold_db
 ```
 
 `offset_threshold_db < onset_threshold_db` is enforced at construction time.
-A 10 dB gap between the two thresholds is the current default.
+
+### Auto-tracked thresholds (`auto_threshold_margins`)
+
+By default the onset/offset thresholds are **not static** but track the
+measured idle-state noise floor continuously:
+
+```
+onset  = noise_floor + onset_margin_db    (default +12 dB)
+offset = noise_floor + offset_margin_db   (default  +6 dB, preserves hysteresis)
+```
+
+The noise floor is an EMA (alpha=0.01, ~100-window time constant) that
+advances only on idle-state windows below the current onset threshold.
+Once ~500 EMA updates have accumulated (~0.5 s of actual idle time), the
+detector begins re-evaluating thresholds every `auto_threshold_update_interval_s`
+(default 2 s).  During the warmup period the static `onset_db` / `offset_db`
+values from config serve as the thresholds.
+
+This matches the GUI "Auto-Calibrate" button (which also uses +12 / +6 dB
+margins) but applied continuously at runtime so detection follows changing
+noise conditions without operator intervention.  Set
+`auto_threshold_margins: false` in config to fall back to static thresholds.
 
 ### Minimum hold (`carrier_min_hold_windows`)
 
@@ -309,19 +331,20 @@ in `N` consecutive power windows before an onset is declared.  This suppresses
 single-window noise spikes.  Set to 4 (~ 4 ms) to further reduce false positives
 in noisy RF environments.
 
-### Event sample indices
+### Event contents
 
-`CarrierOnset` and `CarrierOffset` carry a `sample_index` in the
-**target-decimated** sample domain.  `NodePipeline.process_target_buffer()`
-converts this to the **sync-decimated** domain before passing to `DeltaComputer`:
+`CarrierOnset` and `CarrierOffset` carry:
 
-```python
-event_in_sync_space = event.sample_index * target_decimation // sync_decimation
-                    = event.sample_index x 32 // 8
-                    = event.sample_index x 4
-```
-
-This linear scaling preserves relative timing across the two decimated streams.
+- `sample_index` in the target-decimated sample domain (converted to
+  sync-decimated domain by `NodePipeline.process_target_buffer()` before
+  passing to `DeltaComputer`).  At the current /8 target decimation the
+  two domains have the same rate and the conversion is an identity.
+- An IQ snippet (int8 interleaved, base64 encoded) spanning the PA
+  transition, sized by `snippet_samples` (default 5120 samples = ~20.5 ms
+  at 250 kHz).  Used by the server for Savgol-based knee finding.
+- `transition_start` / `transition_end` indices within the snippet that
+  bracket the reported PA transition zone.  The server's knee finder
+  searches `argmin(d2)` within these bounds.
 
 ---
 
@@ -387,11 +410,10 @@ For `freq_hop` mode (RTL-SDR @ 2.048 MSPS):
 |-------|------|--------|
 | ADC input | 2,048,000 sps | 0.488 usec/sample |
 | Sync after /8 | 256,000 sps | 3.9 usec/sample |
-| RDS after additional /10 | 25,600 sps | 39 usec/sample |
-| Target after /32 | 64,000 sps | 15.6 usec/sample |
+| Target after /8 | 256,000 sps | 3.9 usec/sample |
 | RDS bit period | - | **842.1 usec** (one SyncEvent per bit) |
 | RDS sync event rate | 1187.5 / sec | (= pilot/16, exact) |
-| Target power window | - | 1 ms (64 target samples) |
+| Target power window | - | 1 ms (256 target samples) |
 | max_sync_age | - | 80 ms (20,480 sync samples = ~95 RDS bits) |
 
 For `rspduo` mode (RSPduo @ 2.000 MSPS):
@@ -400,8 +422,7 @@ For `rspduo` mode (RSPduo @ 2.000 MSPS):
 |-------|------|--------|
 | ADC input | 2,000,000 sps | 0.500 usec/sample |
 | Sync after /8 | 250,000 sps | 4.0 usec/sample |
-| RDS after additional /10 | 25,000 sps | 40 usec/sample |
-| Target after /32 | 62,500 sps | 16.0 usec/sample |
+| Target after /8 | 250,000 sps | 4.0 usec/sample |
 | RDS bit period | - | **842.1 usec** (one SyncEvent per bit) |
 | RDS sync event rate | 1187.5 / sec | (= pilot/16, exact) |
 | RSPduo buffer | - | 32.8 ms (65,536 raw samples = ~39 RDS bits) |

@@ -117,12 +117,13 @@ which is logged to SQLite and displayed on a live Folium map.
             |  decimated IQ                              |  decimated IQ
             v                                             v
    RDSSyncDetector                                CarrierDetector
-   (FM demod -> -57 kHz shift                            |
-    -> LPF -> M&M timing                                  |
-    -> Costas -> bit boundary)                            |
+   (FM demod -> 19 kHz pilot phase lock                  |
+    -> derive RDS bit boundaries at                      |
+    pilot/16 = 1187.5 Hz; auto-tracked                   |
+    onset/offset thresholds)                             |
             |                                             |
-            |  SyncEvent (every ~842 usec,                |  CarrierOnset
-            |  one per RDS bit transition)                |
+            |  SyncEvent (every ~842 usec,                |  CarrierOnset /
+            |  one per RDS bit transition)                |  CarrierOffset
             +---------------> DeltaComputer <-------------+
                                     |
                                     v
@@ -153,7 +154,7 @@ TDOA for a 100 km baseline (~333 usec), so disambiguation is unambiguous.
 
 - Knapp & Carter (1976) - [The Generalized Correlation Method for Estimation of Time Delay](https://www.semanticscholar.org/paper/The-generalized-correlation-method-for-estimation-Knapp-Carter/29c74aad1986ff2e907e084820e990a0544e743a) - foundational cross-correlation technique
 - NRSC-4-B / IEC 62106 - the RBDS / RDS standard (1187.5 bps BPSK, CRC-10, block sync)
-- [PySDR: RDS chapter](https://pysdr.org/content/rds.html) - the Mueller-Muller + Costas chain Beagle's RDS decoder is built on
+- [PySDR: RDS chapter](https://pysdr.org/content/rds.html) - background on RDS framing and BPSK demodulation (Beagle derives bit boundaries from the pilot's phase rather than running a Mueller-Muller timing loop; see [docs/design/04-sync-signal.md](docs/design/04-sync-signal.md))
 - Chan & Ho (1994) - [A Simple and Efficient Estimator for Hyperbolic Location](https://www.semanticscholar.org/paper/A-simple-and-efficient-estimator-for-hyperbolic-Chan-Ho/fc51fb822024805533ff9eef4f7e486b38437109) - the closed-form TDOA solver this system is based on
 - Howland, Maksimiuk & Reitsma (2005) - [FM Radio Based Bistatic Radar](https://www.theiet.org/media/11278/fm-radio-based-bistatic-radar.pdf) - demonstrates FM broadcasts as passive location reference signals
 - Abramson (2020) - [Thesis: Locating Transmitters with TDOA and RTL-SDRs](https://www.rtl-sdr.com/thesis-on-locating-transmitters-with-tdoa-and-rtl-sdrs/) - end-to-end RTL-SDR TDOA system with source and tooling
@@ -351,8 +352,9 @@ Expected after the ~50 ms warm-up:
 - **Pilot `corr_peak` >= 0.5** (the RDS detector still extracts the pilot
   internally for crystal calibration, even though it's not the sync source)
 - **Crystal correction** stable, drifting < 10 ppm over 30 s
-- **Bit interval jitter < 5 usec** (sub-microsecond after the M&M timing loop
-  has converged)
+- **Bit interval jitter < 5 usec** (sub-microsecond once the 19 kHz pilot
+  phase lock has converged; bit boundaries are derived directly from the
+  pilot phase rather than from a Mueller-Muller timing loop)
 
 If the rate is much below 1188/s, the chosen station probably doesn't carry
 RDS -- pick a different station.  In the US, almost all NPR affiliates and
@@ -373,25 +375,35 @@ for installation and setup of the SDRplay API and SoapySDRPlay3.
 
 ### 3 - Calibrate carrier detection thresholds
 
-Tune the SDR to your target frequency and key your transmitter a few times.
-`check_target.py` reports the noise floor and peak signal level and recommends
-`onset_db` / `offset_db` values:
+Nodes default to **auto-tracked carrier thresholds**: the detector continuously
+measures the idle-state noise floor (EMA, ~100-window time constant) and sets
+`onset = floor + onset_margin_db` (default 12 dB) and
+`offset = floor + offset_margin_db` (default 6 dB) every few seconds.  The
+static `onset_db` / `offset_db` in `node.yaml` are used only during the
+initial noise-floor warmup.  In most environments you can leave the defaults
+alone.
+
+`check_target.py` is still useful to sanity-check the signal level before
+first deployment -- it reports the measured noise floor and peak signal and
+recommends margin values:
 
 ```bash
 python3 scripts/check_target.py --freq 462.5625e6 --gain 30 --duration 30
 ```
 
-Copy the recommended values into the `carrier:` section of `node.yaml`:
+If you want static (non-tracking) thresholds -- for example when the noise
+environment is unusual -- disable auto-tracking in `node.yaml`:
 
 ```yaml
 carrier:
+  auto_threshold_margins: false
   onset_db:  -18   # from check_target.py output
   offset_db: -28
 ```
 
-Skip this step for a first smoke-test with the default thresholds (-30/-40 dBFS),
-but run it before production deployment.  See [Calibration](#calibration)
-for the full calibration procedure.
+Skip this step for a first smoke-test; see [Calibration](#calibration)
+for the full calibration procedure including the runtime auto-tracking
+behaviour.
 
 ### 4 - Run the node
 
@@ -1517,8 +1529,8 @@ settling_samples set to: _____
 ### Step 2 - Verify RDS Sync Detection, Bit Timing, and Crystal Calibration
 
 **Goal:** Confirm the sync chain produces clean SyncEvents at the RDS bit
-rate, that the M&M timing loop has sub-microsecond jitter, and that the
-CrystalCalibrator converges to a stable correction factor.
+rate, that the pilot-phase-derived bit timing has sub-microsecond jitter,
+and that the CrystalCalibrator converges to a stable correction factor.
 
 ```bash
 python3 scripts/verify_rds_sync.py --config config/node.yaml --duration 60
@@ -1541,8 +1553,8 @@ bit-interval jitter summary requires the full run.
 
 **Bit interval jitter - pass criteria (read from summary line):**
 - Mean interval: **~210.5 samples** at 250 kHz sync rate (= 250000 / 1187.5)
-- Stdev: **< 0.1 samples** (~ 0.4 usec).  Larger values indicate the M&M
-  timing loop is unstable -- usually caused by very weak RDS or strong
+- Stdev: **< 0.1 samples** (~ 0.4 usec).  Larger values indicate the pilot
+  phase lock is unstable -- usually caused by very weak RDS/pilot or strong
   multipath.
 
 **Tuning:**

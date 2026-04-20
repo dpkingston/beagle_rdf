@@ -1,6 +1,38 @@
 # TDOA Timing Accuracy Analysis
 
-_Last updated: 2026-03-19 (rev 2)_
+_Last substantive pipeline updates reflected here: 2026-04-19 (rev 3)._
+_Earlier sections retained for archaeological context; see the Status banner below._
+
+## Status as of 2026-04-19
+
+Several of the stages described below were replaced or substantially rewritten
+after the 2026-03-19 baseline:
+
+- **RDS sync extraction** -- replaced Mueller-Muller timing recovery + Costas
+  with **pilot-phase-derived bit boundaries**.  Cross-node onset spread
+  dropped from ~250 µs (M&M era) to ~105 ns (pilot-derived era) over the same
+  fixture.  See [docs/design/04-sync-signal.md](design/04-sync-signal.md).
+- **Target channel rate** -- raised from 62.5 kHz (/32 decimation) to ~250 kHz
+  (/8), so per-sample resolution is 4 µs instead of 16 µs.  Snippet size
+  raised from 1280 samples (20 ms) to 5120 samples (20.5 ms).
+- **Carrier timing** -- replaced envelope-xcorr / derivative-peak
+  `sample_index` with **server-side argmin(d2) knee finding** (Savgol second
+  derivative of the power envelope, default 360 µs window).  Nodes emit a
+  larger IQ snippet + `transition_start` / `transition_end` zone bounds; the
+  server does the Savgol work.  Real-corpus median |err| is ~59 µs on
+  onset pairs.
+- **Auto-tracked carrier thresholds** -- onset/offset now track the
+  noise-floor EMA continuously (`onset = floor + 12 dB`, `offset = floor + 6 dB`).
+  Static `onset_db`/`offset_db` only apply during noise-floor warmup.
+- **SyncCalibrator** -- new server-side per-pair grid calibration that
+  removes the inter-node pilot-phase grid offset before pilot-period
+  disambiguation.
+
+Stages 7-12 (delta computation, onset_time_ns, network, grouping,
+disambiguation, final TDOA) are substantively unchanged.  The improvement
+table at the end still captures the arc correctly, but the specific
+numbers in Stage 6 and the Measured-baseline section reflect the
+pre-2026-04 pipeline.
 
 This document traces every stage of the TDOA measurement pipeline, identifies variance
 contributions at each step, and summarises the current noise floor and improvement paths.
@@ -18,11 +50,14 @@ buf_wall_ns hardware timestamp (TCXO anchor)
         v
 Sync-domain decimation /8 -> 256 kHz
         v
-FM demodulation + 19 kHz pilot detection (sub-sample)
+FM demodulation + 19 kHz pilot phase lock (sub-sample)
         v
-Target-domain decimation /32 -> 64 kHz
+RDS bit boundaries derived from pilot phase
         v
-Carrier detection (onset/offset thresholds + derivative for snippets)
+Target-domain decimation /8 -> ~250 kHz
+        v
+Carrier detection (auto-tracked onset/offset from noise floor;
+                   IQ snippet + transition bounds emitted)
         v
 sync_delta_ns = (target_sample - sync_sample) / rate
         v
@@ -30,11 +65,13 @@ onset_time_ns = buf_wall_ns + within-buffer offset
         v
 HTTP POST to server
         v
+Server-side Savgol d2 knee finding + per-pair SyncCalibrator
+        v
 Event grouping by T_sync
         v
-Pilot disambiguation (n = round(raw_ns - onset_diff_ns) / 7 ms)
+Bit-period disambiguation (n = round((raw_ns + path_correction) / 842 us))
         v
-TDOA = sync_delta_A - sync_delta_B - nx7 ms + path_correction
+TDOA = sync_delta_A - sync_delta_B - n * 842 us + path_correction
 ```
 
 ---
@@ -109,8 +146,14 @@ Polyphase decimation filter. Integer sample domain. No jitter introduced.
 
 ### Stage 5: FM demodulation + 19 kHz pilot detection
 
-`FMPilotSyncDetector` (`pipeline/sync_detector.py`) processes **10 ms windows**
-(2 560 samples at 256 kHz):
+(Post-2026-04: the pilot detection below is still used; however bit
+boundaries are now derived from the unwrapped pilot phase at pilot/16 =
+1187.5 Hz rather than from a separate Mueller-Muller timing loop on the
+57 kHz RDS subcarrier.  `FMPilotSyncDetector` has been superseded by
+`RDSSyncDetector`.)
+
+`RDSSyncDetector` (`pipeline/rds_sync_detector.py`) processes **10 ms
+windows** (2 560 samples at 256 kHz):
 
 1. Narrow bandpass filter (+/-100 Hz around 19 kHz) isolates the pilot tone
 2. Cross-correlate with complex exponential template:
@@ -141,13 +184,22 @@ interval, timing residual < 7 ns.
 
 ### Stage 6: Carrier detection - onset and offset thresholds
 
-This is the **dominant noise source** in the current system.
+(Originally the **dominant noise source**.  The post-2026-04 pipeline
+addresses this at two layers: 1) the target rate was raised from 62.5 kHz
+to ~250 kHz, shrinking the per-window quantum from 1 ms to ~1 ms at the
+new rate but with 4x finer snippet resolution for the server-side knee
+finder; 2) `sample_index` is no longer used for per-event timing -- the
+server finds the PA ramp-to-plateau knee via `argmin` of the Savgol
+second derivative of the power envelope inside a reported transition
+zone.  The text below describes the original state machine; the
+quantisation it discusses still applies to the coarse sync_delta but is
+no longer the TDOA bottleneck.)
 
 #### Detection architecture
 
 `CarrierDetector` (`pipeline/carrier_detect.py`) operates on the target channel at
-**64 kHz** (/32 from 2 MSPS), using **64-sample averaging windows** (= 1 ms per
-window).
+**~250 kHz** (/8 from 2 MSPS, post-2026-04; was /32 -> 62.5 kHz previously),
+using **256-sample averaging windows** (= 1 ms per window).
 
 A **hysteresis state machine** with two thresholds prevents false triggers:
 

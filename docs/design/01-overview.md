@@ -12,8 +12,9 @@ Beagle is a Time Difference of Arrival (TDOA) radio direction finding system usi
 |                                                             |
 |  +----------+    +---------------------------------------+  |
 |  | SDR sync |--->| RDS bit-transition sync detector      |  |
-|  | (FM band)|    | (FM demod -> -57 kHz shift -> LPF     |  |
-|  +----------+    |  -> M&M timing -> Costas -> bit edge) |  |
+|  | (FM band)|    | (FM demod -> 19 kHz pilot phase lock  |  |
+|  +----------+    |  -> derive RDS bit boundaries         |  |
+|                  |  at pilot/16 = 1187.5 Hz)             |  |
 |                  +-----------------+---------------------+  |
 |                                    | SyncEvent               |
 |                                    v  (~1188/sec)            |
@@ -40,12 +41,13 @@ Beagle is a Time Difference of Arrival (TDOA) radio direction finding system usi
 ## Node Data Flow
 
 1. **SDR capture** - Two SDRs (or one shared dual-tuner like the RSPduo) capture IQ samples continuously
-2. **Decimation** - Band-pass filter + downsample to working rate (256 kHz sync, 64 kHz target)
+2. **Decimation** - Band-pass filter + downsample to working rate (250/256 kHz sync, ~250 kHz target)
 3. **FM demodulation** - Discriminator demod on the sync channel (FM station)
-4. **RDS sync extraction** - Frequency shift the demodulated audio by -57 kHz, lowpass, decimate, run a Mueller-Muller timing-recovery loop and Costas phase tracker, and emit a `SyncEvent` at every recovered RDS bit boundary (~1188/sec, exactly pilot/16 = 1187.5 Hz)
-5. **Carrier detection** - Power-threshold state machine on the target channel -> `CarrierOnset` / `CarrierOffset`
+4. **RDS sync extraction** - Lock onto the 19 kHz FM stereo pilot via a narrowband complex correlator, track the unwrapped pilot phase, and derive RDS bit boundaries at `pilot/16 = 1187.5 Hz` (phase-locked by the IEC 62106 / NRSC-4-B standard).  One `SyncEvent` is emitted per bit boundary (~842 µs apart).  An earlier Mueller-Muller timing-recovery + Costas chain was replaced by this pilot-phase derivation because M&M would not lock reliably on a typical FM signal.
+5. **Carrier detection** - Hysteresis state machine on the target channel with **auto-tracked thresholds**: the detector continuously measures the idle noise floor (EMA) and sets `onset = floor + 12 dB`, `offset = floor + 6 dB` so detection follows changing noise conditions without operator intervention.  Produces `CarrierOnset` / `CarrierOffset` events.
 6. **Delta computation** - `sync_delta_ns = (target_onset_sample - sync_event_sample) * 1e9 / sample_rate`
-7. **Event reporting** - Serialize `CarrierEvent` -> HTTP POST to aggregation server
+7. **Event reporting** - Serialize `CarrierEvent` (including the raw IQ snippet and reported `transition_start` / `transition_end` bounds for server-side knee finding) -> HTTP POST to aggregation server
+8. **Server-side TDOA refinement** - The server finds the ramp-to-plateau knee in each snippet via `argmin` of the Savitzky-Golay second derivative of the power envelope, and uses a `SyncCalibrator` to track and subtract the per-pair pilot-phase grid offset before pilot-period disambiguation.
 
 ## TDOA Measurement Model
 
