@@ -201,12 +201,24 @@ class CarrierDetector:
             50, int(round(5.0 / self._noise_floor_alpha))
         )
         # Minimum change to apply (dB) — avoids churning update_thresholds
-        # (and its info log) on every sub-dB EMA jitter.
+        # on every sub-dB EMA jitter.  Small adjustments still happen; only
+        # changes >= _auto_log_change_db are logged per-update.
         self._auto_min_change_db: float = 0.5
+        # Threshold (dB) above which a per-update debug->info escalation
+        # would be worth calling out; kept at debug below this to avoid
+        # filling logs with tiny tracking adjustments.
+        self._auto_log_change_db: float = 2.0
         # Maximum absolute threshold value (dBFS) for safety, so runaway
         # noise or strong interference doesn't push thresholds above where a
         # legitimate full-scale carrier would lie.
         self._auto_max_onset_db: float = -10.0
+        # Heartbeat: emit a single info log every N windows confirming that
+        # auto-tracking is active and reporting the current settings.
+        # 10 minutes at 64 kHz / 64-sample window = 600 000 windows.
+        self._auto_heartbeat_interval_windows: int = max(
+            1, int(round(600.0 * self._rate / self._window))
+        )
+        self._windows_since_auto_heartbeat: int = 0
         # freq_hop block-start onset suppression.
         # Counts below-threshold (idle) windows seen since the last
         # prime_state() call.  An onset is only emitted once this count
@@ -400,23 +412,42 @@ class CarrierDetector:
         ``_auto_max_onset_db`` for safety, and applies via
         ``update_thresholds`` if the change from the current settings is
         larger than ``_auto_min_change_db`` (to avoid churn on sub-dB EMA
-        jitter).
+        jitter).  Small adjustments (< ``_auto_log_change_db``) are applied
+        silently at debug level; larger drifts get an info log so operators
+        see unusual noise-floor movement.  A periodic info heartbeat
+        (every ~10 minutes, emitted from ``process()``) confirms that
+        auto-tracking is active regardless of adjustment size.
         """
         floor = self._noise_floor_db
         new_onset = min(floor + self._onset_margin_db, self._auto_max_onset_db)
         new_offset = min(floor + self._offset_margin_db,
                          new_onset - 1.0)  # preserve at least 1 dB hysteresis
-        if (abs(new_onset - self._onset_db) < self._auto_min_change_db
-                and abs(new_offset - self._offset_db) < self._auto_min_change_db):
+        max_change = max(abs(new_onset - self._onset_db),
+                         abs(new_offset - self._offset_db))
+        if max_change < self._auto_min_change_db:
             return
-        logger.info(
+        log_fn = logger.info if max_change >= self._auto_log_change_db else logger.debug
+        log_fn(
             "Auto-threshold update: noise_floor=%.1f dB -> onset=%.1f offset=%.1f "
-            "(was onset=%.1f offset=%.1f)",
+            "(was onset=%.1f offset=%.1f, max delta %.1f dB)",
             floor, new_onset, new_offset, self._onset_db, self._offset_db,
+            max_change,
         )
-        self.update_thresholds(
-            onset_threshold_db=new_onset,
-            offset_threshold_db=new_offset,
+        # Suppress update_thresholds' own info log for sub-threshold changes so
+        # small tracking adjustments don't fill operator logs.
+        prev_onset, prev_offset = self._onset_db, self._offset_db
+        if max_change < self._auto_log_change_db:
+            self._onset_db = new_onset
+            self._offset_db = new_offset
+        else:
+            self.update_thresholds(
+                onset_threshold_db=new_onset,
+                offset_threshold_db=new_offset,
+            )
+        # Verify monotonicity was preserved by the clamp above.
+        assert self._offset_db < self._onset_db, (
+            f"auto update broke hysteresis: onset={self._onset_db} "
+            f"offset={self._offset_db} (prev {prev_onset}/{prev_offset})"
         )
 
     # ------------------------------------------------------------------
@@ -468,6 +499,19 @@ class CarrierDetector:
                 self._windows_since_auto_update = 0
                 if self._auto_floor_updates >= self._auto_warmup_floor_updates:
                     self._apply_auto_thresholds()
+            # Heartbeat: confirm auto-tracking is alive even during long
+            # periods with sub-threshold adjustments (those log at debug).
+            if self._auto_threshold_margins:
+                self._windows_since_auto_heartbeat += 1
+                if self._windows_since_auto_heartbeat >= self._auto_heartbeat_interval_windows:
+                    self._windows_since_auto_heartbeat = 0
+                    if self._auto_floor_updates >= self._auto_warmup_floor_updates:
+                        logger.info(
+                            "Auto-threshold active: noise_floor=%.1f dB  "
+                            "onset=%.1f  offset=%.1f  (margins %.1f/%.1f dB)",
+                            self._noise_floor_db, self._onset_db, self._offset_db,
+                            self._onset_margin_db, self._offset_margin_db,
+                        )
 
             # --- Periodic power diagnostics ---
             pwr = float(powers_db[i])

@@ -608,6 +608,64 @@ class TestAutoThresholdMargins:
         # Offset keeps at least 1 dB hysteresis below onset
         assert det._offset_db < det._onset_db - 0.5
 
+    def test_auto_on_small_change_logs_at_debug(self, caplog) -> None:
+        """Sub-2-dB tracking adjustments must NOT emit info-level log spam."""
+        import logging
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+            auto_threshold_margins=True,
+            onset_margin_db=12.0, offset_margin_db=6.0,
+            auto_threshold_update_interval_s=0.01,
+        )
+        # Warm up with -60 dB so floor converges there and thresholds move
+        # to roughly -48/-54; after this, further sub-dB EMA wobble shouldn't
+        # produce info-level logs.
+        noise = self._noise_buffer(64_000, power_db=-60.0)
+        det.process(noise, start_sample=0)
+        caplog.clear()
+        caplog.set_level(logging.INFO, logger="beagle_node.pipeline.carrier_detect")
+        # Another second of the same noise.  Any adjustments should be
+        # < 2 dB and therefore debug-only, not info.
+        noise2 = self._noise_buffer(64_000, power_db=-60.0, seed=1)
+        det.process(noise2, start_sample=len(noise))
+        info_updates = [r for r in caplog.records
+                        if r.levelno == logging.INFO
+                        and "Auto-threshold update" in r.message]
+        assert not info_updates, (
+            f"Expected no info-level per-update logs for < 2 dB drifts, got: "
+            f"{[r.message for r in info_updates]}"
+        )
+
+    def test_auto_heartbeat_logged_periodically(self, caplog) -> None:
+        """Auto-tracking emits an info heartbeat at ~10 min cadence so
+        operators see the mechanism is alive even when no large adjustments
+        are being made."""
+        import logging
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+            auto_threshold_margins=True,
+            onset_margin_db=12.0, offset_margin_db=6.0,
+            auto_threshold_update_interval_s=0.05,
+        )
+        # Shorten the heartbeat interval for test speed (1000 windows).
+        det._auto_heartbeat_interval_windows = 1000
+        caplog.set_level(logging.INFO, logger="beagle_node.pipeline.carrier_detect")
+        # Process > 1000 windows of idle noise; warmup (500 updates) should
+        # finish first and then at least one heartbeat should fire.
+        noise = self._noise_buffer(64_000 * 3, power_db=-60.0)
+        det.process(noise, start_sample=0)
+        heartbeats = [r for r in caplog.records
+                      if r.levelno == logging.INFO
+                      and "Auto-threshold active" in r.message]
+        assert heartbeats, (
+            f"Expected at least one heartbeat log, got: "
+            f"{[r.message for r in caplog.records]}"
+        )
+
     def test_invalid_margins_rejected(self) -> None:
         with pytest.raises(ValueError):
             CarrierDetector(
