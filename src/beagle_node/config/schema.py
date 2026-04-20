@@ -327,11 +327,35 @@ class ReporterConfig(BaseModel):
     flush_interval_ms: float = 500.0
     max_queue_size: int = 1_000
     timeout_s: float = 10.0
+    max_events_per_window: int = 5
+    """
+    Maximum number of events the reporter will submit in any rolling
+    ``events_rate_window_s`` window.  Events beyond this cap are dropped at
+    ``submit()`` before reaching the server (which has its own, stricter
+    per-node rate limit).  Prevents a chattering carrier detector from
+    flooding the upstream.  Set to 0 to disable.  Default 5 / 5s.
+    """
+    events_rate_window_s: float = 5.0
+    """Sliding-window duration (seconds) for ``max_events_per_window``."""
 
     @model_validator(mode="after")
     def resolve_auth_token(self) -> "ReporterConfig":
         if not self.auth_token:
             self.auth_token = os.environ.get("TDOA_AUTH_TOKEN", "")
+        return self
+
+    @model_validator(mode="after")
+    def check_rate_limit(self) -> "ReporterConfig":
+        if self.max_events_per_window < 0:
+            raise ValueError(
+                f"reporter.max_events_per_window must be >= 0, "
+                f"got {self.max_events_per_window}"
+            )
+        if self.events_rate_window_s <= 0.0:
+            raise ValueError(
+                f"reporter.events_rate_window_s must be > 0, "
+                f"got {self.events_rate_window_s}"
+            )
         return self
 
 

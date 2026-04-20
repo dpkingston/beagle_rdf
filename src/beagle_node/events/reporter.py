@@ -19,6 +19,7 @@ a warning is logged - this prevents memory growth during extended outages.
 
 from __future__ import annotations
 
+import collections
 import logging
 import queue
 import threading
@@ -65,7 +66,17 @@ class EventReporter:
         timeout_s: float = 5.0,
         max_retries: int = 3,
         retry_base_s: float = 1.0,
+        max_events_per_window: int = 5,
+        events_rate_window_s: float = 5.0,
     ) -> None:
+        if max_events_per_window < 0:
+            raise ValueError(
+                f"max_events_per_window must be >= 0, got {max_events_per_window}"
+            )
+        if events_rate_window_s <= 0.0:
+            raise ValueError(
+                f"events_rate_window_s must be > 0, got {events_rate_window_s}"
+            )
         self._disabled = not server_url.strip()
         self._url = server_url.rstrip("/") + "/api/v1/events"
         self._headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -86,6 +97,15 @@ class EventReporter:
         self._disconnected: bool = False
         self._fail_count: int = 0
         self._last_reminder_ts: float = 0.0
+
+        # Local sliding-window rate limit on submit().  Prevents a chattering
+        # detector from flooding the server; the server has its own stricter
+        # rate limit but we should stop feeding the pipe far upstream of that.
+        self._max_events_per_window = int(max_events_per_window)
+        self._rate_window_s = float(events_rate_window_s)
+        self._submit_times: collections.deque[float] = collections.deque()
+        # Dedup state for drop logging: (last_log_monotonic, count_since_last).
+        self._drop_log_state: tuple[float, int] | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -135,9 +155,27 @@ class EventReporter:
         """
         Queue an event for delivery.  Non-blocking.
 
+        Applies a sliding-window rate limit first (max_events_per_window
+        events per events_rate_window_s seconds); excess events are dropped
+        with deduplicated logging.
+
         If the queue is full the oldest pending event is discarded to make
         room, rather than blocking the caller.
         """
+        # Sliding-window rate check.  0 = disabled.
+        if self._max_events_per_window > 0:
+            now = time.monotonic()
+            dq = self._submit_times
+            cutoff = now - self._rate_window_s
+            while dq and dq[0] < cutoff:
+                dq.popleft()
+            if len(dq) >= self._max_events_per_window:
+                with self._lock:
+                    self._events_dropped += 1
+                self._log_rate_drop(now)
+                return
+            dq.append(now)
+
         try:
             self._queue.put_nowait(event)
         except queue.Full:
@@ -153,6 +191,35 @@ class EventReporter:
                 self._queue.put_nowait(event)
             except queue.Full:
                 pass
+
+    def _log_rate_drop(self, now: float) -> None:
+        """Deduped WARNING for rate-limit drops.
+
+        On the first drop after a cooldown, log a WARNING.  Subsequent
+        drops within the same window are counted but not logged.  When the
+        next WARNING fires (at least ``events_rate_window_s`` later), it
+        reports how many were silently suppressed.
+        """
+        prev = self._drop_log_state
+        cooldown_expired = prev is None or (now - prev[0]) >= self._rate_window_s
+        if cooldown_expired:
+            suppressed = prev[1] if prev is not None else 0
+            if suppressed > 0:
+                logger.warning(
+                    "Reporter rate limit still active: %d more events dropped "
+                    "in the last %.1fs (limit %d/%.1fs)",
+                    suppressed, self._rate_window_s,
+                    self._max_events_per_window, self._rate_window_s,
+                )
+            else:
+                logger.warning(
+                    "Reporter rate limit: dropping event (exceeded %d events/%.1fs); "
+                    "further drops suppressed until cooldown",
+                    self._max_events_per_window, self._rate_window_s,
+                )
+            self._drop_log_state = (now, 0)
+        else:
+            self._drop_log_state = (prev[0], prev[1] + 1)
 
     def start(self) -> None:
         """Start the background delivery thread."""

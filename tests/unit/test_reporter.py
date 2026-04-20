@@ -43,6 +43,7 @@ def make_reporter(**kwargs) -> EventReporter:
         timeout_s=1.0,
         max_retries=2,
         retry_base_s=0.01,   # fast retries in tests
+        max_events_per_window=0,  # disable rate limit by default in tests
     )
     defaults.update(kwargs)
     return EventReporter(**defaults)
@@ -213,3 +214,71 @@ def test_heartbeat_disabled_reporter_does_nothing():
     r = make_reporter(server_url="")
     # Should return immediately without error
     r.post_heartbeat({"node_id": "n1"})
+
+
+# ---------------------------------------------------------------------------
+# Local sliding-window rate limit
+# ---------------------------------------------------------------------------
+
+def test_rate_limit_drops_excess_events():
+    """Submitting more than max_events_per_window events in the window
+    causes the excess to be dropped at submit(), not queued."""
+    r = make_reporter(max_events_per_window=3, events_rate_window_s=5.0,
+                      max_queue=100)
+    for _ in range(5):
+        r.submit(make_event())
+    assert r.queue_depth == 3
+    assert r.events_dropped == 2
+
+
+def test_rate_limit_zero_disables():
+    """max_events_per_window=0 means no rate limit, even with many submits."""
+    r = make_reporter(max_events_per_window=0, events_rate_window_s=5.0,
+                      max_queue=100)
+    for _ in range(10):
+        r.submit(make_event())
+    assert r.queue_depth == 10
+    assert r.events_dropped == 0
+
+
+def test_rate_limit_window_slides():
+    """After the window elapses, older timestamps expire and new submits
+    are accepted again."""
+    r = make_reporter(max_events_per_window=2, events_rate_window_s=0.1,
+                      max_queue=100)
+    for _ in range(3):
+        r.submit(make_event())
+    assert r.queue_depth == 2
+    assert r.events_dropped == 1
+    # Wait past the window
+    time.sleep(0.15)
+    r.submit(make_event())
+    r.submit(make_event())
+    # Two more accepted after the window slid
+    assert r.queue_depth == 4
+    assert r.events_dropped == 1
+
+
+def test_rate_limit_drop_logging_is_deduped(caplog):
+    """A sustained flood should log at most ~once per window, not once per drop."""
+    import logging
+    caplog.set_level(logging.WARNING, logger="beagle_node.events.reporter")
+    r = make_reporter(max_events_per_window=1, events_rate_window_s=5.0,
+                      max_queue=100)
+    r.submit(make_event())  # accepted
+    for _ in range(50):     # 50 drops in one window
+        r.submit(make_event())
+    assert r.events_dropped == 50
+    rate_msgs = [rec for rec in caplog.records
+                 if "Reporter rate limit" in rec.message]
+    # Exactly one WARNING for the whole burst (the others are suppressed
+    # until cooldown).
+    assert len(rate_msgs) == 1, f"Expected 1 rate-limit warning, got: {rate_msgs}"
+
+
+def test_rate_limit_invalid_values_rejected():
+    import pytest
+    with pytest.raises(ValueError):
+        make_reporter(max_events_per_window=-1)
+    with pytest.raises(ValueError):
+        make_reporter(events_rate_window_s=0.0)

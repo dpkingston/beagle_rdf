@@ -126,12 +126,19 @@ def main(argv: list[str] | None = None) -> None:
     _show_debug_access = args.log_level.upper() == "DEBUG"
 
     class _HeartbeatAccessFilter(logging.Filter):
-        _SUPPRESS = ("/api/v1/heartbeat",)
+        _SUPPRESS_PATHS = ("/api/v1/heartbeat",)
+        # Also suppress HTTP 429 access lines: every rate-limited POST would
+        # otherwise produce one access INFO in addition to the WARNING that
+        # beagle_server.api already emits.  The WARNING is deduped per-node
+        # per-window; keeping the access line would re-flood the log.
+        _SUPPRESS_STATUS = (' 429',)
 
         def filter(self, record: logging.LogRecord) -> bool:
             if not _show_debug_access:
                 msg = record.getMessage()
-                if any(path in msg for path in self._SUPPRESS):
+                if any(path in msg for path in self._SUPPRESS_PATHS):
+                    return False
+                if any(status in msg for status in self._SUPPRESS_STATUS):
                     return False
             return True
 

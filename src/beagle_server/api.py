@@ -125,6 +125,12 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     app.state.config_reload_status: dict[str, dict[str, Any]] = {}
     # Per-node sliding window rate limiter: node_id -> deque of timestamps
     app.state.node_event_times: dict[str, collections.deque] = {}
+    # Per-node rate-limit log cooldown: node_id -> (last_log_monotonic, count_since_last).
+    # When a node trips the rate limit we emit one WARNING that summarises the
+    # burst; further 429s from the same node are counted but not logged until
+    # the cooldown expires.  This prevents a misbehaving node from drowning
+    # the server log with one WARNING per rejected POST.
+    app.state.rate_limit_log_state: dict[str, tuple[float, int]] = {}
 
     # -------------------------------------------------------------------
     # Lifespan - open DB, wire pairer callback
@@ -933,11 +939,36 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             while dq and dq[0] < cutoff:
                 dq.popleft()
             if len(dq) >= max_events:
-                _logger.warning(
-                    "rate limit: node %s sent %d events in %.0fs (limit %d/%ds)",
-                    event.node_id, len(dq) + 1, window_s,
-                    max_events, int(window_s),
-                )
+                # De-duplicate rate-limit logging: emit one WARNING on the
+                # first rejection, then a summary "N more suppressed"
+                # WARNING when the cooldown expires.  Cooldown = one full
+                # window, so a sustained flood produces at most one line
+                # per window per node (vs one per rejected POST).
+                log_state = request.app.state.rate_limit_log_state
+                prev = log_state.get(event.node_id)
+                cooldown_expired = (prev is None
+                                    or (now - prev[0]) >= window_s)
+                if cooldown_expired:
+                    suppressed = prev[1] if prev is not None else 0
+                    if suppressed > 0:
+                        _logger.warning(
+                            "rate limit: node %s exceeded again "
+                            "(%d more rejections suppressed during last %ds); "
+                            "now %d events in %.0fs (limit %d/%ds)",
+                            event.node_id, suppressed, int(window_s),
+                            len(dq) + 1, window_s, max_events, int(window_s),
+                        )
+                    else:
+                        _logger.warning(
+                            "rate limit: node %s sent %d events in %.0fs "
+                            "(limit %d/%ds); further rejections suppressed "
+                            "until cooldown",
+                            event.node_id, len(dq) + 1, window_s,
+                            max_events, int(window_s),
+                        )
+                    log_state[event.node_id] = (now, 0)
+                else:
+                    log_state[event.node_id] = (prev[0], prev[1] + 1)
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail=(

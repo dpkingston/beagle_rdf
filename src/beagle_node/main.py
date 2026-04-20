@@ -200,6 +200,8 @@ def run(args: argparse.Namespace | None = None) -> int:
         auth_token=config.reporter.auth_token,
         max_queue=config.reporter.max_queue_size,
         timeout_s=config.reporter.timeout_s,
+        max_events_per_window=config.reporter.max_events_per_window,
+        events_rate_window_s=config.reporter.events_rate_window_s,
     )
     reporter.start()
 

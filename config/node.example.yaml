@@ -168,6 +168,12 @@ reporter:
   flush_interval_ms: 500
   max_queue_size: 1000
   timeout_s: 10.0
+  max_events_per_window: 5     # Local sliding-window rate limit on submit().
+  events_rate_window_s: 5.0    # 5 events per 5s sliding window by default.
+                               # Prevents a chattering detector from flooding
+                               # the server.  Set max_events_per_window: 0 to
+                               # disable (the server has its own, stricter
+                               # per-node rate limit).
 
 clock:
   source: "gps_1pps"           # gps_1pps | ntp | system
