@@ -235,22 +235,27 @@ def _find_knee_sub_sample(
     transition_start: int,
     transition_end: int,
     sample_rate_hz: float = 62_500.0,
-    savgol_window_us: float = 240.0,
+    savgol_window_us: float = 360.0,
     savgol_order: int = 3,
 ) -> tuple[float, float] | None:
     """
     Find the sub-sample position of the PA transition knee in a snippet.
 
-    Uses Savitzky-Golay filter to compute the first derivative of the power
-    envelope, then finds the argmin (offset) or argmax (onset) within the
-    reported transition region.  Parabolic interpolation on the d1 peak
-    gives sub-sample precision.
+    The knee is the corner where the ramp meets the plateau:
+      - ONSET  = top-of-rise   (ramp up  -> flat high plateau)
+      - OFFSET = start-of-fall (flat high plateau -> ramp down)
 
-    Savgol is preferred over box-smooth-then-np.diff because it fits a
-    polynomial across the window, preserving the *position* of sharp
-    features.  Empirically (harness across 30 paired real snippets, Magnolia
-    ground truth) this gets ~116 µs median TDOA error at 62.5 kHz vs ~198 µs
-    with box-16 smoothing + np.diff.
+    At either corner the power envelope has its most-negative second
+    derivative (strong concave-down curvature as the curve bends from
+    a non-zero slope back to approximately zero slope).  We therefore
+    locate the knee at argmin(d2(power)), restricted to the reported
+    transition region, with parabolic interpolation for sub-sample
+    precision.
+
+    d1 (argmax/argmin) finds the steepest-slope point in the middle of
+    the ramp — that moves with ramp shape and is not a physically
+    meaningful timestamp.  d2 is shape-invariant: a ramp-to-flat corner
+    produces an impulse in d2 at the corner regardless of ramp slope.
 
     The Savgol window is specified in TIME (µs) so it auto-adapts to the
     snippet sample rate — 240 µs ≈ 15 samples at 62.5 kHz and 60 samples
@@ -267,17 +272,17 @@ def _find_knee_sub_sample(
         Snippet sample rate.  Used to convert savgol_window_us to samples.
     savgol_window_us : float
         Savgol window width in microseconds.  Converted to an odd number of
-        samples at the snippet rate.  Default 240 µs is the empirical sweet
-        spot — narrower admits more noise (SNR drops); wider smears the knee
-        position.
+        samples at the snippet rate.  Narrower admits more noise (SNR drops);
+        wider smears the knee position across more samples.
     savgol_order : int
-        Savgol polynomial order.
+        Savgol polynomial order.  Must be >= 2 for a d2 output; 3 is a
+        good default (cubic fit gives smooth derivative).
 
     Returns
     -------
     (knee_position_samples, snr) or None.
       knee_position_samples : float sub-sample position in the snippet.
-      snr : peak |d1| within the transition region vs RMS of d1 outside it —
+      snr : |min(d2) in region| vs RMS of d2 outside the region —
             analogous to xcorr SNR, usable as a confidence gate.
     Returns None if the snippet is too short or the transition window is empty.
     """
@@ -290,25 +295,26 @@ def _find_knee_sub_sample(
     if n < window + 4:
         return None
     power = iq.real.astype(np.float64) ** 2 + iq.imag.astype(np.float64) ** 2
-    d1 = savgol_filter(power, window, savgol_order, deriv=1, mode="nearest")
+    # Second derivative: the ramp-to-plateau corner has strongly negative
+    # curvature regardless of whether the ramp was rising (onset) or the
+    # plateau precedes a fall (offset), so argmin(d2) localises the knee
+    # for both event types.
+    d2 = savgol_filter(power, window, savgol_order, deriv=2, mode="nearest")
 
     lo = max(2, int(transition_start))
-    hi = min(len(d1) - 2, int(transition_end))
+    hi = min(len(d2) - 2, int(transition_end))
     if hi <= lo + 2:
         return None
 
-    d1_region = d1[lo:hi]
-    if event_type == "onset":
-        peak_rel = int(np.argmax(d1_region))
-    else:
-        peak_rel = int(np.argmin(d1_region))
+    d2_region = d2[lo:hi]
+    peak_rel = int(np.argmin(d2_region))
     peak_idx = peak_rel + lo
-    peak_val = float(d1[peak_idx])
+    peak_val = float(d2[peak_idx])
 
-    # Sub-sample parabolic interpolation on the d1 peak.
-    if 0 < peak_idx < len(d1) - 1:
-        y0 = float(d1[peak_idx - 1])
-        y2 = float(d1[peak_idx + 1])
+    # Sub-sample parabolic interpolation on the d2 minimum.
+    if 0 < peak_idx < len(d2) - 1:
+        y0 = float(d2[peak_idx - 1])
+        y2 = float(d2[peak_idx + 1])
         denom = y0 - 2.0 * peak_val + y2
         sub = 0.0 if denom == 0.0 else 0.5 * (y0 - y2) / denom
         sub = float(np.clip(sub, -0.5, 0.5))
@@ -316,10 +322,10 @@ def _find_knee_sub_sample(
     else:
         knee_pos = float(peak_idx)
 
-    # SNR: peak |d1| vs RMS of d1 samples OUTSIDE the transition region.
-    mask = np.ones(len(d1), dtype=bool)
+    # SNR: |peak d2| vs RMS of d2 samples OUTSIDE the transition region.
+    mask = np.ones(len(d2), dtype=bool)
     mask[max(0, peak_idx - 3) : peak_idx + 4] = False
-    noise = d1[mask]
+    noise = d2[mask]
     if len(noise) > 0:
         noise_rms = float(np.sqrt(np.mean(noise ** 2)))
     else:
@@ -555,7 +561,7 @@ def compute_tdoa_s(
     min_xcorr_snr: float = 1.3,
     xcorr_target_rate_hz: float | None = None,
     max_xcorr_baseline_km: float = 100.0,
-    savgol_window_us: float = 240.0,
+    savgol_window_us: float = 360.0,
 ) -> float | None:
     """
     Compute the corrected TDOA between two events in **seconds**.
@@ -569,8 +575,9 @@ def compute_tdoa_s(
     1. Compute raw_ns = sync_delta_a - sync_delta_b (sync-to-detection diff)
     2. Apply per-pair grid calibration (removes node-pair pilot phase offset)
     3. Find the PA transition *knee* in each snippet using Savgol-smoothed
-       first derivative (argmin for offset, argmax for onset) within the
-       reported transition region.  Gives sub-sample position.
+       second derivative (argmin(d2) for both onset top-of-rise and offset
+       start-of-fall) within the reported transition region.  Gives
+       sub-sample position.
     4. Compute knee_adj_ns = (knee_a - det_a)/rate_a - (knee_b - det_b)/rate_b,
        which shifts each node's reference from detection to the physical PA
        edge.  Detection position comes from ``transition_start``/``transition_end``.
@@ -592,7 +599,7 @@ def compute_tdoa_s(
         transition_start, transition_end.
         onset_time_ns (optional): wall-clock time of the carrier edge in ns.
     min_xcorr_snr : float
-        Minimum knee-finder SNR (peak |d1| vs out-of-region RMS of d1) to
+        Minimum knee-finder SNR (|min(d2)| vs out-of-region RMS of d2) to
         accept the result.  Pairs failing this gate are dropped.
         Retains the old parameter name for config compatibility.
     xcorr_target_rate_hz : float or None
@@ -698,16 +705,16 @@ def compute_tdoa_s(
     # its *detection point* (threshold crossing), which varies per event
     # by hundreds of µs due to noise floor and instantaneous signal level.
     #
-    # We refine to the *knee* — the steepest point of the PA transition
-    # — using Savitzky-Golay first-derivative on each snippet's power
-    # envelope.  The knee is a physical property of the transmitter PA,
-    # observed at essentially the same instant by all receivers (minus
-    # propagation delay), so (knee_A - knee_B) gives the true inter-node
-    # TDOA modulo bit periods.
-    #
-    # Empirically this gives ~116 µs per-event median error at 62.5 kHz
-    # (vs ~172 µs with the older inter-node xcorr on d2-of-envelope).
-    # Quick scaling check suggests this drops to ~30-60 µs at 250 kHz.
+    # We refine to the *knee* — the corner where the PA ramp meets the
+    # plateau (top-of-rise for onset, start-of-fall for offset) — using
+    # argmin of the Savitzky-Golay second derivative of each snippet's
+    # power envelope.  At the knee the power curve has its most-negative
+    # curvature regardless of ramp slope, so the feature is shape-
+    # invariant across nodes with different AGC / ramp characteristics.
+    # The knee is a physical property of the transmission observed at
+    # essentially the same instant by all receivers (minus propagation
+    # delay), so (knee_A - knee_B) gives the true inter-node TDOA modulo
+    # bit periods.
     iq_a_b64 = event_a.get("iq_snippet_b64", "")
     iq_b_b64 = event_b.get("iq_snippet_b64", "")
     if not iq_a_b64 or not iq_b_b64:

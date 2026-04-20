@@ -191,7 +191,7 @@ def solve_fix(
     search_radius_km: float = 100.0,
     min_xcorr_snr: float = 1.3,
     max_xcorr_baseline_km: float = 50.0,
-    savgol_window_us: float = 240.0,
+    savgol_window_us: float = 360.0,
 ) -> FixResult | None:
     """
     Compute a transmitter fix from a list of events from the same transmission.

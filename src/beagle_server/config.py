@@ -141,23 +141,24 @@ class SolverConfig(BaseModel):
     A good fix with 3 GPS-disciplined nodes will have residual < 500 ns.
     NTP-clocked nodes may see 5000-50000 ns residuals; tune empirically.
     """
-    min_xcorr_snr: float = 1.5
+    min_xcorr_snr: float = 0.5
     """
-    Minimum SNR of the knee-finder's d1 peak (peak magnitude vs RMS of d1
-    samples outside the peak region) to accept a TDOA measurement.  Pairs
+    Minimum SNR of the knee-finder's d2 peak (|min(d2)| in the transition
+    region vs RMS of d2 outside it) to accept a TDOA measurement.  Pairs
     failing this gate are rejected (no fallback — coarse sync_delta has
     ~200 µs noise and is not useful).
 
-    Counter-intuitive finding: wider Savgol windows give better per-event
-    precision but LOWER SNR (the d1 peak flattens as the smoothing spreads
-    it across more samples, while AM-modulation noise on the plateau only
-    partially attenuates).  At 240 µs window and 250 kHz snippet rate,
-    real PA transitions typically give SNR 2-4 (vs 5-10 at 62.5 kHz with
-    the same window in samples).  A 1.5 gate accepts those while still
-    rejecting noise-only snippets (SNR < 1.2).
+    Empirical finding on the Magnolia corpus (2026-04-19, 250 kHz, d2
+    knee finder, 360 µs Savgol): tightening the gate kicks out good
+    pairs.  d2-SNR is not a clean predictor of knee accuracy because d2
+    RMS depends on the ramp slope itself, not just on noise.
+      SNR >= 0.5  -> 19/23 pairs,  59 µs median error   <-- default
+      SNR >= 1.0  -> 17/23 pairs,  82 µs median error
+      SNR >= 1.5  -> 12/23 pairs,  91 µs median error
+      SNR >= 2.0  ->  8/23 pairs, 114 µs median error
 
-    Recommended: 10.0 (cleanly separates real transitions from noise).
-    0.0 = always accept (use only for debugging).
+    Name retained for config compatibility; the gate now applies to d2
+    rather than xcorr peak.  0.0 = always accept (debugging only).
     """
     max_xcorr_baseline_km: float = 50.0
     """
@@ -172,18 +173,24 @@ class SolverConfig(BaseModel):
     always side-lobe noise artefacts from the power-envelope correlation.
     0.0 = disable the check (accept all xcorr lags regardless of magnitude).
     """
-    savgol_window_us: float = 240.0
+    savgol_window_us: float = 360.0
     """
     Savitzky-Golay smoothing window for knee finding, in microseconds.
     The server converts this to an odd number of samples at each snippet's
     rate, so the same value works across mixed-hardware deployments.
 
-    240 µs is the empirical sweet spot:
-      - Narrower → more AM noise admitted, SNR drops below the gate.
-      - Wider → smears the knee position, reduces per-event precision.
+    360 µs is empirically the best for d2-based knee finding (argmin of
+    second derivative locates the ramp/plateau corner):
+      - Narrower → d2 dominated by thermal-noise-on-plateau fluctuations.
+      - Wider    → the corner shape is smeared beyond the Savgol support,
+        d2 minimum flattens and localisation degrades.
 
-    At 62.5 kHz this gives a 15-sample Savgol kernel (historical default).
-    At 250 kHz it gives a 61-sample kernel — same effective bandwidth.
+    At 62.5 kHz this gives a 23-sample Savgol kernel; at 250 kHz it gives
+    a 91-sample kernel — same effective smoothing bandwidth in time.
+    Real-corpus performance (Magnolia, 2026-04-19):
+      240 µs  -> 181 µs median |err|
+      360 µs  ->  59 µs median |err|   <-- default
+      720 µs  -> 105 µs median |err|
     """
     sync_diag: bool = False
     """
