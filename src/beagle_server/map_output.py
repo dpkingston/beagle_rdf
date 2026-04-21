@@ -1999,7 +1999,7 @@ window._tdoaSaveConfig = function (nodeId) {
 /* Revert in-memory config JSON to whatever the node's config file specifies.
    Discards any GUI/PATCH edits the file has not picked up.  Admin-only.   */
 window._tdoaRevertConfig = function (nodeId) {
-    if (!confirm('Revert ' + nodeId + "'s config to the file on disk?\n\n" +
+    if (!confirm('Revert ' + nodeId + "'s config to the file on disk?\\n\\n" +
                  'Any in-memory JSON edits that the file does not currently ' +
                  'contain will be lost.')) {
         return;
