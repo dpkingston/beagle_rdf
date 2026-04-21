@@ -237,7 +237,7 @@ def _find_knee_sub_sample(
     sample_rate_hz: float = 62_500.0,
     savgol_window_us: float = 360.0,
     savgol_order: int = 3,
-    first_peak_sig_ratio: float = 0.25,
+    first_peak_sig_ratio: float = 0.50,
 ) -> tuple[float, float] | None:
     """
     Find the sub-sample position of the PA transition knee in a snippet.
@@ -301,11 +301,21 @@ def _find_knee_sub_sample(
         good default.
     first_peak_sig_ratio : float
         Magnitude threshold for a d2 local minimum to count as "the knee",
-        expressed as a fraction of the region's largest |min(d2)|.  0.25
-        (default) is empirically the sweet spot on the Magnolia fixture.
-        Lower = admit smaller noise peaks as candidates; higher = risk
-        skipping past the real knee.  0.0 disables the significance gate
-        entirely (any local d2 minimum qualifies).
+        expressed as a fraction of the region's largest |min(d2)|.
+
+        Empirically scanned on two Magnolia corpora (2026-04-20 16:30 and
+        2026-04-21 09:10): on both, increasing the ratio from 0.25 to
+        0.50 cut algorithm-addressable per-pair bias roughly in half
+        (~50 µs -> ~25 µs on clean pairs) with no yield loss on the
+        newer corpus and a modest drop from 52% -> 42% on the older one.
+        0.50 is now the default.
+
+        Lower = admit smaller d2 dips as knee candidates, which keeps
+        more events but risks latching onto plateau noise (the failure
+        mode the first-peak algorithm was introduced to avoid).
+        Higher = reject more events but retain only strong-structure
+        knees.  0.0 disables the gate entirely (any d2 local minimum
+        qualifies).
 
     Returns
     -------
