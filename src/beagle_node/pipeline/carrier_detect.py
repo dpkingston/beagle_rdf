@@ -170,6 +170,16 @@ class CarrierDetector:
 
         self._state: _State = "idle"
         self._cumulative_sample: int = 0   # total samples seen so far
+
+        # Invariant guard: track the last-emitted event type so we can
+        # refuse to emit two events of the same type back-to-back.  This
+        # catches any silent state transition path (cancel_pending,
+        # prime_state, reset, and any future additions) that moves the
+        # state machine between "idle" and "active" without emitting the
+        # corresponding boundary event, which would otherwise allow a
+        # spurious duplicate onset or offset on the next threshold
+        # crossing.  All event-emission sites go through ``_emit``.
+        self._last_emitted_type: str | None = None
         # Exponential moving average of power during idle (no-carrier) windows.
         # Initialised to offset_threshold_db (a reasonable upper bound on noise).
         # Alpha = 0.01 -> time constant ~ 100 windows (~ 100 ms at 64 kHz / 64-sample window).
@@ -451,6 +461,40 @@ class CarrierDetector:
         )
 
     # ------------------------------------------------------------------
+    # Event emission invariant guard
+    # ------------------------------------------------------------------
+
+    def _emit(
+        self, events_list: list,
+        ev: "CarrierOnset | CarrierOffset",
+    ) -> None:
+        """Append ``ev`` to ``events_list`` iff it doesn't duplicate the
+        previously-emitted event's type.
+
+        A CarrierDetector is a two-state machine (idle <-> active).  By
+        definition each edge event marks a transition between those
+        states, so the emitted type MUST alternate onset/offset/onset/...
+        If we ever try to emit two onsets (or two offsets) back-to-back
+        it means some path silently transitioned the state without
+        emitting the corresponding boundary event — the main culprits
+        are ``cancel_pending`` on discontinuity, ``prime_state`` at
+        block start, and ``reset``.  This wrapper suppresses the
+        duplicate and logs a warning so the root cause is visible.
+        """
+        etype = "onset" if isinstance(ev, CarrierOnset) else "offset"
+        if etype == self._last_emitted_type:
+            logger.warning(
+                "State-machine invariant violated: %s immediately after "
+                "%s at sample %d; suppressing duplicate.  This indicates "
+                "a silent state transition (discontinuity, prime_state, "
+                "or reset) bypassed the boundary event.",
+                etype, self._last_emitted_type, ev.sample_index,
+            )
+            return
+        events_list.append(ev)
+        self._last_emitted_type = etype
+
+    # ------------------------------------------------------------------
     # Processing
     # ------------------------------------------------------------------
 
@@ -625,7 +669,7 @@ class CarrierDetector:
                                     "power_db": round(ev.power_db, 1),
                                 }),
                             )
-                    events.append(ev)
+                    self._emit(events, ev)
                     logger.debug(
                         "Deferred %s emitted at window %d (pre=%d post=%d snippet=%d bytes)",
                         type(ev).__name__, self._windows_since_prime,
@@ -658,7 +702,7 @@ class CarrierDetector:
                                 _pre = list(self._iq_ring)
                                 _pre_start = window_sample - self._window // 2 - (len(_pre) - 1) * self._window
                                 _off_bytes, _cut, _t_s, _t_e = self._encode_offset_snippet(_pre)
-                                events.append(CarrierOffset(
+                                self._emit(events, CarrierOffset(
                                     sample_index=_pre_start + _cut,
                                     power_db=power_db,
                                     iq_snippet=_off_bytes,
@@ -684,7 +728,7 @@ class CarrierDetector:
                                 self._pending_post_remaining = self._post_windows
                             else:
                                 opp_snippet = self._encode_snippet()
-                                events.append(CarrierOnset(
+                                self._emit(events, CarrierOnset(
                                     sample_index=window_sample,
                                     power_db=power_db,
                                     noise_floor_db=self._noise_floor_db,
@@ -749,7 +793,7 @@ class CarrierDetector:
                                 self._pending_post_remaining = self._post_windows
                             else:
                                 snippet = self._encode_snippet()
-                                events.append(CarrierOnset(
+                                self._emit(events, CarrierOnset(
                                     sample_index=window_sample,
                                     power_db=power_db,
                                     noise_floor_db=self._noise_floor_db,
@@ -821,7 +865,7 @@ class CarrierDetector:
                             _pre = list(self._iq_ring)
                             _pre_start = window_sample - self._window // 2 - (len(_pre) - 1) * self._window
                             _off_bytes, _cut, _t_s, _t_e = self._encode_offset_snippet(_pre)
-                            events.append(CarrierOffset(
+                            self._emit(events, CarrierOffset(
                                 sample_index=_pre_start + _cut,
                                 power_db=power_db,
                                 iq_snippet=_off_bytes,
@@ -899,7 +943,7 @@ class CarrierDetector:
                             "partial_flush": True,
                         }),
                     )
-            events.append(ev)
+            self._emit(events, ev)
             logger.debug(
                 "Partial flush %s at end of block (had %d/%d post windows)",
                 type(ev).__name__,
@@ -1153,6 +1197,10 @@ class CarrierDetector:
         # before a new onset is emitted.  Catches carriers in the PLL
         # settling zone that slip past the first-window power check above.
         self._idle_window_count = 0
+        # prime_state may flip state between active <-> idle without
+        # emitting a boundary event.  Reset the emission invariant
+        # tracker so the next event of either type is accepted.
+        self._last_emitted_type = None
         # Arm snippet transition validation for the upcoming process() call.
         self._validate_snippets = True
 
@@ -1179,6 +1227,23 @@ class CarrierDetector:
         self._state = "idle"
         self._pre_onset_count = 0
         self._pre_offset_count = 0
+        # Require a fresh idle period before accepting a new onset.
+        # Without this reset a carrier that persists past the discontinuity
+        # (very likely, since we were in "active" state pre-gap) would
+        # immediately re-trigger an onset on the next window, producing a
+        # "mid-transmission" event whose snippet has no real noise->carrier
+        # ramp for the server's knee finder to work with.  The
+        # _min_idle_for_onset guard in the FSM then suppresses the first
+        # onset attempt until enough genuinely-idle windows have passed;
+        # when the carrier really drops, a clean offset fires and
+        # subsequent onsets are real detections.
+        self._idle_window_count = 0
+        # The invariant-guard helper (_emit) assumes we know what the
+        # previously emitted type was; after a forced state flip that
+        # skipped a boundary event, the "last emitted" no longer matches
+        # the physical state.  Reset to None so the very next emit of
+        # either type is accepted.
+        self._last_emitted_type = None
 
     def reset(self) -> None:
         """Reset detector state."""
@@ -1195,3 +1260,6 @@ class CarrierDetector:
         self._idle_window_count = 1000   # normal reset: first block works like any other
         self._primed_active = False
         self._active_window_count = 0
+        # Reset the emission invariant tracker: next event of either type
+        # is accepted (see _emit docstring).
+        self._last_emitted_type = None

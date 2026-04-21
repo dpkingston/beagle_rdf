@@ -681,3 +681,146 @@ class TestAutoThresholdMargins:
                 window_samples=64,
                 auto_threshold_update_interval_s=0.0,
             )
+
+
+class TestEmissionInvariant:
+    """The CarrierDetector is a two-state machine; emitted events MUST
+    alternate onset/offset/onset/...  A path that silently flips state
+    without emitting the boundary event (cancel_pending on
+    discontinuity; prime_state; reset) is a bug, and the invariant
+    guard in ``_emit`` suppresses the duplicate so it doesn't pollute
+    downstream TDOA measurements."""
+
+    def _silent_onset(self, det: CarrierDetector, sample: int) -> CarrierOnset:
+        return CarrierOnset(
+            sample_index=sample, power_db=-20.0,
+            noise_floor_db=-60.0, iq_snippet=b"\x00" * 16,
+        )
+
+    def _silent_offset(self, det: CarrierDetector, sample: int) -> CarrierOffset:
+        return CarrierOffset(
+            sample_index=sample, power_db=-40.0,
+            iq_snippet=b"\x00" * 16,
+        )
+
+    def test_duplicate_onset_suppressed_with_warning(self, caplog) -> None:
+        import logging
+        caplog.set_level(logging.WARNING,
+                         logger="beagle_node.pipeline.carrier_detect")
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+        )
+        events: list = []
+        det._emit(events, self._silent_onset(det, 1000))
+        det._emit(events, self._silent_onset(det, 2000))  # duplicate -> dropped
+        assert len(events) == 1
+        assert isinstance(events[0], CarrierOnset)
+        assert any("invariant violated" in r.message for r in caplog.records)
+
+    def test_duplicate_offset_suppressed_with_warning(self, caplog) -> None:
+        import logging
+        caplog.set_level(logging.WARNING,
+                         logger="beagle_node.pipeline.carrier_detect")
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+        )
+        # Seed with an onset so the next offset is accepted; then a
+        # second offset should trip the invariant.
+        events: list = []
+        det._emit(events, self._silent_onset(det, 1000))
+        det._emit(events, self._silent_offset(det, 2000))
+        det._emit(events, self._silent_offset(det, 3000))  # duplicate -> dropped
+        assert len(events) == 2
+        assert isinstance(events[0], CarrierOnset)
+        assert isinstance(events[1], CarrierOffset)
+        assert any("invariant violated" in r.message for r in caplog.records)
+
+    def test_alternating_events_all_accepted(self) -> None:
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+        )
+        events: list = []
+        det._emit(events, self._silent_onset(det, 1000))
+        det._emit(events, self._silent_offset(det, 2000))
+        det._emit(events, self._silent_onset(det, 3000))
+        det._emit(events, self._silent_offset(det, 4000))
+        assert len(events) == 4
+
+    def test_cancel_pending_resets_idle_window_count(self) -> None:
+        """After a discontinuity, _idle_window_count must be 0 so the
+        _min_idle_for_onset guard prevents a spurious onset from a
+        persisting carrier."""
+        det = CarrierDetector(
+            sample_rate_hz=64_000.0,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64,
+        )
+        det._idle_window_count = 500   # simulate "saw plenty of idle"
+        det._state = "active"           # pre-gap carrier
+        det.cancel_pending()
+        assert det._idle_window_count == 0, (
+            "cancel_pending must force the idle counter to 0 so a "
+            "persisting carrier cannot immediately re-trigger onset"
+        )
+        assert det._state == "idle"
+        assert det._last_emitted_type is None, (
+            "cancel_pending must reset _last_emitted_type so the next "
+            "emission of either type is accepted"
+        )
+
+    def test_cancel_pending_prevents_duplicate_onset_on_persisting_carrier(
+        self,
+    ) -> None:
+        """End-to-end: carrier on, fire onset, discontinuity, carrier still
+        on, subsequent processing must NOT emit a second onset."""
+        rng = np.random.default_rng(0)
+        fs = 64_000
+        # Build a signal: 0.1 s of silence, 2 s of strong carrier.
+        n_silence = fs // 10
+        n_carrier = fs * 2
+        silence = (rng.standard_normal(n_silence).astype(np.float32) +
+                   1j * rng.standard_normal(n_silence).astype(np.float32)) * 0.01
+        carrier_level = 1.0
+        carrier = (np.ones(n_carrier, dtype=np.complex64) * carrier_level
+                   + 0.01 * (rng.standard_normal(n_carrier)
+                             + 1j * rng.standard_normal(n_carrier))).astype(np.complex64)
+        full_signal = np.concatenate([silence.astype(np.complex64), carrier])
+
+        det = CarrierDetector(
+            sample_rate_hz=fs,
+            onset_threshold_db=-30.0, offset_threshold_db=-40.0,
+            window_samples=64, min_hold_windows=1, min_release_windows=2,
+            auto_threshold_margins=False,
+        )
+        # Feed the whole signal -> one onset.
+        events = det.process(full_signal, start_sample=0)
+        onsets = [e for e in events if isinstance(e, CarrierOnset)]
+        offsets = [e for e in events if isinstance(e, CarrierOffset)]
+        assert len(onsets) == 1
+        assert len(offsets) == 0  # carrier still on at end
+
+        # Simulate a discontinuity mid-transmission.
+        det.cancel_pending()
+
+        # Continue with another 1 s of same strong carrier.
+        more_carrier = (np.ones(fs, dtype=np.complex64) * carrier_level
+                        + 0.01 * (rng.standard_normal(fs).astype(np.float32)
+                                  + 1j * rng.standard_normal(fs).astype(np.float32))).astype(np.complex64)
+        events_post = det.process(more_carrier, start_sample=len(full_signal))
+
+        onsets_post = [e for e in events_post if isinstance(e, CarrierOnset)]
+        # The _min_idle_for_onset guard (default 2) must suppress a new
+        # onset because no idle windows were observed post-discontinuity.
+        assert len(onsets_post) == 0, (
+            f"Expected no spurious onsets from persisting carrier after "
+            f"cancel_pending, got {len(onsets_post)}.  Snippet-start of "
+            f"those bogus onsets would be mid-plateau instead of noise "
+            f"floor - exactly the pathological pattern observed on "
+            f"dpk-tdoa2."
+        )
