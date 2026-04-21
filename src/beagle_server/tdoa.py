@@ -237,6 +237,7 @@ def _find_knee_sub_sample(
     sample_rate_hz: float = 62_500.0,
     savgol_window_us: float = 360.0,
     savgol_order: int = 3,
+    first_peak_sig_ratio: float = 0.25,
 ) -> tuple[float, float] | None:
     """
     Find the sub-sample position of the PA transition knee in a snippet.
@@ -247,19 +248,42 @@ def _find_knee_sub_sample(
 
     At either corner the power envelope has its most-negative second
     derivative (strong concave-down curvature as the curve bends from
-    a non-zero slope back to approximately zero slope).  We therefore
-    locate the knee at argmin(d2(power)), restricted to the reported
-    transition region, with parabolic interpolation for sub-sample
-    precision.
+    a non-zero slope back to approximately zero slope).
 
-    d1 (argmax/argmin) finds the steepest-slope point in the middle of
-    the ramp — that moves with ramp shape and is not a physically
-    meaningful timestamp.  d2 is shape-invariant: a ramp-to-flat corner
-    produces an impulse in d2 at the corner regardless of ramp slope.
+    Algorithm (first-peak-after-ramp):
+
+    1. Seed with the ramp's middle: argmax(d1) for onset (steepest rise)
+       or argmin(d1) for offset (steepest fall).  This is a robust
+       locator of "where the ramp is happening" even under noise.
+    2. Walk into the plateau side of the seed (forward for onset,
+       backward for offset) and return the **first** local minimum of
+       d2 whose magnitude exceeds ``first_peak_sig_ratio`` times the
+       region's largest |min(d2)|.
+
+    Why this avoids the bias the earlier global-argmin algorithm had:
+    d2 has a strong negative peak at the real knee, but same-sign noise
+    in the plateau can produce smaller negative peaks further out along
+    the flat.  A pure argmin(d2) over the whole reported transition
+    region can latch onto one of those plateau-noise peaks, biasing the
+    TDOA and producing per-node systematic offsets because each node's
+    RF chain shapes the leading/trailing edge differently.  By stopping
+    at the first significant valley beyond the ramp's middle we lock to
+    the structural corner — the knee — rather than whichever plateau
+    noise later happens to dip deepest.
+
+    If no qualifying local minimum exists on the plateau side (e.g.
+    the corner fell outside the reported transition region, or the
+    signal has no structural d2 peak at all) we return None so the pair
+    is rejected.  Falling back to global argmin(d2) here would
+    reintroduce exactly the plateau-noise bias this algorithm exists
+    to avoid.
+
+    Parabolic interpolation on the d2 minimum gives sub-sample precision.
 
     The Savgol window is specified in TIME (µs) so it auto-adapts to the
-    snippet sample rate — 240 µs ≈ 15 samples at 62.5 kHz and 60 samples
-    at 250 kHz, preserving the same smoothing bandwidth regardless of rate.
+    snippet sample rate — 360 µs is ~23 samples at 62.5 kHz and ~90
+    samples at 250 kHz, preserving the same smoothing bandwidth across
+    rates.
 
     Parameters
     ----------
@@ -271,44 +295,82 @@ def _find_knee_sub_sample(
     sample_rate_hz : float
         Snippet sample rate.  Used to convert savgol_window_us to samples.
     savgol_window_us : float
-        Savgol window width in microseconds.  Converted to an odd number of
-        samples at the snippet rate.  Narrower admits more noise (SNR drops);
-        wider smears the knee position across more samples.
+        Savgol window width in microseconds.
     savgol_order : int
         Savgol polynomial order.  Must be >= 2 for a d2 output; 3 is a
-        good default (cubic fit gives smooth derivative).
+        good default.
+    first_peak_sig_ratio : float
+        Magnitude threshold for a d2 local minimum to count as "the knee",
+        expressed as a fraction of the region's largest |min(d2)|.  0.25
+        (default) is empirically the sweet spot on the Magnolia fixture.
+        Lower = admit smaller noise peaks as candidates; higher = risk
+        skipping past the real knee.  0.0 disables the significance gate
+        entirely (any local d2 minimum qualifies).
 
     Returns
     -------
     (knee_position_samples, snr) or None.
       knee_position_samples : float sub-sample position in the snippet.
-      snr : |min(d2) in region| vs RMS of d2 outside the region —
-            analogous to xcorr SNR, usable as a confidence gate.
+      snr : |d2 at knee| vs RMS of d2 samples outside the peak region,
+            analogous to xcorr SNR and usable as a confidence gate.
     Returns None if the snippet is too short or the transition window is empty.
     """
     # Convert the desired smoothing duration (µs) to an odd sample count.
-    # Savgol requires window > order and an odd length.
-    window = max(savgol_order + 2, int(round(savgol_window_us * sample_rate_hz / 1e6)))
+    window = max(savgol_order + 2,
+                 int(round(savgol_window_us * sample_rate_hz / 1e6)))
     if window % 2 == 0:
         window += 1
     n = len(iq)
     if n < window + 4:
         return None
     power = iq.real.astype(np.float64) ** 2 + iq.imag.astype(np.float64) ** 2
-    # Second derivative: the ramp-to-plateau corner has strongly negative
-    # curvature regardless of whether the ramp was rising (onset) or the
-    # plateau precedes a fall (offset), so argmin(d2) localises the knee
-    # for both event types.
+    d1 = savgol_filter(power, window, savgol_order, deriv=1, mode="nearest")
     d2 = savgol_filter(power, window, savgol_order, deriv=2, mode="nearest")
 
     lo = max(2, int(transition_start))
     hi = min(len(d2) - 2, int(transition_end))
-    if hi <= lo + 2:
+    if hi <= lo + 4:
         return None
 
+    d1_region = d1[lo:hi]
     d2_region = d2[lo:hi]
-    peak_rel = int(np.argmin(d2_region))
-    peak_idx = peak_rel + lo
+
+    # Significance threshold relative to the strongest d2 negative peak
+    # anywhere in the region (not just the plateau side).  If the region
+    # has no negative d2 at all there is no corner to find.
+    d2_min_mag = float(-d2_region.min())
+    if d2_min_mag <= 0.0:
+        return None
+    threshold = first_peak_sig_ratio * d2_min_mag
+
+    if event_type == "onset":
+        ramp_mid = int(np.argmax(d1_region))
+        # Walk forward from ramp_mid into the plateau side; take the
+        # first local d2 minimum past the significance threshold.
+        knee_rel: int | None = None
+        for k in range(ramp_mid + 1, len(d2_region) - 1):
+            if (d2_region[k] < -threshold
+                    and d2_region[k] <= d2_region[k - 1]
+                    and d2_region[k] <= d2_region[k + 1]):
+                knee_rel = k
+                break
+    else:
+        ramp_mid = int(np.argmin(d1_region))
+        knee_rel = None
+        for k in range(ramp_mid - 1, 0, -1):
+            if (d2_region[k] < -threshold
+                    and d2_region[k] <= d2_region[k - 1]
+                    and d2_region[k] <= d2_region[k + 1]):
+                knee_rel = k
+                break
+
+    # No qualifying local minimum → reject.  A global-argmin fallback
+    # would reintroduce the plateau-noise bias this algorithm exists to
+    # avoid.
+    if knee_rel is None:
+        return None
+
+    peak_idx = knee_rel + lo
     peak_val = float(d2[peak_idx])
 
     # Sub-sample parabolic interpolation on the d2 minimum.
@@ -322,14 +384,11 @@ def _find_knee_sub_sample(
     else:
         knee_pos = float(peak_idx)
 
-    # SNR: |peak d2| vs RMS of d2 samples OUTSIDE the transition region.
+    # SNR: |peak d2| vs RMS of d2 samples OUTSIDE the peak neighbourhood.
     mask = np.ones(len(d2), dtype=bool)
-    mask[max(0, peak_idx - 3) : peak_idx + 4] = False
+    mask[max(0, peak_idx - 3): peak_idx + 4] = False
     noise = d2[mask]
-    if len(noise) > 0:
-        noise_rms = float(np.sqrt(np.mean(noise ** 2)))
-    else:
-        noise_rms = 1e-30
+    noise_rms = float(np.sqrt(np.mean(noise ** 2))) if len(noise) else 1e-30
     snr = abs(peak_val) / max(noise_rms, 1e-30)
 
     return knee_pos, snr
@@ -558,7 +617,7 @@ _C_M_PER_S: float = 299_792_458.0
 def compute_tdoa_s(
     event_a: dict[str, Any],
     event_b: dict[str, Any],
-    min_xcorr_snr: float = 1.3,
+    min_xcorr_snr: float = 0.5,
     xcorr_target_rate_hz: float | None = None,
     max_xcorr_baseline_km: float = 100.0,
     savgol_window_us: float = 360.0,
@@ -575,9 +634,11 @@ def compute_tdoa_s(
     1. Compute raw_ns = sync_delta_a - sync_delta_b (sync-to-detection diff)
     2. Apply per-pair grid calibration (removes node-pair pilot phase offset)
     3. Find the PA transition *knee* in each snippet using Savgol-smoothed
-       second derivative (argmin(d2) for both onset top-of-rise and offset
-       start-of-fall) within the reported transition region.  Gives
-       sub-sample position.
+       second derivative: seed with argmax(d1) for onset / argmin(d1) for
+       offset and take the first significant local d2 minimum on the
+       plateau side.  Avoids mistaking plateau-noise d2 minima for the
+       real corner, which previously drove per-node systematic bias.
+       Gives sub-sample position.
     4. Compute knee_adj_ns = (knee_a - det_a)/rate_a - (knee_b - det_b)/rate_b,
        which shifts each node's reference from detection to the physical PA
        edge.  Detection position comes from ``transition_start``/``transition_end``.

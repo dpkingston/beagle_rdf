@@ -4,6 +4,7 @@
 
 **Outstanding**
 - [Remote node restart trigger](#remote-node-restart-trigger)
+- [SDR hang detection and auto-restart](#sdr-hang-detection-and-auto-restart)
 - [Onset xcorr: investigate alternative detection methods](#onset-xcorr-investigate-alternative-detection-methods)
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
 - [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
@@ -68,6 +69,48 @@ The node's config poll thread checks this flag; when set, it logs a message
 and calls `sys.exit(75)`. The server UI gets a "Restart" button per node
 (with armed confirmation). The flag is cleared after one delivery so the
 node doesn't restart in a loop.
+
+---
+
+### SDR hang detection and auto-restart
+
+Observed 2026-04-21: dpk-tdoa1 produced zero events for 12+ hours while the
+node process was alive, the heartbeat kept ticking, and the noise-floor
+value was still being reported.  The SDR receive path was hung but nothing
+detected it; a manual power cycle cleared the state.
+
+**Sanity checks worth implementing (cheapest first):**
+
+1. **Node-side SDR-buffer watchdog.**  In `sdr/rspduo.py` / `sdr/soapy.py`,
+   track the wall-clock time of the last `readStream` that returned real
+   samples.  If > 10 s with no buffer, log ERROR and `os._exit(75)` so
+   systemd restarts.  The existing rspduo code restarts the stream on
+   TIMEOUT storms but doesn't escalate to a process exit when restarts
+   stop recovering.
+
+2. **Node-side sample-counter progress watchdog.**  The pipeline already
+   keeps `cumulative_sample`.  Compare its value once per second; if it
+   hasn't advanced by ~sample_rate_hz between consecutive ticks the SDR
+   is hung even if `readStream` is still "returning" (e.g. returning
+   stale buffers).  Same `os._exit(75)` remediation.
+
+3. **Server-side peer-aware silence detector.**  For each node track
+   events/minute.  If node A has had zero events for X minutes while at
+   least one peer sharing a channel has been producing events, surface
+   a "suspected silent" state in the GUI and optionally trigger the
+   remote-restart path (see "Remote node restart trigger" above).
+
+4. **Noise-floor stationarity check.**  A healthy SDR has small EMA
+   jitter on the noise floor.  `std(noise_floor_db over last 5 min) <
+   0.01 dB` is a good indicator that power samples aren't advancing.
+
+5. **Heartbeat payload additions.**  Include `last_event_wall_ns` and a
+   `sample_counter_advanced_last_10s` boolean so the server can compute
+   per-node health without polling each `/health` endpoint.
+
+**Suggested first pass:** (1)+(2) as a single node-side change with a new
+`utils/watchdog.py` module + tests; (3) as a server-side follow-up that
+reuses the existing per-minute event-rate metric.
 
 ---
 

@@ -198,9 +198,13 @@ def _make_event_payload(
         "node_software_version": "test",
         "iq_snippet_b64": _make_node_snippet_b64(sync_delta),
         "channel_sample_rate_hz": float(_SNIPPET_RATE_HZ),
-        # Give the knee finder a narrow window around the known ramp position.
-        "transition_start": _BASE_ONSET - 30,
-        "transition_end": _BASE_ONSET + _RAMP_SAMPLES + 30,
+        # Give the knee finder enough room around the ramp for its Savgol
+        # d2 search to resolve the ramp-to-plateau corner.  Real nodes
+        # ship zones ~5x the Savgol window width at the snippet rate;
+        # match that ratio here (360 µs = 360 samples at 1 MHz, so give
+        # ~2000 samples of zone).
+        "transition_start": max(0, _BASE_ONSET - 1000),
+        "transition_end": _BASE_ONSET + _RAMP_SAMPLES + 1000,
     }
 
 

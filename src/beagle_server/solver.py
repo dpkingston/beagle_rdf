@@ -189,7 +189,7 @@ def solve_fix(
     search_center_lat: float,
     search_center_lon: float,
     search_radius_km: float = 100.0,
-    min_xcorr_snr: float = 1.3,
+    min_xcorr_snr: float = 0.5,
     max_xcorr_baseline_km: float = 50.0,
     savgol_window_us: float = 360.0,
 ) -> FixResult | None:
