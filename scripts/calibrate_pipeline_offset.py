@@ -84,7 +84,7 @@ def _load_events(
     try:
         placeholders = ",".join("?" * len(node_ids))
         query = (
-            "SELECT node_id, sync_delta_ns, sync_tx_lat, sync_tx_lon, "
+            "SELECT node_id, sync_to_snippet_start_ns, sync_tx_lat, sync_tx_lon, "
             "node_lat, node_lon, event_type, onset_time_ns, channel_hz, raw_json "
             f"FROM events WHERE node_id IN ({placeholders})"
         )
@@ -168,8 +168,8 @@ def _match_events(
 
 def _compute_sync_delta_tdoa_ns(ev_a: dict, ev_b: dict) -> float | None:
     """Compute sync_delta TDOA with path correction and pilot disambiguation."""
-    delta_a = ev_a.get("sync_delta_ns")
-    delta_b = ev_b.get("sync_delta_ns")
+    delta_a = ev_a.get("sync_to_snippet_start_ns")
+    delta_b = ev_b.get("sync_to_snippet_start_ns")
     if delta_a is None or delta_b is None:
         return None
 
@@ -309,7 +309,7 @@ def calibrate(
                     "status": "ok",
                     "xcorr_ns": xcorr_lag_ns,
                     "xcorr_snr": xcorr_snr,
-                    "sync_delta_ns": sd_tdoa_ns,
+                    "sync_to_snippet_start_ns": sd_tdoa_ns,
                     "offset_err_ns": offset_err,
                 })
 
@@ -408,7 +408,7 @@ def main() -> None:
             if d["status"] == "ok":
                 print(f"  {d['partner']:20s} {d['type']:8s} {d['status']:18s} "
                       f"{d['xcorr_ns']:+10.0f} {d['xcorr_snr']:6.2f} "
-                      f"{d['sync_delta_ns']:+10.0f} {d['offset_err_ns']:+10.0f}")
+                      f"{d['sync_to_snippet_start_ns']:+10.0f} {d['offset_err_ns']:+10.0f}")
             else:
                 extra = ""
                 if "xcorr_snr" in d:

@@ -13,7 +13,7 @@ Each simulated transmission follows the realistic PTT pattern:
 
 Both onset and offset events are computed from the same underlying geometry.
 The offset events reuse each node's onset event_id (server upsert/amend path)
-but carry a fresh sync_delta_ns measurement and event_type="offset".
+but carry a fresh sync_to_snippet_start_ns measurement and event_type="offset".
 
 After the server's delivery buffer fires for each phase, the script polls for
 the computed fix and reports position accuracy vs. the known true location.
@@ -32,7 +32,7 @@ Usage
 
 Error model physics
 -------------------
-sync_delta_ns has two independent error sources:
+sync_to_snippet_start_ns has two independent error sources:
 
 1. FM pilot timing noise (pilot_sigma):
    Jitter in the FM stereo pilot cross-correlation peak that anchors each
@@ -48,7 +48,7 @@ Position error (rough) ~= TDOA_error * c / sin(convergence_angle).
 
 onset_time_ns error (NTP clock drift):
   Affects ONLY the T_sync grouping window, not TDOA.
-  T_sync = onset_time_ns - sync_delta_ns - dist(sync_tx, node) / c
+  T_sync = onset_time_ns - sync_to_snippet_start_ns - dist(sync_tx, node) / c
   NTP noise appears equally on both terms, leaving TDOA unaffected.
   The server's correlation_window_s (default 0.2 s) must exceed 2* ntp_sigma.
 """
@@ -120,11 +120,11 @@ class ErrorModel:
 
     pilot_timing_sigma_ns : float
         1-sigma FM pilot cross-correlation timing noise (nanoseconds).
-        Added to sync_delta_ns.  See module docstring for presets.
+        Added to sync_to_snippet_start_ns.  See module docstring for presets.
 
     edge_timing_sigma_ns : float
         1-sigma carrier edge detection jitter (nanoseconds).
-        Independent noise on sync_delta_ns representing uncertainty in
+        Independent noise on sync_to_snippet_start_ns representing uncertainty in
         identifying the exact onset/offset sample.  Combined with
         pilot_timing_sigma_ns: total sync_delta sigma = sqrt(pilot^2 + edge^2).
         Defaults calibrated so pair TDOA sigma ~ 2 usec (colocated test).
@@ -132,7 +132,7 @@ class ErrorModel:
     ntp_sigma_ns : float
         1-sigma NTP clock error on onset_time_ns (nanoseconds).
         Affects T_sync grouping ONLY. Does not affect TDOA accuracy
-        because sync_delta_ns is a within-node sample-clock measurement.
+        because sync_to_snippet_start_ns is a within-node sample-clock measurement.
 
     corr_peak_mean / corr_peak_sigma : float
         FM pilot cross-correlation quality (0-1). Events below the
@@ -273,7 +273,7 @@ def _make_event_payload(
     event_id: str,
     event_type: str,
     onset_time_ns: int,
-    sync_delta_ns: int,
+    sync_to_snippet_start_ns: int,
     corr_peak: float,
 ) -> dict[str, Any]:
     return {
@@ -285,7 +285,7 @@ def _make_event_payload(
             "longitude_deg": node.longitude_deg,
         },
         "channel_frequency_hz": target.channel_hz,
-        "sync_delta_ns": sync_delta_ns,
+        "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
         "sync_transmitter": {
             "station_id": sync_tx.station_id,
             "frequency_hz": sync_tx.frequency_hz,
@@ -348,7 +348,7 @@ def synthesise_onset(
         pilot_noise_ns = int(rng.gauss(0.0, error_model.pilot_timing_sigma_ns))
         edge_noise_ns  = int(rng.gauss(0.0, error_model.edge_timing_sigma_ns))
         onset_time_ns  = true_onset_time_ns + ntp_noise_ns
-        sync_delta_ns  = true_sync_delta_ns + pilot_noise_ns + edge_noise_ns
+        sync_to_snippet_start_ns  = true_sync_delta_ns + pilot_noise_ns + edge_noise_ns
 
         corr_peak = max(0.15, min(1.0, rng.gauss(
             error_model.corr_peak_mean, error_model.corr_peak_sigma,
@@ -365,7 +365,7 @@ def synthesise_onset(
                 event_id=str(uuid.uuid4()),
                 event_type="onset",
                 onset_time_ns=onset_time_ns,
-                sync_delta_ns=sync_delta_ns,
+                sync_to_snippet_start_ns=sync_to_snippet_start_ns,
                 corr_peak=corr_peak,
             ),
             true_sync_delta_ns=true_sync_delta_ns,
@@ -395,7 +395,7 @@ def synthesise_offset(
     server's upsert/amend path.  event_type is "offset" and onset_time_ns is
     set to the offset wall-clock time so the server can compute duration.
 
-    sync_delta_ns is a fresh FM pilot measurement at the offset edge; it has
+    sync_to_snippet_start_ns is a fresh FM pilot measurement at the offset edge; it has
     the same geometric value as the onset (same positions) plus independent
     pilot timing noise.
     """
@@ -423,7 +423,7 @@ def synthesise_offset(
         pilot_noise_ns = int(rng.gauss(0.0, error_model.pilot_timing_sigma_ns))
         edge_noise_ns  = int(rng.gauss(0.0, error_model.edge_timing_sigma_ns))
         onset_time_ns  = true_offset_time_ns + ntp_noise_ns  # offset time reported as onset_time_ns
-        sync_delta_ns  = true_sync_delta_ns + pilot_noise_ns + edge_noise_ns
+        sync_to_snippet_start_ns  = true_sync_delta_ns + pilot_noise_ns + edge_noise_ns
 
         corr_peak = max(0.15, min(1.0, rng.gauss(
             error_model.corr_peak_mean, error_model.corr_peak_sigma,
@@ -440,7 +440,7 @@ def synthesise_offset(
                 event_id=onset_ne.event_payload["event_id"],  # REUSE onset event_id
                 event_type="offset",
                 onset_time_ns=onset_time_ns,
-                sync_delta_ns=sync_delta_ns,
+                sync_to_snippet_start_ns=sync_to_snippet_start_ns,
                 corr_peak=corr_peak,
             ),
             true_sync_delta_ns=true_sync_delta_ns,

@@ -296,7 +296,7 @@ def evaluate_pair(pair, strategy: Strategy, sign: int):
     a, b = a[:L], b[:L]
     lag_ns, snr = xcorr_lag_ns(a, b, rate)
 
-    raw_ns = float(ea["sync_delta_ns"]) - float(eb["sync_delta_ns"])
+    raw_ns = float(ea["sync_to_snippet_start_ns"]) - float(eb["sync_to_snippet_start_ns"])
     path_ns = sync_path_corr_ns(ea, eb)
     combined = raw_ns + sign * lag_ns + path_ns
     n = round(combined / T_SYNC_NS)

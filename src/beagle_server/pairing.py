@@ -8,13 +8,14 @@ Events are grouped by:
 
     base_key  = (channel_hz_bucket, event_type, sync_tx_id)
 
-    t_sync_ns = onset_time_ns - sync_delta_ns - dist(sync_tx, node) / c * 1e9
+    t_sync_ns = onset_time_ns - sync_to_snippet_start_ns - dist(sync_tx, node) / c * 1e9
 
 T_sync_ns is the estimated absolute wall-clock time of the FM sync event
 **at the transmitter site**.  Because every node hears the same FM pilot
 broadcast at the same physical instant, T_sync_ns should agree across all
 nodes to within the inter-node NTP/GPS clock error (typically < 50 ms for
-internet NTP).
+internet NTP).  Both terms subtracted are on the node's local sample clock
+and reference the first sample of the shipped IQ snippet.
 
 Group membership
 ----------------
@@ -211,7 +212,8 @@ class EventPairer:
         Estimate the absolute wall-clock time of the FM sync event at the
         transmitter, in nanoseconds since the Unix epoch.
 
-            T_sync = onset_time_ns - (sync_delta_ns mod T_sync) - dist(sync_tx, node) / c
+            T_sync = onset_time_ns - (sync_to_snippet_start_ns mod T_sync)
+                     - dist(sync_tx, node) / c
 
         The modular reduction ensures that nodes with different observation
         windows (e.g. freq_hop seeing sync pulses only during the sync block)
@@ -223,7 +225,7 @@ class EventPairer:
             event["node_lat"],    event["node_lon"],
         )
         propagation_ns = int(dist_m / _C_M_S * 1e9)
-        sync_delta_reduced = event["sync_delta_ns"] % int(_T_SYNC_NS)
+        sync_delta_reduced = event["sync_to_snippet_start_ns"] % int(_T_SYNC_NS)
         return event["onset_time_ns"] - sync_delta_reduced - propagation_ns
 
     def _base_key(self, event: dict[str, Any]) -> tuple:

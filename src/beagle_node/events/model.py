@@ -2,9 +2,10 @@
 """
 CarrierEvent - the primary data unit produced by a Beagle node.
 
-One CarrierEvent is produced per carrier onset detection. The `sync_delta_ns`
-field is the precise TDOA measurement. The `onset_time_ns` is a rough absolute
-timestamp used by the aggregation server only for event association across nodes.
+One CarrierEvent is produced per carrier onset detection. The primary timing
+value is ``sync_to_snippet_start_ns``: nanoseconds from the matched sync event
+to the first sample of the shipped IQ snippet. ``onset_time_ns`` is a rough
+absolute wall-clock timestamp used only for event association across nodes.
 """
 
 from __future__ import annotations
@@ -46,14 +47,19 @@ class CarrierEvent(BaseModel):
     (falling edge). The server must pair like event_types across nodes --
     onset-with-onset and offset-with-offset - to compute valid TDOA.
 
-    The server uses `sync_delta_ns` (together with the sync transmitter
-    location) to compute TDOA between nodes. It uses `onset_time_ns` only
-    to match events from different nodes that heard the same transmission.
+    The server uses ``sync_to_snippet_start_ns`` plus the server-side knee
+    position within the IQ snippet to compute sync -> knee time per node,
+    then differences across nodes to compute TDOA (with sync-path-geometry
+    correction).
 
-    Schema version '1.1': added event_type field; fixed sdr_mode values.
+    Schema version '1.5': renamed ``sync_delta_ns`` -> ``sync_to_snippet_start_ns``.
+    The timing reference in the stream is now the first sample of the shipped
+    IQ snippet (a stable sample boundary) instead of the transient detection
+    point.  Detection point is still carried via ``transition_start`` /
+    ``transition_end`` as the knee-search hint.
     """
 
-    schema_version: str = "1.4"
+    schema_version: str = "1.5"
 
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     """Node-local unique identifier. Stable across amendment POSTs."""
@@ -66,15 +72,18 @@ class CarrierEvent(BaseModel):
     """Nominal center frequency of the LMR channel (Hz)."""
 
     # THE primary TDOA measurement -----------------------------------------
-    sync_delta_ns: int
+    sync_to_snippet_start_ns: int
     """
-    Time difference: carrier edge minus the preceding sync event,
-    measured on the same local sample clock (nanoseconds).
+    Time difference: first sample of the shipped IQ snippet minus the
+    preceding sync event, measured on the same local sample clock
+    (nanoseconds).  Node-side precision target: < 2 µs.
 
-    The aggregation server computes TDOA between nodes as:
-        TDOA_AB = sync_delta_A - sync_delta_B
-    then applies a path-delay correction using sync_transmitter coordinates.
-    The server MUST pair events of the same event_type across nodes.
+    Server computes the full sync-to-knee time as
+        sync_to_knee_ns = sync_to_snippet_start_ns
+                        + knee_position_in_snippet * 1e9 / corrected_rate
+    where ``knee_position_in_snippet`` is found by the server's knee-finder
+    using ``transition_start``/``transition_end`` as a search hint.
+    Cross-node TDOA = (sync_to_knee_A - sync_to_knee_B) + sync-path correction.
     """
     sync_transmitter: SyncTransmitter
     sdr_mode: Literal["freq_hop", "two_sdr", "single_sdr", "rspduo"]
@@ -136,7 +145,7 @@ class CarrierEvent(BaseModel):
     """Absolute sample index of the matched SyncEvent (sync-decimated space)."""
 
     sync_delta_samples: float = 0.0
-    """Raw sample difference (carrier - sync) before ns conversion."""
+    """Raw sample difference (snippet_start_sample - sync_sample) before ns conversion."""
 
     sync_sample_rate_correction: float = 1.0
     """Crystal calibration factor applied to sample rate for ns conversion."""

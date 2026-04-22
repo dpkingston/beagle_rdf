@@ -77,7 +77,7 @@ def _make_event_dict(fx: dict, side: str, include_onset_time: bool = False) -> d
     """
     d = {
         "node_id": fx["node_id_a"] if side == "a" else fx["node_id_b"],
-        "sync_delta_ns": fx["sync_delta_ns_a"] if side == "a" else fx["sync_delta_ns_b"],
+        "sync_to_snippet_start_ns": fx["sync_delta_ns_a"] if side == "a" else fx["sync_delta_ns_b"],
         "node_lat": fx["node_lat_a"] if side == "a" else fx["node_lat_b"],
         "node_lon": fx["node_lon_a"] if side == "a" else fx["node_lon_b"],
         "sync_tx_lat": fx["sync_tx_lat"],

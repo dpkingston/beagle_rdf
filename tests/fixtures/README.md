@@ -14,7 +14,7 @@ python3 scripts/export_fixtures.py \
     --output tests/fixtures/real_event_pairs.json
 ```
 
-Each record contains both nodes' `sync_delta_ns`, `onset_time_ns`, location
+Each record contains both nodes' `sync_to_snippet_start_ns`, `onset_time_ns`, location
 fields, and base64-encoded IQ snippets for one matched event pair. Only pairs
 where both nodes report a snippet are included.
 
@@ -44,7 +44,7 @@ across all three nodes simultaneously.
   snippet (commits `08eb316`, `5c2740d`, `e33e100`)
 - auto-tracked carrier thresholds (commits `abda5ef`, `4d0617b`)
 
-The pairwise `sync_delta_ns` differences in this capture have ~245 µs
+The pairwise `sync_to_snippet_start_ns` differences in this capture have ~245 µs
 standard deviation -- not because of an unidentified bug, but because the
 nodes were running code that has since been fixed.  The IQ snippets are
 also captured at 62.5 kHz / 1280 samples, so server-side knee finding

@@ -19,7 +19,7 @@ def make_event(**kwargs) -> CarrierEvent:
         node_id="test-node",
         node_location=NodeLocation(latitude_deg=47.6, longitude_deg=-122.3),
         channel_frequency_hz=155_100_000.0,
-        sync_delta_ns=5_000_000,
+        sync_to_snippet_start_ns=5_000_000,
         sync_transmitter=SyncTransmitter(
             station_id="KISW_99.9",
             frequency_hz=99_900_000.0,

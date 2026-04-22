@@ -289,7 +289,7 @@ def _iq_to_b64(iq: np.ndarray) -> str:
     return base64.b64encode(raw.tobytes()).decode()
 
 
-def _make_event(node_lat, node_lon, sync_delta_ns, sync_tx_lat=47.6, sync_tx_lon=-122.3,
+def _make_event(node_lat, node_lon, sync_to_snippet_start_ns, sync_tx_lat=47.6, sync_tx_lon=-122.3,
                 event_type="onset", transition_start=None, transition_end=None):
     # Defaults match typical production values for 1280-sample snippets at 62.5 kHz:
     #   onset:  detection at 3/4 minus 5 windows (~1152 samples back to 640)
@@ -302,7 +302,7 @@ def _make_event(node_lat, node_lon, sync_delta_ns, sync_tx_lat=47.6, sync_tx_lon
         transition_end = 1152 if event_type == "onset" else 960
     return {
         "node_id": "test",
-        "sync_delta_ns": sync_delta_ns,
+        "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
         "sync_tx_lat": sync_tx_lat,
         "sync_tx_lon": sync_tx_lon,
         "node_lat": node_lat,
@@ -316,7 +316,7 @@ def _make_event(node_lat, node_lon, sync_delta_ns, sync_tx_lat=47.6, sync_tx_lon
 
 
 def _make_event_with_snippet(
-    node_lat, node_lon, sync_delta_ns, snippet_b64,
+    node_lat, node_lon, sync_to_snippet_start_ns, snippet_b64,
     sample_rate_hz=64_000.0, node_id="test", event_type="onset",
     transition_start=None, transition_end=None,
 ):
@@ -329,7 +329,7 @@ def _make_event_with_snippet(
         transition_end = 832 if event_type == "onset" else 576
     return {
         "node_id": node_id,
-        "sync_delta_ns": sync_delta_ns,
+        "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
         "sync_tx_lat": 47.6,
         "sync_tx_lon": -122.3,
         "node_lat": node_lat,
@@ -413,8 +413,8 @@ def test_compute_tdoa_known_geometry():
 
 def test_compute_tdoa_antisymmetric():
     """compute_tdoa_s(A, B) == -compute_tdoa_s(B, A) via sync_delta fallback."""
-    ev_a = _make_event(47.65, -122.31, sync_delta_ns=5000)
-    ev_b = _make_event(47.72, -122.28, sync_delta_ns=0)
+    ev_a = _make_event(47.65, -122.31, sync_to_snippet_start_ns=5000)
+    ev_b = _make_event(47.72, -122.28, sync_to_snippet_start_ns=0)
     t_ab = compute_tdoa_s(ev_a, ev_b)
     t_ba = compute_tdoa_s(ev_b, ev_a)
     assert t_ab is not None and t_ba is not None
@@ -450,11 +450,11 @@ def test_compute_tdoa_xcorr_method_rejects_low_snr():
     noise_a = (rng.standard_normal(5120) + 1j * rng.standard_normal(5120)).astype(np.complex64)
     noise_b = (rng.standard_normal(5120) + 1j * rng.standard_normal(5120)).astype(np.complex64)
     ev_a = _make_event_with_snippet(
-        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(noise_a),
+        47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(noise_a),
         node_id="node-a", transition_start=2460, transition_end=2580,
     )
     ev_b = _make_event_with_snippet(
-        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(noise_b),
+        47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(noise_b),
         node_id="node-b", transition_start=2460, transition_end=2580,
     )
     # Very high gate — even if xcorr returns a finite SNR on pure noise, it
@@ -466,9 +466,9 @@ def test_compute_tdoa_xcorr_method_rejects_low_snr():
 def test_compute_tdoa_invalid_method_raises():
     """Unknown tdoa_method value raises ValueError."""
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=0, snr_db=30.0)
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0,
+    ev_a = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=0,
                                      snippet_b64=_iq_to_b64(iq_a), node_id="a")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0,
+    ev_b = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=0,
                                      snippet_b64=_iq_to_b64(iq_b), node_id="b")
     with pytest.raises(ValueError, match="tdoa_method"):
         compute_tdoa_s(ev_a, ev_b, tdoa_method="nonsense")
@@ -496,9 +496,9 @@ def test_compute_tdoa_xcorr_refines_sync_delta():
     # sync_delta encodes 100 µs coarse difference in detection times
     sd_a = 100_100_000
     sd_b = 100_000_000
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=sd_a, snippet_b64=_iq_to_b64(iq_a),
+    ev_a = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=sd_a, snippet_b64=_iq_to_b64(iq_a),
                                      sample_rate_hz=fs, node_id="node-a")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=sd_b, snippet_b64=_iq_to_b64(iq_b),
+    ev_b = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=sd_b, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b")
     tdoa = compute_tdoa_s(ev_a, ev_b, tdoa_method="knee")
     assert tdoa is not None
@@ -557,7 +557,7 @@ def test_compute_tdoa_non_colocated_uses_sync_delta_geometry():
     # ramp.  Constrain the knee search to a tight window around the ramp
     # so argmax(d1) doesn't latch onto AM-envelope variation in the plateau.
     ev_a = _make_event_with_snippet(
-        node_a_pos[0], node_a_pos[1], sync_delta_ns=sd_a,
+        node_a_pos[0], node_a_pos[1], sync_to_snippet_start_ns=sd_a,
         snippet_b64=_iq_to_b64(iq_a), node_id="node-a",
         transition_start=300, transition_end=400,
     )
@@ -565,7 +565,7 @@ def test_compute_tdoa_non_colocated_uses_sync_delta_geometry():
     ev_a["sync_tx_lon"] = sync_tx[1]
 
     ev_b = _make_event_with_snippet(
-        node_b_pos[0], node_b_pos[1], sync_delta_ns=sd_b,
+        node_b_pos[0], node_b_pos[1], sync_to_snippet_start_ns=sd_b,
         snippet_b64=_iq_to_b64(iq_b), node_id="node-b",
         transition_start=300, transition_end=400,
     )
@@ -595,9 +595,9 @@ def test_compute_tdoa_rejects_low_snr_snippets():
     # Pure white noise - no PA transition -> d2 xcorr SNR ~4-5
     noise_a = (rng.standard_normal(1280) + 1j * rng.standard_normal(1280)).astype(np.complex64)
     noise_b = (rng.standard_normal(1280) + 1j * rng.standard_normal(1280)).astype(np.complex64)
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=5_000,
+    ev_a = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=5_000,
                                      snippet_b64=_iq_to_b64(noise_a), node_id="node-a")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0,
+    ev_b = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=0,
                                      snippet_b64=_iq_to_b64(noise_b), node_id="node-b")
     # SNR threshold 10.0 rejects noise-only snippets (d2 noise SNR ~4-5)
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=10.0)
@@ -623,10 +623,10 @@ def test_compute_tdoa_xcorr_geo_filter_rejects_implausible_lag():
     # snippet_b: pure noise - no PA edge, so xcorr SNR will be high but lag random
     iq_b = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64) * 50
 
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=7_000,
+    ev_a = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=7_000,
                                      snippet_b64=_iq_to_b64(iq_a), sample_rate_hz=fs,
                                      node_id="node-a", event_type="offset")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0,
+    ev_b = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=0,
                                      snippet_b64=_iq_to_b64(iq_b), sample_rate_hz=fs,
                                      node_id="node-b", event_type="offset")
 
@@ -644,7 +644,7 @@ def test_compute_tdoa_xcorr_refinement_within_gate():
     both nodes find their own knee; the knee positions in the snippets differ
     by 1 sample because the snippet content was shifted.  knee_adj =
     (knee_a - det_a)/fs - (knee_b - det_b)/fs contributes -1/fs = -15.6 µs.
-    With sync_delta_ns = 0 for both nodes, TDOA = -15.6 µs.
+    With sync_to_snippet_start_ns = 0 for both nodes, TDOA = -15.6 µs.
 
     (Under the old xcorr-based algorithm this returned +15.6 µs because
     the xcorr lag was added rather than absorbed into per-node knee
@@ -653,9 +653,9 @@ def test_compute_tdoa_xcorr_refinement_within_gate():
     fs = 64_000.0
     prop_delay = 1
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
-    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+    ev_a = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(iq_a),
                                      sample_rate_hz=fs, node_id="node-a")
-    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+    ev_b = _make_event_with_snippet(47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b")
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
     assert tdoa is not None
@@ -677,12 +677,12 @@ def test_compute_tdoa_xcorr_large_lag_accepted_onset():
     # _make_plateau_pair_iq places the onset ramp at ~320-344; narrow the
     # search window so argmax(d1) doesn't latch onto AM-envelope variation.
     ev_a = _make_event_with_snippet(
-        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+        47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(iq_a),
         sample_rate_hz=fs, node_id="node-a", event_type="onset",
         transition_start=300, transition_end=380,
     )
     ev_b = _make_event_with_snippet(
-        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+        47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(iq_b),
         sample_rate_hz=fs, node_id="node-b", event_type="onset",
         transition_start=300, transition_end=380,
     )
@@ -703,12 +703,12 @@ def test_compute_tdoa_xcorr_large_lag_accepted_offset():
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0,
                                         event_type="offset")
     ev_a = _make_event_with_snippet(
-        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+        47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(iq_a),
         sample_rate_hz=fs, node_id="node-a", event_type="offset",
         transition_start=920, transition_end=1000,
     )
     ev_b = _make_event_with_snippet(
-        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+        47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(iq_b),
         sample_rate_hz=fs, node_id="node-b", event_type="offset",
         transition_start=920, transition_end=1000,
     )
@@ -726,11 +726,11 @@ def test_compute_tdoa_colocated_xcorr_near_zero():
     iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=0, snr_db=25.0)
     # Narrow the transition window to avoid argmax latching on AM noise.
     ev_a = _make_event_with_snippet(
-        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_a),
+        47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(iq_a),
         node_id="node-a", transition_start=300, transition_end=380,
     )
     ev_b = _make_event_with_snippet(
-        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(iq_b),
+        47.6, -122.3, sync_to_snippet_start_ns=0, snippet_b64=_iq_to_b64(iq_b),
         node_id="node-b", transition_start=300, transition_end=380,
     )
     tdoa = compute_tdoa_s(ev_a, ev_b)
@@ -748,15 +748,15 @@ def test_compute_tdoa_sync_delta_difference():
     No IQ snippets: xcorr does not fire; result is purely sync_delta-based.
     Both nodes at same location (no path correction).
     """
-    ev_a = _make_event(47.6, -122.3, sync_delta_ns=500_005_000)
-    ev_b = _make_event(47.6, -122.3, sync_delta_ns=500_000_000)
+    ev_a = _make_event(47.6, -122.3, sync_to_snippet_start_ns=500_005_000)
+    ev_b = _make_event(47.6, -122.3, sync_to_snippet_start_ns=500_000_000)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
     assert tdoa == pytest.approx(5_000 / 1e9, abs=1e-12)  # 5 usec
 
 
 def test_compute_tdoa_returns_none_when_sync_delta_missing():
-    """Returns None when sync_delta_ns is absent."""
+    """Returns None when sync_to_snippet_start_ns is absent."""
     ev_a = {"node_id": "a", "sync_tx_lat": 47.6, "sync_tx_lon": -122.3,
             "node_lat": 47.6, "node_lon": -122.3, "event_type": "onset"}
     ev_b = {"node_id": "b", "sync_tx_lat": 47.6, "sync_tx_lon": -122.3,
@@ -768,12 +768,12 @@ def test_compute_tdoa_returns_none_when_sync_delta_missing():
 # compute_tdoa_s - pilot sync event disambiguation
 # ---------------------------------------------------------------------------
 
-def _make_event_with_onset_time(node_lat, node_lon, sync_delta_ns, onset_time_ns,
+def _make_event_with_onset_time(node_lat, node_lon, sync_to_snippet_start_ns, onset_time_ns,
                                  sync_tx_lat=47.6, sync_tx_lon=-122.3):
     """Event dict including onset_time_ns for disambiguation tests."""
     return {
         "node_id": "test",
-        "sync_delta_ns": sync_delta_ns,
+        "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
         "sync_tx_lat": sync_tx_lat,
         "sync_tx_lon": sync_tx_lon,
         "node_lat": node_lat,
@@ -796,8 +796,8 @@ def test_sync_disambiguation_no_adjustment_needed():
     No adjustment should be applied; TDOA equals the raw 5 usec difference.
     """
     t0 = 1_700_000_000_000_000_000  # arbitrary epoch ns
-    ev_a = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=505_000, onset_time_ns=t0 + 5_000)
-    ev_b = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=500_000, onset_time_ns=t0)
+    ev_a = _make_event_with_onset_time(47.6, -122.3, sync_to_snippet_start_ns=505_000, onset_time_ns=t0 + 5_000)
+    ev_b = _make_event_with_onset_time(47.6, -122.3, sync_to_snippet_start_ns=500_000, onset_time_ns=t0)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
     assert tdoa == pytest.approx(5_000 / 1e9, abs=1e-9)
@@ -813,9 +813,9 @@ def test_sync_disambiguation_corrects_one_period_offset():
     raw_ns = true_tdoa_ns - _T_SYNC_NS           # ~ -837_105 ns
     sync_delta_a = 500_000
     sync_delta_b = sync_delta_a - raw_ns
-    ev_a = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=sync_delta_a,
+    ev_a = _make_event_with_onset_time(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_a,
                                         onset_time_ns=t0 + true_tdoa_ns)
-    ev_b = _make_event_with_onset_time(47.6, -122.3, sync_delta_ns=sync_delta_b,
+    ev_b = _make_event_with_onset_time(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_b,
                                         onset_time_ns=t0)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
@@ -833,8 +833,8 @@ def test_sync_disambiguation_works_without_onset_time():
     true_tdoa_ns = 5_000  # 5 usec
     sync_delta_a = 500_000
     sync_delta_b = sync_delta_a - (true_tdoa_ns - _T_SYNC_NS)
-    ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
-    ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
+    ev_a = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_a)
+    ev_b = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-6)
@@ -845,8 +845,8 @@ def test_sync_disambiguation_n_zero():
     true_tdoa_ns = 200_000   # 200 usec - within T_sync/2 = 421 usec
     sync_delta_a = 400_000
     sync_delta_b = sync_delta_a - true_tdoa_ns  # raw_ns = +200_000
-    ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
-    ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
+    ev_a = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_a)
+    ev_b = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
@@ -861,8 +861,8 @@ def test_sync_disambiguation_n_plus_one():
     raw_ns = true_tdoa_ns + _T_SYNC_NS        # ~ +992_105 ns
     sync_delta_a = 500_000
     sync_delta_b = sync_delta_a - raw_ns
-    ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
-    ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
+    ev_a = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_a)
+    ev_b = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
@@ -877,8 +877,8 @@ def test_sync_disambiguation_n_minus_one():
     raw_ns = true_tdoa_ns - _T_SYNC_NS        # ~ -692_105 ns
     sync_delta_a = 500_000
     sync_delta_b = sync_delta_a - raw_ns
-    ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
-    ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
+    ev_a = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_a)
+    ev_b = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa is not None
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
@@ -892,8 +892,8 @@ def test_sync_disambiguation_large_tdoa_within_half_period():
     true_tdoa_ns = -300_000
     sync_delta_a = 400_000
     sync_delta_b = sync_delta_a - true_tdoa_ns   # = 700_000
-    ev_a = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_a)
-    ev_b = _make_event(47.6, -122.3, sync_delta_ns=sync_delta_b)
+    ev_a = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_a)
+    ev_b = _make_event(47.6, -122.3, sync_to_snippet_start_ns=sync_delta_b)
     tdoa = compute_tdoa_s(ev_a, ev_b)
     assert tdoa == pytest.approx(true_tdoa_ns / 1e9, abs=1e-9)
 
@@ -941,16 +941,16 @@ class TestSyncTxCoordinateMismatch:
     # These encode the physical geometry correctly -- the bug is only in
     # which sync_tx coordinates accompany them.
     # Picked from the "good" pair in the production data: sd_diff ~ +52 usec, n=0.
-    SD_A_NS = 2816029    # dpk-tdoa1 sync_delta_ns
-    SD_B_NS = 2764024    # kb7ryy sync_delta_ns
+    SD_A_NS = 2816029    # dpk-tdoa1 sync_to_snippet_start_ns
+    SD_B_NS = 2764024    # kb7ryy sync_to_snippet_start_ns
 
-    def _make_event(self, node_pos, sync_delta_ns, sync_tx, node_id):
+    def _make_event(self, node_pos, sync_to_snippet_start_ns, sync_tx, node_id):
         # Using the fixture onset snippet (real data) — transition_start/end
         # match its actual PA rise region.  The test is about sync_tx
         # coordinate handling, not the event type itself.
         return {
             "node_id": node_id,
-            "sync_delta_ns": sync_delta_ns,
+            "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
             "sync_tx_lat": sync_tx[0],
             "sync_tx_lon": sync_tx[1],
             "node_lat": node_pos[0],
@@ -1116,10 +1116,10 @@ class TestSyncCalibratorNominalRate:
             "iq_snippet_b64": _make_real_snippet_b64(),
             "channel_sample_rate_hz": _REAL_RATE,
         }
-        ev_a = {**base, "node_id": "a", "sync_delta_ns": sync_delta_a,
+        ev_a = {**base, "node_id": "a", "sync_to_snippet_start_ns": sync_delta_a,
                 "sync_sample_index": sync_idx_a,
                 "sync_sample_rate_correction": corr_a}
-        ev_b = {**base, "node_id": "b", "sync_delta_ns": sync_delta_b,
+        ev_b = {**base, "node_id": "b", "sync_to_snippet_start_ns": sync_delta_b,
                 "sync_sample_index": sync_idx_b,
                 "sync_sample_rate_correction": corr_b}
         return ev_a, ev_b

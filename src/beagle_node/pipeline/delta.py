@@ -1,20 +1,27 @@
 # Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-DeltaComputer - converts raw sample indices into sync_delta_ns measurements.
+DeltaComputer - converts sample indices into ``sync_to_snippet_start_ns``
+measurements ready to ship to the server.
 
 This is the measurement core.  All TDOA precision depends on what happens here.
 
 Measurement model
 -----------------
-  sync_delta_ns = (target_sample - sync_sample) * 1_000_000_000 / sample_rate_hz
+  sync_to_snippet_start_ns = (snippet_start_sample - sync_sample) * 1e9 / sample_rate_hz
 
 Where:
-  - target_sample  = CarrierOnset or CarrierOffset sample_index (in target IQ)
-  - sync_sample    = SyncEvent.sample_index      (in the *sync* IQ stream)
-  - sample_rate_hz = nominal rate, corrected by CrystalCalibrator
+  - snippet_start_sample = absolute stream sample index of the FIRST sample of
+                           the shipped IQ snippet (CarrierOnset/Offset.sample_index).
+                           This is the stable timing reference: the node's
+                           detection point is used only to decide *when* to
+                           package up a snippet; the time-accounted reference
+                           is the snippet's first sample (on a sample boundary).
+  - sync_sample          = SyncEvent.sample_index (sub-sample precision from
+                           the pilot-phase sync detector)
+  - sample_rate_hz       = nominal rate, corrected by CrystalCalibrator
 
-The sign convention is: positive sync_delta_ns means the carrier edge
-appeared *after* the most recent sync event.
+The sign convention is: positive ``sync_to_snippet_start_ns`` means the snippet
+begins *after* the most recent sync event (typical).
 
 Triggering events
 -----------------
@@ -72,14 +79,17 @@ class TDOAMeasurement:
     """
     One TDOA measurement ready for reporting.
 
-    sync_delta_ns is the primary value sent to the server.
+    ``sync_to_snippet_start_ns`` is the primary timing value sent to the
+    server: nanoseconds from the matched sync event to the first sample of
+    the shipped IQ snippet.
+
     event_type indicates which carrier edge triggered this measurement:
       "onset"  - rising edge (carrier appeared)
       "offset" - falling edge (carrier disappeared)
     The server must pair like event_types across nodes.
     """
-    sync_delta_ns: int                  # THE measurement
-    target_sample: int                  # triggering event sample index
+    sync_to_snippet_start_ns: int       # THE measurement (sync -> first snippet sample, ns)
+    snippet_start_sample: int           # Absolute stream sample of snippet[0]
     sync_sample: float                  # SyncEvent sample index used (sub-sample precision)
     sample_rate_hz: float               # Corrected sample rate
     sample_rate_correction: float       # CrystalCalibrator factor
@@ -88,18 +98,18 @@ class TDOAMeasurement:
     onset_power_db: float               # power at the triggering event
     noise_floor_db: float               # EMA of idle-state power before the event
     event_type: str                     # "onset" or "offset"
-    iq_snippet: bytes = b""             # int8-interleaved IQ for server cross-correlation
-    transition_start: int = 0           # Transition zone start within snippet (samples)
-    transition_end: int = 0             # Transition zone end within snippet (samples)
+    iq_snippet: bytes = b""             # int8-interleaved IQ for server knee-finder
+    transition_start: int = 0           # Knee-search hint: zone start, samples into snippet
+    transition_end: int = 0             # Knee-search hint: zone end, samples into snippet
     # Sync event diagnostics for server-side verification
     sync_pilot_phase_rad: float = 0.0   # pilot_phase_rad from the matched SyncEvent
     sync_sample_index: float = 0.0      # absolute sample index of the matched SyncEvent
-    sync_delta_samples: float = 0.0     # raw sample delta before ns conversion
+    sync_delta_samples: float = 0.0     # raw sample delta (snippet_start - sync_sample)
 
 
 class DeltaComputer:
     """
-    Matches CarrierOnset events to SyncEvents and computes sync_delta_ns.
+    Matches CarrierOnset events to SyncEvents and computes sync_to_snippet_start_ns.
 
     Parameters
     ----------
@@ -307,34 +317,33 @@ class DeltaComputer:
         # Apply crystal calibration to the sample rate
         corrected_rate = self._rate * best.sample_rate_correction
 
+        # event.sample_index is the absolute stream sample index of the
+        # snippet's FIRST sample (carrier_detect encodes it this way).
         delta_samples = event.sample_index - best.sample_index
-        sync_delta_ns = int(round(delta_samples * 1_000_000_000.0 / corrected_rate))
+        sync_to_snippet_start_ns = int(round(delta_samples * 1_000_000_000.0 / corrected_rate))
 
         noise_floor = getattr(event, "noise_floor_db", -100.0)
 
         if _TIMING_DIAG:
-            # Log in sync-decimated sample space (256 kHz).
-            # event.sample_index is int (carrier side, mapped to sync space).
-            # best.sample_index is float (M&M sub-sample in sync space).
             logger.info(
                 "TIMING_DIAG %s",
                 _json.dumps({
                     "stage": "delta",
                     "event_type": event_type,
-                    "target_sample_sync": event.sample_index,
+                    "snippet_start_sample": event.sample_index,
                     "sync_sample_float": round(best.sample_index, 3),
                     "delta_samples": round(delta_samples, 3),
                     "corrected_rate_hz": round(corrected_rate, 3),
                     "sample_rate_correction": round(best.sample_rate_correction, 8),
-                    "sync_delta_ns": sync_delta_ns,
+                    "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
                     "corr_peak": round(best.corr_peak, 4),
                     "n_sync_candidates": len(candidates),
                 }),
             )
 
         return TDOAMeasurement(
-            sync_delta_ns=sync_delta_ns,
-            target_sample=event.sample_index,
+            sync_to_snippet_start_ns=sync_to_snippet_start_ns,
+            snippet_start_sample=event.sample_index,
             sync_sample=best.sample_index,
             sample_rate_hz=corrected_rate,
             sample_rate_correction=best.sample_rate_correction,

@@ -4,22 +4,36 @@ TDOA arithmetic for the aggregation server.
 
 Core operations:
   - haversine_m: great-circle distance between two lat/lon points
-  - compute_tdoa: raw sync_delta subtraction + path-delay correction
+  - compute_tdoa_s: sync_to_snippet_start subtraction + server-side knee offset
+    + sync-path-geometry correction
 
-Derivation of the path-delay correction
-----------------------------------------
-Each node's sync_delta_ns is measured on the local sample clock:
+Timing model (schema v1.5+)
+---------------------------
+Each node ships ``sync_to_snippet_start_ns`` — the time on its local sample
+clock from the matched sync event to the FIRST sample of the shipped IQ
+snippet.  The node's detection threshold is merely a trigger for packaging;
+the reference the server consumes is the snippet's first sample (an exact
+sample boundary on the node's clock).
 
-    sync_delta_n = (target_onset_at_n) - (sync_event_at_n)
-                 = [T_t + dist(target, n)/c] - [T_s + dist(sync, n)/c]
-                 = K + [dist(target, n) - dist(sync, n)] / c
+The full sync-to-knee time per node is:
 
-where K = T_t - T_s is a common constant (same for all nodes for the same
-transmission event).
+    sync_to_knee_n = sync_to_snippet_start_n + knee_position_in_snippet_n / rate
 
-Raw TDOA (from two nodes A and B):
+where ``knee_position_in_snippet_n`` is located by the server's knee-finder,
+using ``transition_start`` / ``transition_end`` as a search hint.
 
-    raw_ns = sync_delta_A - sync_delta_B
+Derivation of the sync-path correction
+--------------------------------------
+Per-node sync-to-knee:
+
+    sync_to_knee_n = [T_t + dist(target, n)/c] - [T_s + dist(sync, n)/c]
+                   = K + [dist(target, n) - dist(sync, n)] / c
+
+where K = T_t - T_s is a common constant across nodes for the same event.
+
+Raw inter-node difference (A minus B):
+
+    raw_ns = sync_to_knee_A - sync_to_knee_B
            = [(dist(target,A) - dist(target,B)) - (dist(sync,A) - dist(sync,B))] / c * 1e9
 
 True TDOA = (dist(target,A) - dist(target,B)) / c
@@ -642,27 +656,27 @@ def compute_tdoa_s(
 
     Method
     ------
-    1. Compute raw_ns = sync_delta_a - sync_delta_b (sync-to-detection diff)
-    2. Apply per-pair grid calibration (removes node-pair pilot phase offset)
-    3. Refinement (per ``tdoa_method``):
+    1. Compute raw_ns = sync_to_snippet_start_a - sync_to_snippet_start_b
+       (difference in the node-side sync -> snippet-start time).
+    2. Apply per-pair grid calibration (removes node-pair pilot phase offset).
+    3. Find the inter-node knee offset (per ``tdoa_method``):
          "xcorr" (default): inter-node cross-correlation on the second
-           derivative of each snippet's power envelope.  Returns a single
-           pair-level lag directly, and works even when each node's
-           individual knee SNR is low.  Empirically best for offsets
-           (knee SNR typically << 1 for offsets) and matches or improves
-           on per-node knee finding for onsets, with full event yield.
-         "knee": per-node Savgol-smoothed second derivative knee finder,
-           seeded by argmax(d1) / argmin(d1), taking the first significant
-           d2 local minimum on the plateau side.  Gives sub-sample position
-           per snippet.  Retained for comparison / tests.
-    4. Apply path correction (sync-transmitter geometry)
+           derivative of each snippet's power envelope.  Returns the inter-
+           node knee time difference as a single lag.  Works even when each
+           node's individual knee SNR is low.  Empirically best for offsets
+           (knee SNR typically << 1) and matches per-node knee finding for
+           onsets with full event yield.
+         "knee": per-node Savgol-smoothed second-derivative knee finder.
+           Knee positions (samples from snippet-start) are converted to ns
+           and differenced.  Retained for comparison / tests.
+    4. Apply sync-path correction (sync-transmitter geometry).
     5. Disambiguate modulo RDS bit period.
     6. Geometric plausibility check against max_xcorr_baseline_km.
 
     Parameters
     ----------
     event_a, event_b : dicts with keys:
-        sync_delta_ns, sync_tx_lat, sync_tx_lon, node_lat, node_lon,
+        sync_to_snippet_start_ns, sync_tx_lat, sync_tx_lon, node_lat, node_lon,
         event_type, node_id, iq_snippet_b64, channel_sample_rate_hz,
         transition_start, transition_end.
         onset_time_ns (optional): wall-clock time of the carrier edge in ns.
@@ -700,13 +714,13 @@ def compute_tdoa_s(
     node_b = event_b.get("node_id", "?")
     event_type = event_a.get("event_type", "")
 
-    # --- sync_delta: coarse TDOA from sample counting ---
-    # sync_delta_ns = (carrier_sample - sync_sample) / sample_rate.
-    # This is precise to the sample boundary (16 usec at 62.5 kHz).
-    # The sync path correction removes sync signal propagation geometry,
-    # leaving the target signal arrival time difference.
-    delta_a = event_a.get("sync_delta_ns")
-    delta_b = event_b.get("sync_delta_ns")
+    # --- sync_to_snippet_start: coarse TDOA from the shipped node timing ---
+    # Each node reports time from the matched sync event to the first sample
+    # of its shipped IQ snippet, on the node's local (crystal-corrected)
+    # sample clock.  The detection point is NOT in this value — it's only a
+    # hint that the node uses to decide when to package up the snippet.
+    delta_a = event_a.get("sync_to_snippet_start_ns")
+    delta_b = event_b.get("sync_to_snippet_start_ns")
 
     # Sync diagnostics: log pilot phase comparison to verify bit-boundary
     # alignment across nodes.  Gated by BEAGLE_SYNC_DIAG=1 env var.
@@ -727,9 +741,9 @@ def compute_tdoa_s(
             sync_diff_bits = sync_diff_samples / rds_bit_samples
             sync_diff_frac = sync_diff_bits - round(sync_diff_bits)
             logger.info(
-                "sync_diag %s<->%s (%s): delta_ns=[%s, %s]  delta_samp=[%.1f, %.1f]  "
-                "sync_idx=[%.1f, %.1f]  sync_diff=%.1f samp (%.2f bits, frac=%.4f)  "
-                "crystal=[%.8f, %.8f]",
+                "sync_diag %s<->%s (%s): sync_to_snippet_start_ns=[%s, %s]  "
+                "delta_samp=[%.1f, %.1f]  sync_idx=[%.1f, %.1f]  "
+                "sync_diff=%.1f samp (%.2f bits, frac=%.4f)  crystal=[%.8f, %.8f]",
                 node_a, node_b, event_type,
                 delta_a, delta_b, dsamp_a, dsamp_b,
                 sync_idx_a, sync_idx_b,
@@ -739,7 +753,7 @@ def compute_tdoa_s(
 
     if delta_a is None or delta_b is None:
         logger.warning(
-            "Missing sync_delta_ns for %s<->%s (%s) - pair skipped",
+            "Missing sync_to_snippet_start_ns for %s<->%s (%s) - pair skipped",
             node_a, node_b, event_type,
         )
         return None
@@ -747,10 +761,10 @@ def compute_tdoa_s(
     raw_ns = float(delta_a) - float(delta_b)
 
     # Apply sync grid calibration: remove the per-pair fractional-bit
-    # offset from the coarse TDOA.  Uses sync-only timing (onset_time_ns
-    # minus sync_delta_ns = sync event wall-clock time) to measure the
-    # offset without carrier-side contamination.  Applied BEFORE
-    # disambiguation so rounding picks the correct bit period.
+    # offset from the coarse TDOA.  Uses sync_sample_index (the pilot-
+    # bit-grid position on each node) to measure the offset without
+    # carrier-side contamination.  Applied BEFORE disambiguation so
+    # rounding picks the correct bit period.
     grid_correction_ns = _sync_calibrator.update(
         node_a, node_b, event_a, event_b,
     )
@@ -772,22 +786,24 @@ def compute_tdoa_s(
         node_b_lon=event_b["node_lon"],
     )
 
-    # --- Server-side knee finding ---
+    # --- Knee locatator within each snippet ---
     #
-    # Each node's `sync_delta_ns` measures from a pilot bit boundary to
-    # its *detection point* (threshold crossing), which varies per event
-    # by hundreds of µs due to noise floor and instantaneous signal level.
+    # The node's ``sync_to_snippet_start_ns`` anchors sync to the first sample
+    # of the shipped snippet.  The KNEE — the corner where the PA ramp meets
+    # the plateau (top-of-rise for onset, start-of-fall for offset) — is a
+    # physical property of the transmission observed at essentially the same
+    # instant by all receivers (minus propagation delay).  The server locates
+    # the knee in each snippet independently and uses its position (in samples
+    # from the snippet start) to compute sync -> knee per node:
     #
-    # We refine to the *knee* — the corner where the PA ramp meets the
-    # plateau (top-of-rise for onset, start-of-fall for offset) — using
-    # argmin of the Savitzky-Golay second derivative of each snippet's
-    # power envelope.  At the knee the power curve has its most-negative
-    # curvature regardless of ramp slope, so the feature is shape-
-    # invariant across nodes with different AGC / ramp characteristics.
-    # The knee is a physical property of the transmission observed at
-    # essentially the same instant by all receivers (minus propagation
-    # delay), so (knee_A - knee_B) gives the true inter-node TDOA modulo
-    # bit periods.
+    #     sync_to_knee_n = sync_to_snippet_start_n + knee_position_n / rate_n
+    #
+    # Inter-node:
+    #     TDOA_AB = (sync_to_knee_A - sync_to_knee_B) + sync-path correction
+    #             = raw_ns + (knee_A / rate_A - knee_B / rate_B) + correction
+    #
+    # where raw_ns = sync_to_snippet_start_A - sync_to_snippet_start_B.
+    # ``transition_start`` / ``transition_end`` are knee-search hints only.
     iq_a_b64 = event_a.get("iq_snippet_b64", "")
     iq_b_b64 = event_b.get("iq_snippet_b64", "")
     if not iq_a_b64 or not iq_b_b64:
@@ -799,19 +815,6 @@ def compute_tdoa_s(
 
     rate_a = float(event_a.get("channel_sample_rate_hz", 64_000.0))
     rate_b = float(event_b.get("channel_sample_rate_hz", 64_000.0))
-
-    # Detection position within each node's snippet — needed to convert
-    # the knee position into a "sync_to_knee" time.
-    #   For onset: detection fires at rising-edge threshold, which sits at
-    #     ``transition_start`` in the encoded snippet.
-    #   For offset: detection fires at falling-edge threshold, at
-    #     ``transition_end``.
-    det_a = int(event_a.get(
-        "transition_start" if event_type == "onset" else "transition_end", 0
-    ))
-    det_b = int(event_b.get(
-        "transition_start" if event_type == "onset" else "transition_end", 0
-    ))
     ts_a = int(event_a.get("transition_start", 0))
     te_a = int(event_a.get("transition_end", 0))
     ts_b = int(event_b.get("transition_start", 0))
@@ -819,7 +822,8 @@ def compute_tdoa_s(
 
     if tdoa_method == "xcorr":
         # Inter-node cross-correlation on d²(power envelope).  Returns a
-        # single pair-level lag directly.  See ``cross_correlate_snippets``.
+        # lag in ns equal to (knee_A_in_snippet - knee_B_in_snippet) expressed
+        # as time.  See ``cross_correlate_snippets``.
         lag_ns, xcorr_snr = cross_correlate_snippets(
             iq_a_b64, iq_b_b64,
             sample_rate_hz_a=rate_a, sample_rate_hz_b=rate_b,
@@ -832,7 +836,6 @@ def compute_tdoa_s(
             )
             return None
         refinement_ns = lag_ns
-        # Kept for diagnostic logging below.
         snr_a = snr_b = xcorr_snr
         refinement_desc = "xcorr_lag"
     elif tdoa_method == "knee":
@@ -864,17 +867,17 @@ def compute_tdoa_s(
             )
             return None
 
-        # (knee_a - det_a)/rate_a - (knee_b - det_b)/rate_b shifts each node's
-        # reference from detection to the physical PA edge.
-        knee_adj_a_ns = (knee_a - det_a) * 1e9 / rate_a
-        knee_adj_b_ns = (knee_b - det_b) * 1e9 / rate_b
-        refinement_ns = knee_adj_a_ns - knee_adj_b_ns
-        refinement_desc = "knee_adj"
+        # knee_{a,b} are positions (samples) within each snippet, measured
+        # from the snippet's first sample.  Converting each to ns and taking
+        # the difference gives the inter-node knee offset directly — no
+        # detection-point subtraction needed.
+        refinement_ns = knee_a * 1e9 / rate_a - knee_b * 1e9 / rate_b
+        refinement_desc = "knee_diff"
     else:
         raise ValueError(f"tdoa_method must be 'xcorr' or 'knee', got {tdoa_method!r}")
 
-    # Combine: raw sync_delta (sync-to-detection) + pair refinement +
-    # FM path correction.
+    # Combine: sync_to_snippet_start diff + inter-node knee offset +
+    # sync-transmitter path-geometry correction.
     combined_ns = raw_ns + refinement_ns + correction_ns
 
     # Sync period disambiguation: resolve which RDS bit boundary each node

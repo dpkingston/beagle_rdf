@@ -2197,7 +2197,7 @@ def _carrier_event_to_db_dict(event: CarrierEvent) -> dict[str, Any]:
         "event_id": event.event_id,
         "node_id": event.node_id,
         "channel_hz": event.channel_frequency_hz,
-        "sync_delta_ns": event.sync_delta_ns,
+        "sync_to_snippet_start_ns": event.sync_to_snippet_start_ns,
         "sync_tx_id": event.sync_transmitter.station_id,
         "sync_tx_lat": event.sync_transmitter.latitude_deg,
         "sync_tx_lon": event.sync_transmitter.longitude_deg,

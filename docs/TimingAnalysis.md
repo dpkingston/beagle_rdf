@@ -59,7 +59,7 @@ Target-domain decimation /8 -> ~250 kHz
 Carrier detection (auto-tracked onset/offset from noise floor;
                    IQ snippet + transition bounds emitted)
         v
-sync_delta_ns = (target_sample - sync_sample) / rate
+sync_to_snippet_start_ns = (target_sample - sync_sample) / rate
         v
 onset_time_ns = buf_wall_ns + within-buffer offset
         v
@@ -305,10 +305,10 @@ approximately **8x better** than the previous threshold-crossing window centre
 
 ---
 
-### Stage 7: `sync_delta_ns` computation
+### Stage 7: `sync_to_snippet_start_ns` computation
 
 ```python
-sync_delta_ns = (target_sample - sync_sample) x 1e9 / corrected_rate
+sync_to_snippet_start_ns = (target_sample - sync_sample) x 1e9 / corrected_rate
 ```
 
 Both indices are in the same 256 kHz crystal-clocked sample domain - no NTP, no GIL,
@@ -347,7 +347,7 @@ used only for pilot disambiguation at the server.
 ### Stage 9: Network transmission
 
 HTTP POST from node to server. Delivery buffer waits 10 s (`delivery_buffer_s = 10.0`
-in `EventPairer`). Network latency does not affect `sync_delta_ns` or `onset_time_ns`
+in `EventPairer`). Network latency does not affect `sync_to_snippet_start_ns` or `onset_time_ns`
 values (both computed at the node before transmission).
 
 ---
@@ -355,7 +355,7 @@ values (both computed at the node before transmission).
 ### Stage 10: Server grouping by `T_sync`
 
 ```python
-T_sync = onset_time_ns - sync_delta_ns - dist(sync_tx, node) / c x 1e9
+T_sync = onset_time_ns - sync_to_snippet_start_ns - dist(sync_tx, node) / c x 1e9
 ```
 
 Events from different nodes are grouped if their `T_sync` values agree within
@@ -505,14 +505,14 @@ debounce - same net latency, but finer resolution.
 **Estimated improvement: +/-500 usec -> +/-62-125 usec (with compensating debounce).**
 **Complexity: low - config parameter changes only, but requires fresh captures to evaluate.**
 
-**Why deferred:** this improvement only affects `sync_delta_ns` quantisation, which is
+**Why deferred:** this improvement only affects `sync_to_snippet_start_ns` quantisation, which is
 relevant only for the `sync_delta` fallback path (used when xcorr SNR is too low).
 Xcorr already achieves sub-usec offset precision and handles 27/34 offset pairs in
 the current fixture.  The 7 fallback pairs have low SNR due to weak signal, not window
 size - smaller windows would not fix them.
 
 Testing requires re-capturing raw SDR streams with a different `window_samples` config;
-the existing fixture's `sync_delta_ns` values are baked at capture time and cannot be
+the existing fixture's `sync_to_snippet_start_ns` values are baked at capture time and cannot be
 re-derived from the 20 ms IQ snippets alone.  **Revisit if the environment changes
 (e.g., SNR degrades such that xcorr fallback becomes frequent).**
 

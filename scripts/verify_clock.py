@@ -100,7 +100,7 @@ def main() -> int:
     print(f"\nExpected onset_time_ns uncertainty: ~{onset_budget_ns / 1e6:.1f} ms "
           f"(jitter + USB latency estimate)")
     print("  Note: onset_time_ns is used only for event association, not TDOA.  "
-          "sync_delta_ns is immune to this jitter.")
+          "sync_to_snippet_start_ns is immune to this jitter.")
 
     # ------------------------------------------------------------------ #
     # Optional: chrony status                                             #

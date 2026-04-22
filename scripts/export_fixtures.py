@@ -4,7 +4,7 @@
 Export paired measurement fixtures from the aggregation server SQLite database.
 
 For each matched pair of events (one per node, same transmission), the fixture
-record contains both nodes' sync_delta_ns, onset_time_ns, location fields, and
+record contains both nodes' sync_to_snippet_start_ns, onset_time_ns, location fields, and
 IQ snippet.  Only pairs where both nodes report a snippet are included.
 
 The output JSON is compatible with tests/fixtures/real_event_pairs.json and
@@ -62,7 +62,7 @@ def _load_events(
     try:
         placeholders = ",".join("?" * len(node_ids))
         query = (
-            "SELECT node_id, sync_delta_ns, sync_tx_lat, sync_tx_lon, "
+            "SELECT node_id, sync_to_snippet_start_ns, sync_tx_lat, sync_tx_lon, "
             "node_lat, node_lon, event_type, onset_time_ns, channel_hz, raw_json "
             f"FROM events WHERE node_id IN ({placeholders})"
         )
@@ -156,8 +156,8 @@ def _to_fixture(
         "event_type": ev_a["event_type"],
         "onset_time_ns_a": ev_a["onset_time_ns"],
         "onset_time_ns_b": ev_b["onset_time_ns"],
-        "sync_delta_ns_a": ev_a["sync_delta_ns"],
-        "sync_delta_ns_b": ev_b["sync_delta_ns"],
+        "sync_delta_ns_a": ev_a["sync_to_snippet_start_ns"],
+        "sync_delta_ns_b": ev_b["sync_to_snippet_start_ns"],
         "node_lat_a": ev_a["node_lat"],
         "node_lon_a": ev_a["node_lon"],
         "node_lat_b": ev_b["node_lat"],

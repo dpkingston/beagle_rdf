@@ -5,7 +5,7 @@
 The signal processing pipeline converts raw IQ samples from the SDR into two kinds
 of events: **SyncEvents** (RDS bit-transition timing pulses) and **CarrierOnset/Offset
 events** (LMR carrier edges).  Both are expressed as sample indices in the same
-continuous ADC clock domain so that `DeltaComputer` can compute `sync_delta_ns`
+continuous ADC clock domain so that `DeltaComputer` can compute `sync_to_snippet_start_ns`
 by pure sample-index arithmetic.
 
 ```
@@ -39,7 +39,7 @@ SDR IQ (2 MSPS complex64)
                                             |
                                       DeltaComputer
                                             |
-                                   TDOAMeasurement (sync_delta_ns)
+                                   TDOAMeasurement (sync_to_snippet_start_ns)
                                             |
                                       +-----v-----+
                                       |  Server    |
@@ -353,7 +353,7 @@ in noisy RF environments.
 ### Purpose
 
 Match each `CarrierOnset` or `CarrierOffset` to the most recent preceding
-`SyncEvent` and compute `sync_delta_ns`.
+`SyncEvent` and compute `sync_to_snippet_start_ns`.
 
 ### Matching rule
 
@@ -374,7 +374,7 @@ corrupted by RF noise.
 ```
 delta_samples = T - best_sync.sample_index
 corrected_rate = nominal_rate x best_sync.sample_rate_correction
-sync_delta_ns = round(delta_samples x 1_000_000_000 / corrected_rate)
+sync_to_snippet_start_ns = round(delta_samples x 1_000_000_000 / corrected_rate)
 ```
 
 ### Offset measurements

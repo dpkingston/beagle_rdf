@@ -97,14 +97,14 @@ _CARRIER_SEQ: np.ndarray = _qpsk * _am_env
 _MIN_SYNC_DELTA: int = 0
 
 
-def _make_node_snippet_b64(sync_delta_ns: int) -> str:
+def _make_node_snippet_b64(sync_to_snippet_start_ns: int) -> str:
     """
     Generate an IQ snippet with the PA transition anchored at a fixed position.
 
     All snippets have the same onset (_BASE_ONSET) and ramp (_RAMP_SAMPLES)
     at the same position, matching real derivative-peak anchored snippets.
     The carrier content is identical across nodes -- xcorr measures ~0
-    refinement.  The TDOA is carried entirely by sync_delta_ns.
+    refinement.  The TDOA is carried entirely by sync_to_snippet_start_ns.
     """
     onset = _BASE_ONSET
     ramp_end = onset + _RAMP_SAMPLES
@@ -134,7 +134,7 @@ def _make_node_snippet_b64(sync_delta_ns: int) -> str:
 
 def _make_sync_delta_ns(node_lat: float, node_lon: float) -> int:
     """
-    Synthetic sync_delta_ns for a given node position.
+    Synthetic sync_to_snippet_start_ns for a given node position.
 
     sync_delta_n = K + (dist(target, n) - dist(sync, n)) / c
     K is arbitrary; we choose K = 500_000_000 ns.
@@ -179,7 +179,7 @@ def _make_event_payload(
             "longitude_deg": node_lon,
         },
         "channel_frequency_hz": _CHANNEL_HZ,
-        "sync_delta_ns": sync_delta,
+        "sync_to_snippet_start_ns": sync_delta,
         "sync_transmitter": {
             "station_id": _SYNC_TX_ID,
             "frequency_hz": 99_900_000,
@@ -289,14 +289,14 @@ def test_post_event_amendment(client: TestClient) -> None:
     """Re-posting the same event_id updates the record."""
     payload = _make_event_payload("node-a", *_NODES["node-a"])
     client.post("/api/v1/events", json=payload)
-    payload["sync_delta_ns"] += 1000
+    payload["sync_to_snippet_start_ns"] += 1000
     resp = client.post("/api/v1/events", json=payload)
     assert resp.status_code == 201
     resp2 = client.get("/api/v1/events")
     # Should still be only one event with this event_id
     matched = [e for e in resp2.json() if e["event_id"] == payload["event_id"]]
     assert len(matched) == 1
-    assert matched[0]["sync_delta_ns"] == payload["sync_delta_ns"]
+    assert matched[0]["sync_to_snippet_start_ns"] == payload["sync_to_snippet_start_ns"]
 
 
 # ---------------------------------------------------------------------------

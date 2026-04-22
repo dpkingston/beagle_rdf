@@ -19,12 +19,12 @@ _C_M_S = 299_792_458.0
 # ---------------------------------------------------------------------------
 
 # Three nodes in a triangle around a central search area (Seattle-like).
-# We place nodes and a known transmitter, then compute the "true" sync_delta_ns
+# We place nodes and a known transmitter, then compute the "true" sync_to_snippet_start_ns
 # for each node by computing the time the signal would arrive from the
 # transmitter, scaled by the sample clock.
 #
 # The FM sync transmitter is at KISW (47.6253, -122.3563).
-# We use a simplified model: all nodes have sync_delta_ns = constant + arrival_delay_ns
+# We use a simplified model: all nodes have sync_to_snippet_start_ns = constant + arrival_delay_ns
 # where arrival_delay_ns = dist(tx, node) / c * 1e9.
 #
 # This produces exact TDOA = 0 when corrected - which would place the fix at
@@ -146,7 +146,7 @@ def make_synthetic_events(
 
     sync_delta_ns_i = base + (dist(target, node_i) - dist(sync_tx, node_i)) / c * 1e9
     """
-    # Compute sync_delta_ns for each node.
+    # Compute sync_to_snippet_start_ns for each node.
     sync_deltas: list[int] = []
     for _, nlat, nlon in NODES:
         target_delay_ns = _dist(target_lat, target_lon, nlat, nlon) / _C_M_S * 1e9
@@ -161,8 +161,8 @@ def make_synthetic_events(
     min_delta = min(sync_deltas)
 
     events = []
-    for (node_id, nlat, nlon), sync_delta_ns in zip(NODES, sync_deltas):
-        carrier_delay = round((sync_delta_ns - min_delta) * _SNIPPET_RATE_HZ / 1e9)
+    for (node_id, nlat, nlon), sync_to_snippet_start_ns in zip(NODES, sync_deltas):
+        carrier_delay = round((sync_to_snippet_start_ns - min_delta) * _SNIPPET_RATE_HZ / 1e9)
         # Snippet onset at _SNIPPET_BASE (2500) + carrier_delay.  Give the
         # knee finder a generous transition window that covers all nodes'
         # possible onset positions.
@@ -177,7 +177,7 @@ def make_synthetic_events(
             "sync_tx_lon":            SYNC_TX_LON,
             "node_lat":               nlat,
             "node_lon":               nlon,
-            "sync_delta_ns":          sync_delta_ns,
+            "sync_to_snippet_start_ns":          sync_to_snippet_start_ns,
             "corr_peak":              0.85,
             "onset_time_ns":          1_700_000_000_000_000_000,
             "iq_snippet_b64":         _make_snippet_b64(carrier_delay),
@@ -231,12 +231,12 @@ def test_solve_fix_three_nodes_accuracy():
 
 def test_solve_fix_returns_none_when_no_tdoa_data():
     """
-    If both sync_delta_ns and iq_snippet_b64 are absent, no TDOA method can
+    If both sync_to_snippet_start_ns and iq_snippet_b64 are absent, no TDOA method can
     fire and solve_fix returns None.
     """
     events = make_synthetic_events()
     for ev in events:
-        del ev["sync_delta_ns"]
+        del ev["sync_to_snippet_start_ns"]
         ev.pop("iq_snippet_b64", None)
     result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
     assert result is None
@@ -273,7 +273,7 @@ def test_solve_fix_deduplicates_same_node():
     # Duplicate node-A with slightly different delta (amendment)
     dup = dict(events[0])
     dup["event_id"] = "duplicate-id"
-    dup["sync_delta_ns"] += 50
+    dup["sync_to_snippet_start_ns"] += 50
     events_with_dup = events + [dup]
     result = solve_fix(events_with_dup, 47.6, -122.3)
     assert result is not None
@@ -305,7 +305,7 @@ def test_solve_fix_excluded_nodes_empty_by_default():
 
 def test_solve_fix_outlier_node_detected_and_excluded():
     """
-    When one node's sync_delta_ns is wildly wrong, the outlier detector should
+    When one node's sync_to_snippet_start_ns is wildly wrong, the outlier detector should
     flag it and re-run the fix without it - provided at least 2 other nodes remain.
 
     We use 4 nodes so that after exclusion of the outlier, 3 remain, keeping
@@ -327,8 +327,8 @@ def test_solve_fix_outlier_node_detected_and_excluded():
 
     min_delta = min(sync_deltas)
     events = []
-    for (node_id, nlat, nlon), sync_delta_ns in zip(four_nodes, sync_deltas):
-        carrier_delay = round((sync_delta_ns - min_delta) * _SNIPPET_RATE_HZ / 1e9)
+    for (node_id, nlat, nlon), sync_to_snippet_start_ns in zip(four_nodes, sync_deltas):
+        carrier_delay = round((sync_to_snippet_start_ns - min_delta) * _SNIPPET_RATE_HZ / 1e9)
         # Snippet onset at _SNIPPET_BASE (2500) + carrier_delay.  Give the
         # knee finder a generous transition window that covers all nodes'
         # possible onset positions.
@@ -343,7 +343,7 @@ def test_solve_fix_outlier_node_detected_and_excluded():
             "sync_tx_lon":            SYNC_TX_LON,
             "node_lat":               nlat,
             "node_lon":               nlon,
-            "sync_delta_ns":          sync_delta_ns,
+            "sync_to_snippet_start_ns":          sync_to_snippet_start_ns,
             "corr_peak":              0.85,
             "onset_time_ns":          1_700_000_000_000_000_000,
             "iq_snippet_b64":         _make_snippet_b64(carrier_delay),
@@ -355,11 +355,11 @@ def test_solve_fix_outlier_node_detected_and_excluded():
             "transition_end":         onset_pos + _RAMP_SAMPLES + 1000,
         })
 
-    # Corrupt node-D's sync_delta_ns: add 400 usec (~120 km equivalent) of
+    # Corrupt node-D's sync_to_snippet_start_ns: add 400 usec (~120 km equivalent) of
     # error.  This stays within T_sync/2 (421 usec) so disambiguation does
     # not mask it.  The 3 good nodes produce small TDOA residuals; all pairs
     # involving node-D have ~400 usec residual, triggering outlier detection.
-    events[3]["sync_delta_ns"] += 400_000  # +400 usec
+    events[3]["sync_to_snippet_start_ns"] += 400_000  # +400 usec
 
     result = solve_fix(
         events, 47.6, -122.3,

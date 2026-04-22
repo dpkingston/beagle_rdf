@@ -140,8 +140,8 @@ def main() -> int:
         tag = "ONSET " if m.event_type == "onset" else "OFFSET"
         print(
             f"  {tag} #{len(measurements):<4d}"
-            f"  sync_delta={m.sync_delta_ns:+12,d} ns"
-            f"  ({m.sync_delta_ns / 1e6:+.3f} ms)"
+            f"  sync_delta={m.sync_to_snippet_start_ns:+12,d} ns"
+            f"  ({m.sync_to_snippet_start_ns / 1e6:+.3f} ms)"
             f"  corr={m.corr_peak:.3f}"
             f"  power={m.onset_power_db:.1f} dBFS"
         )
@@ -267,9 +267,9 @@ def main() -> int:
     print(f"Measurements:           {len(measurements)}")
 
     if len(measurements) >= 2:
-        deltas = [m.sync_delta_ns for m in measurements]
+        deltas = [m.sync_to_snippet_start_ns for m in measurements]
         mean_ns = sum(deltas) // len(deltas)
-        print(f"sync_delta_ns:          mean={mean_ns:+,}  min={min(deltas):+,}  max={max(deltas):+,}")
+        print(f"sync_to_snippet_start_ns:          mean={mean_ns:+,}  min={min(deltas):+,}  max={max(deltas):+,}")
 
     actual_sync_rate = sync_event_count / max(elapsed, 1)
     if sync_event_count == 0:

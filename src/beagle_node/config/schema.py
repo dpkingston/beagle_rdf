@@ -65,8 +65,8 @@ class FreqHopConfig(BaseModel):
 
     Because freq_hop processes channels sequentially (sync block then target
     block), the sync event matched to an onset occurred in a preceding sync
-    block.  sync_delta_ns therefore includes the remaining time in the sync
-    block after the last sync event, plus settling_samples/sample_rate_hz,
+    block.  sync_to_snippet_start_ns therefore includes the remaining time in
+    the sync block after the last sync event, plus settling_samples/sample_rate_hz,
     plus the time to onset detection within the target block.  This structural
     delay (typically 20-40 ms depending on block sizes and settling) is absent
     in RSPduo (simultaneous channels) and single_sdr nodes.

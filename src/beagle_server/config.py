@@ -89,7 +89,7 @@ class PairingConfig(BaseModel):
     Bucketing window (seconds) for T_sync - the estimated absolute time of the FM
     sync event at the transmitter, computed per-event as:
 
-        T_sync = onset_time_ns - sync_delta_ns - dist(sync_tx, node) / c
+        T_sync = onset_time_ns - sync_to_snippet_start_ns - dist(sync_tx, node) / c
 
     Events from different nodes whose T_sync values fall in the same bucket are
     treated as hearing the same LMR transmission.  Rapid key-ups produce distinct

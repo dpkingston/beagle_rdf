@@ -24,7 +24,7 @@ def make_event(
     event_type: str = "onset",
     sync_tx_id: str = "KISW_99.9",
     onset_time_ns: int = _NOW_NS,
-    sync_delta_ns: int = 500_000_000,
+    sync_to_snippet_start_ns: int = 500_000_000,
     corr_peak: float = 0.8,
     event_id: str | None = None,
 ) -> dict:
@@ -35,7 +35,7 @@ def make_event(
         "event_type":    event_type,
         "sync_tx_id":    sync_tx_id,
         "onset_time_ns": onset_time_ns,
-        "sync_delta_ns": sync_delta_ns,
+        "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
         "corr_peak":     corr_peak,
         "node_lat":      47.6,
         "node_lon":      -122.3,
@@ -142,7 +142,7 @@ async def test_duplicate_event_id_not_double_counted():
     """
     Submitting the same event_id twice (amendment) must not double the event.
 
-    Realistic scenario: the amendment corrects sync_delta_ns by a few nanoseconds.
+    Realistic scenario: the amendment corrects sync_to_snippet_start_ns by a few nanoseconds.
     Both versions must land in the same T_sync bucket (same transmission).
     """
     received_groups: list[list] = []
@@ -154,16 +154,16 @@ async def test_duplicate_event_id_not_double_counted():
     # Node A reports 500 ms + 100 ns after its FM sync event, then amends to +200 ns.
     # Node B independently heard the same LMR onset at 500 ms + 0 ns.
     # All three events have T_sync within ~200 ns of each other - same group.
-    await pairer.add_event(make_event("A", event_id="same-id", sync_delta_ns=500_000_100))
-    await pairer.add_event(make_event("A", event_id="same-id", sync_delta_ns=500_000_200))  # amendment
-    await pairer.add_event(make_event("B", event_id="b-id", sync_delta_ns=500_000_000))
+    await pairer.add_event(make_event("A", event_id="same-id", sync_to_snippet_start_ns=500_000_100))
+    await pairer.add_event(make_event("A", event_id="same-id", sync_to_snippet_start_ns=500_000_200))  # amendment
+    await pairer.add_event(make_event("B", event_id="b-id", sync_to_snippet_start_ns=500_000_000))
 
     await asyncio.sleep(0.05)
 
     assert len(received_groups) == 1
     node_a_events = [e for e in received_groups[0] if e["node_id"] == "A"]
     assert len(node_a_events) == 1
-    assert node_a_events[0]["sync_delta_ns"] == 500_000_200  # amendment overwrote
+    assert node_a_events[0]["sync_to_snippet_start_ns"] == 500_000_200  # amendment overwrote
 
 
 @pytest.mark.asyncio
@@ -215,18 +215,18 @@ async def test_rapid_keyups_produce_separate_groups():
     # correlation_window_s=0.2 -> half-window 100ms; 500ms separation -> separate groups
     pairer = EventPairer(cb, delivery_buffer_s=0.01, correlation_window_s=0.2, min_nodes=2)
 
-    # Transmission 1: onset_time_ns = _NOW_NS, sync_delta_ns = 500_000_000
+    # Transmission 1: onset_time_ns = _NOW_NS, sync_to_snippet_start_ns = 500_000_000
     await pairer.add_event(make_event("A", event_id="t1-a",
-                                     onset_time_ns=_NOW_NS, sync_delta_ns=500_000_000))
+                                     onset_time_ns=_NOW_NS, sync_to_snippet_start_ns=500_000_000))
     await pairer.add_event(make_event("B", event_id="t1-b",
-                                     onset_time_ns=_NOW_NS, sync_delta_ns=500_000_000))
+                                     onset_time_ns=_NOW_NS, sync_to_snippet_start_ns=500_000_000))
 
     # Transmission 2: 500 ms later - different T_sync, goes to a different bucket
     onset2 = _NOW_NS + 500_000_000  # 500 ms later
     await pairer.add_event(make_event("A", event_id="t2-a",
-                                     onset_time_ns=onset2, sync_delta_ns=500_000_000))
+                                     onset_time_ns=onset2, sync_to_snippet_start_ns=500_000_000))
     await pairer.add_event(make_event("B", event_id="t2-b",
-                                     onset_time_ns=onset2, sync_delta_ns=500_000_000))
+                                     onset_time_ns=onset2, sync_to_snippet_start_ns=500_000_000))
 
     await asyncio.sleep(0.05)
 
@@ -261,10 +261,10 @@ async def test_freq_hop_sync_delta_groups_with_rspduo():
 
     await pairer.add_event(make_event("rtlsdr-north", event_id="fh-1",
                                       onset_time_ns=_NOW_NS,
-                                      sync_delta_ns=32_600_000))
+                                      sync_to_snippet_start_ns=32_600_000))
     await pairer.add_event(make_event("rspduo-north", event_id="rsp-1",
                                       onset_time_ns=_NOW_NS,
-                                      sync_delta_ns=4_600_000))
+                                      sync_to_snippet_start_ns=4_600_000))
 
     await asyncio.sleep(0.05)
 
@@ -306,11 +306,11 @@ async def test_cross_node_clock_offset_paired_via_pilot_disambiguation():
     # freq_hop node: accurate NTP
     await pairer.add_event(make_event("rtlsdr-server", event_id="fh-1",
                                       onset_time_ns=_NOW_NS,
-                                      sync_delta_ns=32_600_000))
+                                      sync_to_snippet_start_ns=32_600_000))
     # RSPduo node: HAS_TIME anchor captured when NTP was 315 ms ahead
     await pairer.add_event(make_event("rspduo-node", event_id="rsp-1",
                                       onset_time_ns=_NOW_NS + 315_000_000,
-                                      sync_delta_ns=5_000_000))
+                                      sync_to_snippet_start_ns=5_000_000))
 
     await asyncio.sleep(0.05)
 
@@ -343,19 +343,19 @@ async def test_same_node_rapid_keyups_not_merged_by_disambiguation():
     # Transmission 1
     await pairer.add_event(make_event("A", event_id="t1-A",
                                       onset_time_ns=_NOW_NS,
-                                      sync_delta_ns=500_000_000))
+                                      sync_to_snippet_start_ns=500_000_000))
     await pairer.add_event(make_event("B", event_id="t1-B",
                                       onset_time_ns=_NOW_NS,
-                                      sync_delta_ns=500_000_000))
+                                      sync_to_snippet_start_ns=500_000_000))
 
     # Transmission 2: 497 ms later - exactly 71 x 7 ms, so disambiguation
     # residual = 0 ms, but same-node guard must block the merge.
     await pairer.add_event(make_event("A", event_id="t2-A",
                                       onset_time_ns=_NOW_NS + 497_000_000,
-                                      sync_delta_ns=500_000_000))
+                                      sync_to_snippet_start_ns=500_000_000))
     await pairer.add_event(make_event("B", event_id="t2-B",
                                       onset_time_ns=_NOW_NS + 497_000_000,
-                                      sync_delta_ns=500_000_000))
+                                      sync_to_snippet_start_ns=500_000_000))
 
     await asyncio.sleep(0.05)
 
@@ -389,16 +389,16 @@ async def test_same_node_direct_match_not_merged():
     # Transmission 1: node A and B
     await pairer.add_event(make_event("A", event_id="t1-A",
                                       onset_time_ns=_NOW_NS,
-                                      sync_delta_ns=500_000_000))
+                                      sync_to_snippet_start_ns=500_000_000))
     await pairer.add_event(make_event("B", event_id="t1-B",
                                       onset_time_ns=_NOW_NS,
-                                      sync_delta_ns=500_000_000))
+                                      sync_to_snippet_start_ns=500_000_000))
 
     # Transmission 2: 50 ms later (within 100 ms half-window) — same node B
     # sends a second event.  Must NOT join t1's group.
     await pairer.add_event(make_event("B", event_id="t2-B",
                                       onset_time_ns=_NOW_NS + 50_000_000,
-                                      sync_delta_ns=500_000_000))
+                                      sync_to_snippet_start_ns=500_000_000))
 
     await asyncio.sleep(0.05)
 
@@ -439,10 +439,10 @@ async def test_tsync_near_boundary_merged_into_one_group():
     # T_sync difference == onset_time_ns difference.
     await pairer.add_event(make_event("A", event_id="e-A",
                                      onset_time_ns=_NOW_NS,
-                                     sync_delta_ns=500_000_000))
+                                     sync_to_snippet_start_ns=500_000_000))
     await pairer.add_event(make_event("B", event_id="e-B",
                                      onset_time_ns=_NOW_NS + 80_000_000,  # 80 ms later
-                                     sync_delta_ns=500_000_000))
+                                     sync_to_snippet_start_ns=500_000_000))
 
     await asyncio.sleep(0.05)
 

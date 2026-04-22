@@ -267,8 +267,8 @@ class EventReporter:
     def _deliver(self, client: httpx.Client, event: CarrierEvent) -> None:
         if self._disabled:
             logger.info(
-                "Event (local-only): sync_delta_ns=%d corr=%.3f channel=%.3f MHz",
-                event.sync_delta_ns, event.sync_corr_peak,
+                "Event (local-only): sync_to_snippet_start_ns=%d corr=%.3f channel=%.3f MHz",
+                event.sync_to_snippet_start_ns, event.sync_corr_peak,
                 event.channel_frequency_hz / 1e6,
             )
             with self._lock:

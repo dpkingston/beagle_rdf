@@ -203,7 +203,7 @@ def solve_fix(
         List of event dicts from at least 2 distinct nodes.
         Each must have: node_id, node_lat, node_lon,
         sync_tx_lat, sync_tx_lon, onset_time_ns, channel_hz, event_type,
-        sync_delta_ns.
+        sync_to_snippet_start_ns.
     search_center_lat, search_center_lon :
         Initial search point and centre of the bounding box.
     search_radius_km :
@@ -246,7 +246,8 @@ def solve_fix(
         )
         return None
 
-    # Build TDOA pairs from sync_delta subtraction + path-delay correction.
+    # Build TDOA pairs from sync_to_snippet_start subtraction + knee offset
+    # + path-delay correction.  See compute_tdoa_s for details.
     pairs: list[tuple[int, int, float]] = []
     for i in range(len(node_events)):
         for j in range(i + 1, len(node_events)):
@@ -262,7 +263,7 @@ def solve_fix(
 
     if not pairs:
         logger.warning(
-            "No valid TDOA pairs for group (sync_delta_ns missing); fix skipped."
+            "No valid TDOA pairs for group (sync_to_snippet_start_ns missing); fix skipped."
         )
         return None
 

@@ -144,7 +144,7 @@ def _iq_to_b64(iq: np.ndarray) -> str:
 
 
 def _make_event_with_snippet(
-    node_lat, node_lon, sync_delta_ns, snippet_b64,
+    node_lat, node_lon, sync_to_snippet_start_ns, snippet_b64,
     sample_rate_hz=64_000.0, node_id="test", event_type="onset",
     transition_start=None, transition_end=None,
 ):
@@ -158,7 +158,7 @@ def _make_event_with_snippet(
         transition_end = 1024 if event_type == "onset" else 1100
     return {
         "node_id": node_id,
-        "sync_delta_ns": sync_delta_ns,
+        "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
         "sync_tx_lat": 47.6,
         "sync_tx_lon": -122.3,
         "node_lat": node_lat,
@@ -423,7 +423,7 @@ def test_compute_tdoa_returns_none_flat_signal():
     }
     ev_b = dict(ev_a)
     ev_b["node_id"] = "b"
-    # No sync_delta_ns -> fallback unavailable
+    # No sync_to_snippet_start_ns -> fallback unavailable
     tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=2.0)
     assert tdoa is None
 

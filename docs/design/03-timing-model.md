@@ -9,7 +9,7 @@ Beagle uses a better approach: **measure the time difference between the sync si
 ## Measurement Formula
 
 ```
-sync_delta_ns = (N_target - N_sync) x 1_000_000_000 / sample_rate_hz
+sync_to_snippet_start_ns = (N_target - N_sync) x 1_000_000_000 / sample_rate_hz
 ```
 
 Where:
@@ -64,7 +64,7 @@ applied by `DeltaComputer` when converting sample indices to nanoseconds:
 
 ```
 corrected_rate = nominal_rate * sample_rate_correction
-sync_delta_ns  = round(delta_samples * 1e9 / corrected_rate)
+sync_to_snippet_start_ns  = round(delta_samples * 1e9 / corrected_rate)
 ```
 
 After calibration, crystal error is reduced to <1 ppm, cutting timing error
@@ -83,7 +83,7 @@ ADC:   |--------------------------------------------------------------- continuo
 Index: |0         N        |N         2N         |2N        3N      |
 ```
 
-Sample indices are from one unbroken stream - `sync_delta_ns` is computed directly from sample index arithmetic. No inter-device synchronization needed.
+Sample indices are from one unbroken stream - `sync_to_snippet_start_ns` is computed directly from sample index arithmetic. No inter-device synchronization needed.
 
 **Settling time handling:** After each frequency switch, the tuner takes 10-100 ms to stabilize. The first `settling_samples` (default: 40,960 ~ 20 ms at 2.048 MSPS) of each block are discarded in `FreqHopSDRReceiver`. The remaining samples are valid.
 
@@ -102,7 +102,7 @@ In software:
 ```
 t_sync_event   = (N_sync_event  - N_pps_sync)   / rate_sync
 t_target_onset = (N_target_onset - N_pps_target) / rate_target
-sync_delta_ns  = (t_target_onset - t_sync_event) x 1e9
+sync_to_snippet_start_ns  = (t_target_onset - t_sync_event) x 1e9
 ```
 
 This eliminates USB jitter from the measurement. The only sources of error are GPS 1PPS jitter (<100 ns) and spike detection accuracy (~0.5 usec at 2 MSPS).
@@ -132,7 +132,7 @@ is no inter-channel USB jitter. The timing model is nearly identical to
 `freq_hop`:
 
 ```
-sync_delta_ns = (N_target - N_sync) x 1_000_000_000 / sample_rate_hz
+sync_to_snippet_start_ns = (N_target - N_sync) x 1_000_000_000 / sample_rate_hz
               - pipeline_offset_ns
 ```
 
@@ -157,7 +157,7 @@ A single wideband SDR (e.g. HydraSDR RFOne) captures both FM and LMR simultaneou
 
 ## Why Absolute GPS Timestamps Are Still Useful
 
-Even though `sync_delta_ns` is the precise TDOA measurement, we still include `onset_time_ns` (from the GPS-disciplined kernel clock) in `CarrierEvent`. The aggregation server uses this for **event association**: it needs to identify which events from different nodes correspond to the same LMR transmission. With `onset_time_ns` accurate to +/-10 ms and typical LMR PTT durations of >1 second, the server can reliably match events across nodes using a +/-200 ms time window.
+Even though `sync_to_snippet_start_ns` is the precise TDOA measurement, we still include `onset_time_ns` (from the GPS-disciplined kernel clock) in `CarrierEvent`. The aggregation server uses this for **event association**: it needs to identify which events from different nodes correspond to the same LMR transmission. With `onset_time_ns` accurate to +/-10 ms and typical LMR PTT durations of >1 second, the server can reliably match events across nodes using a +/-200 ms time window.
 
 ## Error Budget
 
@@ -208,7 +208,7 @@ produce **uniformly constructed measurements**.
 
 ### Principles
 
-1. **Measurements should be hardware-agnostic.**  The `sync_delta_ns`,
+1. **Measurements should be hardware-agnostic.**  The `sync_to_snippet_start_ns`,
    `onset_time_ns`, and IQ snippet delivered by every node must have the
    same semantic meaning regardless of the SDR hardware, carrier detector
    thresholds, or pipeline parameters used to produce them.  Two nodes
@@ -241,7 +241,7 @@ produce **uniformly constructed measurements**.
 
 ### What the server may assume
 
-- `sync_delta_ns` is the time from the most recent **RDS bit-transition sync
+- `sync_to_snippet_start_ns` is the time from the most recent **RDS bit-transition sync
   event** to the carrier edge, measured on a single continuous sample clock,
   corrected for crystal rate error.  It may span multiple RDS bit periods;
   the server reduces it modulo the bit period (`1e9 / 1187.5 = 842,105 ns`)
@@ -261,7 +261,7 @@ produce **uniformly constructed measurements**.
   `settling_samples`, or `pipeline_offset_ns`.
 - That all nodes use the same sample rate (resampling is the server's
   responsibility for cross-correlation).
-- That `sync_delta_ns` is within one RDS bit period (it may span many;
+- That `sync_to_snippet_start_ns` is within one RDS bit period (it may span many;
   modular reduction is applied at pairing time, and geometric disambiguation
   is applied during TDOA computation).
 

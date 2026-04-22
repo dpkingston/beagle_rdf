@@ -221,7 +221,7 @@ complex exponential template. The new approach:
 
 | File | Change |
 |------|--------|
-| `tdoa.py` | In `compute_tdoa_s()`, when both events carry `sync_snippet_b64`, cross-correlate the wideband sync snippets for a fine timing offset to apply on top of the coarse `sync_delta_ns` difference. This is analogous to how carrier IQ snippet xcorr works, but applied to the sync path. |
+| `tdoa.py` | In `compute_tdoa_s()`, when both events carry `sync_snippet_b64`, cross-correlate the wideband sync snippets for a fine timing offset to apply on top of the coarse `sync_to_snippet_start_ns` difference. This is analogous to how carrier IQ snippet xcorr works, but applied to the sync path. |
 | `api.py` | Accept the new field in event ingest (already permissive via `raw_json`). |
 
 **Data volume impact:** Each sync snippet would be ~1792 samples at 256 kHz

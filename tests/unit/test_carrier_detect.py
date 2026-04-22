@@ -1443,9 +1443,11 @@ class TestOffsetSampleIndexRefinement:
     def test_deferred_path_sample_index_near_shutoff(self):
         """
         With post_windows > 0 (deferred emission path), sample_index is the
-        detection point (threshold crossing).  It is near the shutoff, offset
-        by the min_release debounce plus the smoothing delay.  The server's
-        xcorr aligns the actual PA features across nodes.
+        first sample of the shipped snippet.  The snippet's ``transition_end``
+        gives the detection-point offset within the snippet, so the absolute
+        shutoff (detection) sample is ``sample_index + transition_end``.  That
+        value is near the actual PA shutoff, offset by the min_release debounce
+        plus smoothing delay.
         """
         rng = np.random.default_rng(7)
         det = self._make_det(post_windows=5)
@@ -1454,19 +1456,19 @@ class TestOffsetSampleIndexRefinement:
         offsets = [e for e in events if isinstance(e, CarrierOffset)]
         assert offsets, "No CarrierOffset emitted on deferred path"
 
-        idx = offsets[0].sample_index
-        # Detection fires min_release windows after first below-threshold.
-        # sample_index is the detection point, a few windows past shutoff.
+        ev = offsets[0]
+        detection_abs = ev.sample_index + ev.transition_end
         max_delay = (self._MIN_RELEASE + 2) * self._WINDOW
-        assert 0 <= idx - shutoff <= max_delay, (
-            f"Deferred path: sample_index={idx} is {idx - shutoff:+.0f} samples "
+        assert 0 <= detection_abs - shutoff <= max_delay, (
+            f"Deferred path: detection_abs={detection_abs} (sample_index={ev.sample_index} "
+            f"+ transition_end={ev.transition_end}) is {detection_abs - shutoff:+.0f} samples "
             f"from shutoff at {shutoff}; expected 0..{max_delay}"
         )
 
     def test_immediate_path_sample_index_near_shutoff(self):
         """
-        With post_windows=0 (immediate emission path), sample_index is the
-        detection point, a few windows past the actual PA shutoff.
+        With post_windows=0 (immediate emission path), sample_index is again
+        the snippet-start sample; absolute detection = sample_index + transition_end.
         """
         rng = np.random.default_rng(13)
         det = self._make_det(post_windows=0)
@@ -1475,9 +1477,11 @@ class TestOffsetSampleIndexRefinement:
         offsets = [e for e in events if isinstance(e, CarrierOffset)]
         assert offsets, "No CarrierOffset emitted on immediate path"
 
-        idx = offsets[0].sample_index
+        ev = offsets[0]
+        detection_abs = ev.sample_index + ev.transition_end
         max_delay = (self._MIN_RELEASE + 2) * self._WINDOW
-        assert 0 <= idx - shutoff <= max_delay, (
-            f"Immediate path: sample_index={idx} is {idx - shutoff:+.0f} samples "
+        assert 0 <= detection_abs - shutoff <= max_delay, (
+            f"Immediate path: detection_abs={detection_abs} (sample_index={ev.sample_index} "
+            f"+ transition_end={ev.transition_end}) is {detection_abs - shutoff:+.0f} samples "
             f"from shutoff at {shutoff}; expected 0..{max_delay}"
         )

@@ -56,7 +56,7 @@ sync_delta_corrected_ns = sync_delta_raw_ns - (0.5 / sample_rate_hz) x 1e9
 ```
 
 This makes the RSPduo timing model almost identical to `freq_hop`: both
-channels share one continuous sample clock, so `sync_delta_ns` is simply
+channels share one continuous sample clock, so `sync_to_snippet_start_ns` is simply
 `(target_sample - sync_sample) x 1e9 / rate - pipeline_offset_ns`.
 No `PPSAnchor` machinery is needed.
 
@@ -130,7 +130,7 @@ The `rspduo` mode is implemented as a first-class SDR mode alongside
   `pipeline_offset_ns` (default 0; calibrate empirically).
 - **`sdr/factory.py`** - `create_receiver()` handles `sdr_mode="rspduo"`.
 - **`main.py`** - dedicated `rspduo` loop branch using `paired_stream()`;
-  `pipeline_offset_ns` is subtracted from every `sync_delta_ns` before
+  `pipeline_offset_ns` is subtracted from every `sync_to_snippet_start_ns` before
   the `CarrierEvent` is submitted to the reporter.
 - **No changes** to `sync_detector.py`, `carrier_detect.py`, or `delta.py` --
   the timing model is identical to `freq_hop`.

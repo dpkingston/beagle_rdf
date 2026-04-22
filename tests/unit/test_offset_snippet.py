@@ -380,17 +380,24 @@ class TestLowSNR:
         assert len(onsets) >= 1, "No onset at 15 dB SNR"
         assert len(offsets) >= 1, "No offset at 15 dB SNR"
 
-        # Onset sample_index should be near PA on (4000 + rise)
+        # sample_index is now the snippet-start sample; detection is at
+        # sample_index + transition_start for onsets (or + transition_end
+        # for offsets).  That detection point should be near the actual PA
+        # event.
         rise_samples = int(500.0 * sample_rate / 1e6)
-        expected_onset = 4000 + rise_samples
-        assert abs(onsets[0].sample_index - expected_onset) < 4 * window, (
-            f"Onset sample_index={onsets[0].sample_index}, "
-            f"expected near {expected_onset} (+/-{4 * window})"
+        expected_onset_det = 4000 + rise_samples
+        onset_det_abs = onsets[0].sample_index + onsets[0].transition_start
+        assert abs(onset_det_abs - expected_onset_det) < 4 * window, (
+            f"Onset detection={onset_det_abs} (sample_index={onsets[0].sample_index} "
+            f"+ transition_start={onsets[0].transition_start}), "
+            f"expected near {expected_onset_det} (+/-{4 * window})"
         )
 
-        # Offset sample_index should be near PA off (8000)
-        assert abs(offsets[0].sample_index - 8000) < 4 * window, (
-            f"Offset sample_index={offsets[0].sample_index}, "
+        # Offset detection should be near PA off (8000)
+        offset_det_abs = offsets[0].sample_index + offsets[0].transition_end
+        assert abs(offset_det_abs - 8000) < 4 * window, (
+            f"Offset detection={offset_det_abs} (sample_index={offsets[0].sample_index} "
+            f"+ transition_end={offsets[0].transition_end}), "
             f"expected near 8000 (+/-{4 * window})"
         )
 

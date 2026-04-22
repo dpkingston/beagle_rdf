@@ -96,7 +96,7 @@ def _make_event(node_id: str, node_lat: float, node_lon: float,
             "longitude_deg": node_lon,
         },
         "channel_frequency_hz": channel_hz,
-        "sync_delta_ns": sync_delta,
+        "sync_to_snippet_start_ns": sync_delta,
         "sync_transmitter": {
             "station_id": _SYNC_TX_ID,
             "frequency_hz": 99_900_000,

@@ -14,7 +14,7 @@ Two operating modes
 
 --simulate
     Monte Carlo: synthesise N transmission events, add Gaussian noise to each
-    node's sync_delta_ns, compute TDOA statistics and position error.
+    node's sync_to_snippet_start_ns, compute TDOA statistics and position error.
     No hardware required.  Useful for pre-deployment threshold selection
     and for comparing SDR types by their expected pilot-extraction sigma.
 
@@ -132,9 +132,9 @@ def _true_sync_delta_ns(
     sync_lat: float, sync_lon: float,
 ) -> float:
     """
-    Compute the true (noiseless) sync_delta_ns for a node.
+    Compute the true (noiseless) sync_to_snippet_start_ns for a node.
 
-    sync_delta_ns = (dist(tx, node) - dist(sync, node)) / c * 1e9
+    sync_to_snippet_start_ns = (dist(tx, node) - dist(sync, node)) / c * 1e9
     """
     d_tx = haversine_m(tx_lat, tx_lon, node_lat, node_lon)
     d_sync = haversine_m(sync_lat, sync_lon, node_lat, node_lon)
@@ -145,7 +145,7 @@ def _make_event(
     node_id: str,
     node_lat: float,
     node_lon: float,
-    sync_delta_ns: float,
+    sync_to_snippet_start_ns: float,
     sync_tx_lat: float,
     sync_tx_lon: float,
     channel_hz: float = 155_100_000.0,
@@ -158,7 +158,7 @@ def _make_event(
         "node_id": node_id,
         "node_lat": node_lat,
         "node_lon": node_lon,
-        "sync_delta_ns": int(sync_delta_ns),
+        "sync_to_snippet_start_ns": int(sync_to_snippet_start_ns),
         "sync_tx_lat": sync_tx_lat,
         "sync_tx_lon": sync_tx_lon,
         "channel_hz": channel_hz,
@@ -180,7 +180,7 @@ def run_simulate(args: argparse.Namespace) -> None:
     sync_tx_lat, sync_tx_lon = _SYNC_TX
     tx_lat, tx_lon = _TRANSMITTER
 
-    # Pre-compute true sync_delta_ns for each node position
+    # Pre-compute true sync_to_snippet_start_ns for each node position
     true_deltas: dict[str, float] = {}
     sigmas: dict[str, float] = {
         "A": sigma_a_ns,
@@ -320,7 +320,7 @@ def _load_events_from_db(
     try:
         placeholders = ",".join("?" * len(node_ids))
         query = (
-            "SELECT node_id, sync_delta_ns, sync_tx_lat, sync_tx_lon, "
+            "SELECT node_id, sync_to_snippet_start_ns, sync_tx_lat, sync_tx_lon, "
             "node_lat, node_lon, event_type, onset_time_ns, corr_peak, "
             "channel_hz, raw_json "
             f"FROM events WHERE node_id IN ({placeholders})"
@@ -544,8 +544,8 @@ def run_db_analysis(args: argparse.Namespace) -> None:
             # difference.  Wall-clock disambiguation was a hold-over from when
             # T_sync was 7 ms (pilot period); with RDS sync at 842 usec, NTP
             # jitter alone can push n far off and reapply the wall-clock offset.
-            delta_a = ev_a.get("sync_delta_ns")
-            delta_b = ev_b.get("sync_delta_ns")
+            delta_a = ev_a.get("sync_to_snippet_start_ns")
+            delta_b = ev_b.get("sync_to_snippet_start_ns")
             sync_method = "no sync_delta"
             if delta_a is not None and delta_b is not None:
                 raw_ns = float(delta_a) - float(delta_b)

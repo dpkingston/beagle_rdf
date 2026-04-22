@@ -316,12 +316,12 @@ node is operational and producing fixes.  The system works well without it --
 calibration only improves accuracy on the sync_delta fallback path.
 
 `pipeline_offset_ns` corrects a systematic bias in the **sync_delta** timing
-path -- it is subtracted from `sync_delta_ns` before each event is submitted.
+path -- it is subtracted from `sync_to_snippet_start_ns` before each event is submitted.
 
 **Why this is optional:** the xcorr primary TDOA path (~80% of pairs) is
 completely independent of `pipeline_offset_ns`.  Cross-correlation measures the
 physical carrier arrival time difference directly from the IQ snippets, with no
-reference to `sync_delta_ns` or wall-clock timestamps.  `pipeline_offset_ns`
+reference to `sync_to_snippet_start_ns` or wall-clock timestamps.  `pipeline_offset_ns`
 only affects the sync_delta fallback path (~20% of pairs, used when xcorr SNR
 is too low or snippets are absent).
 
@@ -333,7 +333,7 @@ for all-RSPduo deployments; the residual 250 ns contributes ~75 m of position
 error on the fallback path, negligible compared to NTP uncertainty.
 
 **RTL-SDR freq_hop**: because sync and target blocks are captured sequentially,
-`sync_delta_ns` includes a structural inter-block delay (settling + frequency-
+`sync_to_snippet_start_ns` includes a structural inter-block delay (settling + frequency-
 switch time, typically 20-40 ms) that RSPduo nodes do not have.  This causes
 a large systematic error in the sync_delta fallback path when pairing a
 freq_hop node against an RSPduo node.  Calibrate `pipeline_offset_ns` in the

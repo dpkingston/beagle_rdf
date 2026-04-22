@@ -1,9 +1,9 @@
 # Copyright (c) 2026 Douglas P. Kingston III. MIT License - see LICENSE.
 """
-Integration test: synthetic FM (pilot + RDS) + LMR carrier -> correct sync_delta_ns.
+Integration test: synthetic FM (pilot + RDS) + LMR carrier -> correct sync_to_snippet_start_ns.
 
 This test drives the full NodePipeline with synthetic IQ and verifies that
-the measured sync_delta_ns is reasonable given a known carrier onset time.
+the measured sync_to_snippet_start_ns is reasonable given a known carrier onset time.
 
 Setup
 -----
@@ -133,7 +133,7 @@ class TestPipelineE2E:
 
     def test_sync_delta_ns_reasonable(self):
         """
-        sync_delta_ns should be positive and bounded.
+        sync_to_snippet_start_ns should be positive and bounded.
 
         With RDS sync events every ~842 usec, the nearest preceding sync event
         should be very close.  Allow up to max_sync_age (~80 ms) to account
@@ -148,10 +148,10 @@ class TestPipelineE2E:
 
         m = measurements[0]
         # Must be non-negative (onset after sync)
-        assert m.sync_delta_ns >= 0, f"Negative sync_delta_ns: {m.sync_delta_ns}"
+        assert m.sync_to_snippet_start_ns >= 0, f"Negative sync_to_snippet_start_ns: {m.sync_to_snippet_start_ns}"
         # Must be within max_sync_age (~80 ms)
-        assert m.sync_delta_ns <= 80_000_000, \
-            f"sync_delta_ns too large: {m.sync_delta_ns} ns"
+        assert m.sync_to_snippet_start_ns <= 80_000_000, \
+            f"sync_to_snippet_start_ns too large: {m.sync_to_snippet_start_ns} ns"
 
     def test_measurement_fields_populated(self):
         """All TDOAMeasurement fields should be set sensibly."""
@@ -167,12 +167,12 @@ class TestPipelineE2E:
         assert 0.99 <= m.sample_rate_correction <= 1.01
         assert m.corr_peak >= 0.0
         assert m.pps_anchored is False
-        assert m.target_sample > m.sync_sample
+        assert m.snippet_start_sample > m.sync_sample
 
     def test_multiple_buffers_produce_consistent_results(self):
         """
         Splitting the same IQ data into different buffer sizes should produce
-        similar sync_delta_ns (verifying state continuity across buffers).
+        similar sync_to_snippet_start_ns (verifying state continuity across buffers).
         """
         carrier_start = int(SDR_RATE * 0.600)
         total = int(SDR_RATE * 1.0)
@@ -183,10 +183,10 @@ class TestPipelineE2E:
         assert len(m_large) >= 1
         assert len(m_small) >= 1
 
-        # First measurement sync_delta_ns should be within 1 ms of each other
-        diff = abs(m_large[0].sync_delta_ns - m_small[0].sync_delta_ns)
+        # First measurement sync_to_snippet_start_ns should be within 1 ms of each other
+        diff = abs(m_large[0].sync_to_snippet_start_ns - m_small[0].sync_to_snippet_start_ns)
         assert diff < 1_000_000, \
-            f"Buffer-size sensitivity: {m_large[0].sync_delta_ns} vs {m_small[0].sync_delta_ns}"
+            f"Buffer-size sensitivity: {m_large[0].sync_to_snippet_start_ns} vs {m_small[0].sync_to_snippet_start_ns}"
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ class TestPipelineE2E:
 class TestFreqHopTiming:
     """
     Verify that the raw_start_sample offsets used in freq_hop mode produce
-    correct sync_delta_ns measurements.
+    correct sync_to_snippet_start_ns measurements.
 
     In freq_hop mode the ADC stream is split into alternating blocks:
       Block 0 (sync):   raw ADC samples [0,     B-1]
@@ -206,7 +206,7 @@ class TestFreqHopTiming:
 
     process_sync_buffer / process_target_buffer each receive the correct
     raw_start_sample so both channels share the same continuous sample-index
-    domain, enabling correct sync_delta_ns computation.
+    domain, enabling correct sync_to_snippet_start_ns computation.
     """
 
     BLOCK = 32_768   # raw samples per block (~16 ms at 2.048 MSPS)
@@ -276,20 +276,20 @@ class TestFreqHopTiming:
         assert len(measurements) >= 1
 
     def test_freq_hop_sync_delta_non_negative(self):
-        """Carrier onset follows sync events, so sync_delta_ns must be non-negative."""
+        """Carrier onset follows sync events, so sync_to_snippet_start_ns must be non-negative."""
         measurements = self._run_freq_hop(n_blocks=64, carrier_block=28)
         assert len(measurements) >= 1
-        assert measurements[0].sync_delta_ns >= 0, (
-            f"Negative sync_delta_ns: {measurements[0].sync_delta_ns}"
+        assert measurements[0].sync_to_snippet_start_ns >= 0, (
+            f"Negative sync_to_snippet_start_ns: {measurements[0].sync_to_snippet_start_ns}"
         )
 
     def test_freq_hop_sync_delta_reasonable(self):
-        """sync_delta_ns must be within max_sync_age (~80 ms)."""
+        """sync_to_snippet_start_ns must be within max_sync_age (~80 ms)."""
         measurements = self._run_freq_hop(n_blocks=64, carrier_block=28)
         assert len(measurements) >= 1
         m = measurements[0]
-        assert m.sync_delta_ns <= 80_000_000, (
-            f"sync_delta_ns too large: {m.sync_delta_ns} ns"
+        assert m.sync_to_snippet_start_ns <= 80_000_000, (
+            f"sync_to_snippet_start_ns too large: {m.sync_to_snippet_start_ns} ns"
         )
 
     def test_freq_hop_delta_reflects_block_offset(self):
@@ -337,11 +337,11 @@ class TestFreqHopTiming:
         if not m_hop or not measurements_no_offset:
             pytest.skip("No measurements produced - adjust thresholds")
 
-        delta_hop = m_hop[0].sync_delta_ns
-        delta_no  = measurements_no_offset[0].sync_delta_ns
+        delta_hop = m_hop[0].sync_to_snippet_start_ns
+        delta_no  = measurements_no_offset[0].sync_to_snippet_start_ns
 
         # In freq_hop the target is one full block (~16 ms) later in raw time,
-        # so its sync_delta_ns should be significantly larger.
+        # so its sync_to_snippet_start_ns should be significantly larger.
         assert delta_hop > delta_no, (
             f"Expected freq_hop delta ({delta_hop} ns) > no-offset delta ({delta_no} ns)"
         )

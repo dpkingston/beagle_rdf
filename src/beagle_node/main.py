@@ -465,7 +465,7 @@ def run(args: argparse.Namespace | None = None) -> int:
 
     target_ch = config.target_channels[0] if config.target_channels else None
 
-    # Per-mode pipeline offset (subtracted from every sync_delta_ns).
+    # Per-mode pipeline offset (subtracted from every sync_to_snippet_start_ns).
     # Each SDR mode corrects its own systematic delay relative to the
     # theoretical zero-delay reference (physical onset at antenna minus
     # physical pilot zero-crossing at antenna, no pipeline delay).
@@ -504,33 +504,33 @@ def run(args: argparse.Namespace | None = None) -> int:
             return
         if buf_wall_ns is not None:
             # Compute precise within-buffer onset position.
-            # m.target_sample is in *sync-decimated* space (sample_rate/8 = 256 kHz):
+            # m.snippet_start_sample is in *sync-decimated* space (sample_rate/8 = 256 kHz):
             # process_target_buffer maps carrier events from target space (/32) back
             # to raw (x32) then to sync space (/8) before passing to DeltaComputer.
             # Convert to raw (x8) and compute the signed offset from _buf_ref_sample
             # (the raw ADC position corresponding to buf_wall_ns).  Negative means
             # the event occurred before the reference point (freq_hop case); positive
             # means after (RSPduo HAS_TIME case where buf_wall_ns is buffer start).
-            raw_event_sample = m.target_sample * _sync_dec_factor
+            raw_event_sample = m.snippet_start_sample * _sync_dec_factor
             onset_offset_raw = raw_event_sample - _buf_ref_sample
             onset_offset_ns = int(onset_offset_raw * 1e9 / receiver.config.sample_rate_hz)
             onset_ns = buf_wall_ns + onset_offset_ns
             logger.debug(
-                "onset timing: mode=%s target_sample=%d raw_event=%d ref=%d "
+                "onset timing: mode=%s snippet_start_sample=%d raw_event=%d ref=%d "
                 "offset_raw=%d offset_ns=%d buf_wall_age_ms=%.1f onset_ns=%d",
-                config.sdr_mode, m.target_sample, raw_event_sample, _buf_ref_sample,
+                config.sdr_mode, m.snippet_start_sample, raw_event_sample, _buf_ref_sample,
                 onset_offset_raw, onset_offset_ns,
                 (time.time_ns() - buf_wall_ns) / 1e6, onset_ns,
             )
         else:
             onset_ns = int(time.time_ns())
         onset_ns -= config.clock.calibration_offset_ns
-        corrected_delta = m.sync_delta_ns - _pipeline_offset_ns
+        corrected_delta = m.sync_to_snippet_start_ns - _pipeline_offset_ns
         event = CarrierEvent(
             node_id=config.node_id,
             node_location=node_loc,
             channel_frequency_hz=target_ch.frequency_hz,
-            sync_delta_ns=corrected_delta,
+            sync_to_snippet_start_ns=corrected_delta,
             sync_transmitter=sync_tx,
             sdr_mode=config.sdr_mode,
             pps_anchored=m.pps_anchored,
@@ -556,11 +556,11 @@ def run(args: argparse.Namespace | None = None) -> int:
                 _json.dumps({
                     "stage": "event",
                     "event_type": m.event_type,
-                    "target_sample_sync": m.target_sample,
+                    "snippet_start_sample_sync": m.snippet_start_sample,
                     "sync_sample_float": round(m.sync_sample, 3),
-                    "raw_sync_delta_ns": m.sync_delta_ns,
+                    "raw_sync_to_snippet_start_ns": m.sync_to_snippet_start_ns,
                     "pipeline_offset_ns": _pipeline_offset_ns,
-                    "corrected_sync_delta_ns": corrected_delta,
+                    "corrected_sync_to_snippet_start_ns": corrected_delta,
                     "onset_ns": onset_ns,
                     "buf_wall_ns": buf_wall_ns,
                     "buf_ref_sample": _buf_ref_sample,
@@ -573,7 +573,7 @@ def run(args: argparse.Namespace | None = None) -> int:
         reporter.submit(event)
         health.record_event()
         logger.info(
-            "Measurement: %s sync_delta_ns=%d corr=%.3f",
+            "Measurement: %s sync_to_snippet_start_ns=%d corr=%.3f",
             m.event_type, corrected_delta, m.corr_peak,
         )
 
@@ -647,7 +647,7 @@ def run(args: argparse.Namespace | None = None) -> int:
             if config.sdr_mode == "freq_hop" and hasattr(receiver, "labeled_stream"):
                 # Single ADC alternates sync/target blocks.  Track the running
                 # ADC sample position so both channels share the same continuous
-                # sample-index space, which DeltaComputer needs for sync_delta_ns.
+                # sample-index space, which DeltaComputer needs for sync_to_snippet_start_ns.
                 # With asymmetric blocks the two channels have different sizes, so
                 # a simple block_count * fixed_block formula is incorrect; we must
                 # accumulate the actual block sizes seen.

@@ -45,7 +45,7 @@ Beagle is a Time Difference of Arrival (TDOA) radio direction finding system usi
 3. **FM demodulation** - Discriminator demod on the sync channel (FM station)
 4. **RDS sync extraction** - Lock onto the 19 kHz FM stereo pilot via a narrowband complex correlator, track the unwrapped pilot phase, and derive RDS bit boundaries at `pilot/16 = 1187.5 Hz` (phase-locked by the IEC 62106 / NRSC-4-B standard).  One `SyncEvent` is emitted per bit boundary (~842 µs apart).  An earlier Mueller-Muller timing-recovery + Costas chain was replaced by this pilot-phase derivation because M&M would not lock reliably on a typical FM signal.
 5. **Carrier detection** - Hysteresis state machine on the target channel with **auto-tracked thresholds**: the detector continuously measures the idle noise floor (EMA) and sets `onset = floor + 12 dB`, `offset = floor + 6 dB` so detection follows changing noise conditions without operator intervention.  Produces `CarrierOnset` / `CarrierOffset` events.
-6. **Delta computation** - `sync_delta_ns = (target_onset_sample - sync_event_sample) * 1e9 / sample_rate`
+6. **Delta computation** - `sync_to_snippet_start_ns = (target_onset_sample - sync_event_sample) * 1e9 / sample_rate`
 7. **Event reporting** - Serialize `CarrierEvent` (including the raw IQ snippet and reported `transition_start` / `transition_end` bounds for server-side knee finding) -> HTTP POST to aggregation server
 8. **Server-side TDOA refinement** - The server finds the ramp-to-plateau knee in each snippet via `argmin` of the Savitzky-Golay second derivative of the power envelope, and uses a `SyncCalibrator` to track and subtract the per-pair pilot-phase grid offset before pilot-period disambiguation.
 
@@ -54,7 +54,7 @@ Beagle is a Time Difference of Arrival (TDOA) radio direction finding system usi
 ### What each node measures
 
 ```
-sync_delta_ns = (sample index of LMR carrier onset
+sync_to_snippet_start_ns = (sample index of LMR carrier onset
                - sample index of preceding RDS bit-transition sync event)
                x (1,000,000,000 / sample_rate_hz)
 ```
@@ -118,7 +118,7 @@ zero-crossings.
 Nodes POST JSON arrays of `CarrierEvent` objects to `POST /api/v1/events`.
 
 **Required fields for TDOA computation:**
-- `sync_delta_ns` - the precise timing measurement
+- `sync_to_snippet_start_ns` - the precise timing measurement
 - `sync_transmitter` - FM station ID and FCC-documented lat/lon
 - `onset_time_ns` - rough absolute time (for event association across nodes)
 - `node_location` - node lat/lon for path-delay correction

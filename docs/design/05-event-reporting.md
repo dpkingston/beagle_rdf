@@ -28,7 +28,7 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 
   "channel_frequency_hz": 462562500.0,
 
-  "sync_delta_ns":  12345678,
+  "sync_to_snippet_start_ns":  12345678,
   "sync_transmitter": {
     "station_id":     "KISW_99.9",
     "frequency_hz":   99900000.0,
@@ -80,7 +80,7 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `sync_delta_ns` | int | **Primary TDOA measurement.** Time from the preceding FM pilot sync event to this carrier edge, in nanoseconds, on the same local ADC sample clock. |
+| `sync_to_snippet_start_ns` | int | **Primary TDOA measurement.** Time from the preceding FM pilot sync event to this carrier edge, in nanoseconds, on the same local ADC sample clock. |
 | `sync_transmitter.station_id` | string | Human-readable FM station ID |
 | `sync_transmitter.frequency_hz` | float | FM carrier frequency (Hz) |
 | `sync_transmitter.latitude_deg` | float | FCC-documented transmitter latitude |
@@ -247,7 +247,7 @@ Monitor `events_dropped` (persistent queue overflow -> server unreachable) and
 Each successfully queued event logs at `INFO` level:
 
 ```
-Measurement: sync_delta_ns=12345678 corr=0.840
+Measurement: sync_to_snippet_start_ns=12345678 corr=0.840
 ```
 
 A `corr` below 0.3 warrants investigation (weak FM pilot, gain too low, wrong station).

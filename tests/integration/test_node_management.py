@@ -453,7 +453,7 @@ def _event_payload(node_id: str) -> dict:
             "longitude_deg": -122.4,
         },
         "channel_frequency_hz": 155_100_000.0,
-        "sync_delta_ns": 500_000_000,
+        "sync_to_snippet_start_ns": 500_000_000,
         "sync_transmitter": {
             "station_id": "KISW_99.9",
             "frequency_hz": 99_900_000.0,

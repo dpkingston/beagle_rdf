@@ -65,22 +65,22 @@ _TIMING_DIAG = os.environ.get("BEAGLE_TIMING_DIAG") == "1"
 @dataclass(frozen=True)
 class CarrierOnset:
     """LMR carrier has appeared."""
-    sample_index: int           # Detection point in the continuous IQ stream (window boundary)
+    sample_index: int           # Absolute stream sample index of the snippet's FIRST sample
     power_db: float             # Instantaneous power at detection
     noise_floor_db: float = -100.0  # EMA of idle-state power; used to compute SNR
     iq_snippet: bytes = b""    # int8-interleaved IQ bytes for cross-correlation
-    transition_start: int = 0  # Approximate transition zone start within snippet
-    transition_end: int = 0    # Approximate transition zone end within snippet
+    transition_start: int = 0  # Knee-search hint: samples into snippet, start of transition zone
+    transition_end: int = 0    # Knee-search hint: samples into snippet, end of transition zone
 
 
 @dataclass(frozen=True)
 class CarrierOffset:
     """LMR carrier has disappeared."""
-    sample_index: int           # Detection point in the continuous IQ stream (window boundary)
+    sample_index: int           # Absolute stream sample index of the snippet's FIRST sample
     power_db: float
     iq_snippet: bytes = b""    # int8-interleaved IQ bytes for cross-correlation
-    transition_start: int = 0  # Approximate transition zone start within snippet
-    transition_end: int = 0    # Approximate transition zone end within snippet
+    transition_start: int = 0  # Knee-search hint: samples into snippet, start of transition zone
+    transition_end: int = 0    # Knee-search hint: samples into snippet, end of transition zone
 
 
 _State = Literal["idle", "active"]
@@ -617,11 +617,11 @@ class CarrierDetector:
                 if self._pending_post_remaining <= 0 or opposite_fired:
                     ev: CarrierOnset | CarrierOffset
                     if self._pending_event_type == "onset":
-                        _onset_bytes, _det_idx, _t_start, _t_end = self._encode_combined(
+                        _onset_bytes, _snip_start, _t_start, _t_end = self._encode_combined(
                             self._pending_pre_snap, self._pending_post_buf
                         )
                         ev = CarrierOnset(
-                            sample_index=self._pending_pre_snap_start + _det_idx,
+                            sample_index=self._pending_pre_snap_start + _snip_start,
                             power_db=self._pending_power_db,
                             noise_floor_db=self._pending_noise_floor_db,
                             iq_snippet=_onset_bytes,
@@ -637,7 +637,7 @@ class CarrierDetector:
                                     "event_type": "onset",
                                     "sample_index": ev.sample_index,
                                     "pre_snap_start": _pre_start,
-                                    "det_idx_in_buf": _det_idx,
+                                    "snippet_start_in_buf": _snip_start,
                                     "transition_window": [_t_start, _t_end],
                                     "window_sample": self._pending_sample_index,
                                     "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
@@ -645,11 +645,11 @@ class CarrierDetector:
                                 }),
                             )
                     else:
-                        _offset_bytes, _det_idx, _t_start, _t_end = self._encode_offset_snippet(
+                        _offset_bytes, _snip_start, _t_start, _t_end = self._encode_offset_snippet(
                             self._pending_pre_snap, self._pending_post_buf
                         )
                         ev = CarrierOffset(
-                            sample_index=self._pending_pre_snap_start + _det_idx,
+                            sample_index=self._pending_pre_snap_start + _snip_start,
                             power_db=self._pending_power_db,
                             iq_snippet=_offset_bytes,
                             transition_start=_t_start,
@@ -664,7 +664,7 @@ class CarrierDetector:
                                     "event_type": "offset",
                                     "sample_index": ev.sample_index,
                                     "pre_snap_start": _pre_start,
-                                    "det_idx_in_buf": _det_idx,
+                                    "snippet_start_in_buf": _snip_start,
                                     "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
                                     "power_db": round(ev.power_db, 1),
                                 }),
@@ -701,9 +701,9 @@ class CarrierDetector:
                             else:
                                 _pre = list(self._iq_ring)
                                 _pre_start = window_sample - self._window // 2 - (len(_pre) - 1) * self._window
-                                _off_bytes, _cut, _t_s, _t_e = self._encode_offset_snippet(_pre)
+                                _off_bytes, _snip_start, _t_s, _t_e = self._encode_offset_snippet(_pre)
                                 self._emit(events, CarrierOffset(
-                                    sample_index=_pre_start + _cut,
+                                    sample_index=_pre_start + _snip_start,
                                     power_db=power_db,
                                     iq_snippet=_off_bytes,
                                     transition_start=_t_s,
@@ -864,9 +864,9 @@ class CarrierDetector:
                         else:
                             _pre = list(self._iq_ring)
                             _pre_start = window_sample - self._window // 2 - (len(_pre) - 1) * self._window
-                            _off_bytes, _cut, _t_s, _t_e = self._encode_offset_snippet(_pre)
+                            _off_bytes, _snip_start, _t_s, _t_e = self._encode_offset_snippet(_pre)
                             self._emit(events, CarrierOffset(
-                                sample_index=_pre_start + _cut,
+                                sample_index=_pre_start + _snip_start,
                                 power_db=power_db,
                                 iq_snippet=_off_bytes,
                                 transition_start=_t_s,
@@ -889,11 +889,11 @@ class CarrierDetector:
         if self._pending_event_type is not None:
             ev: CarrierOnset | CarrierOffset
             if self._pending_event_type == "onset":
-                _onset_bytes, _det_idx, _t_start, _t_end = self._encode_combined(
+                _onset_bytes, _snip_start, _t_start, _t_end = self._encode_combined(
                     self._pending_pre_snap, self._pending_post_buf
                 )
                 ev = CarrierOnset(
-                    sample_index=self._pending_pre_snap_start + _det_idx,
+                    sample_index=self._pending_pre_snap_start + _snip_start,
                     power_db=self._pending_power_db,
                     noise_floor_db=self._pending_noise_floor_db,
                     iq_snippet=_onset_bytes,
@@ -909,7 +909,7 @@ class CarrierDetector:
                             "event_type": "onset",
                             "sample_index": ev.sample_index,
                             "pre_snap_start": _pre_start,
-                            "det_idx_in_buf": _det_idx,
+                            "snippet_start_in_buf": _snip_start,
                             "transition_window": [_t_start, _t_end],
                             "window_sample": self._pending_sample_index,
                             "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
@@ -918,11 +918,11 @@ class CarrierDetector:
                         }),
                     )
             else:
-                _offset_bytes, _det_idx, _t_start, _t_end = self._encode_offset_snippet(
+                _offset_bytes, _snip_start, _t_start, _t_end = self._encode_offset_snippet(
                     self._pending_pre_snap, self._pending_post_buf
                 )
                 ev = CarrierOffset(
-                    sample_index=self._pending_pre_snap_start + _det_idx,
+                    sample_index=self._pending_pre_snap_start + _snip_start,
                     power_db=self._pending_power_db,
                     iq_snippet=_offset_bytes,
                     transition_start=_t_start,
@@ -937,7 +937,7 @@ class CarrierDetector:
                             "event_type": "offset",
                             "sample_index": ev.sample_index,
                             "pre_snap_start": _pre_start,
-                            "det_idx_in_buf": _det_idx,
+                            "snippet_start_in_buf": _snip_start,
                             "buf_len": sum(len(w) for w in self._pending_pre_snap) + sum(len(w) for w in self._pending_post_buf),
                             "power_db": round(ev.power_db, 1),
                             "partial_flush": True,
@@ -1002,7 +1002,7 @@ class CarrierDetector:
 
     def _encode_combined(
         self, pre_snap: list[np.ndarray], post_buf: list[np.ndarray]
-    ) -> tuple[bytes, int]:
+    ) -> tuple[bytes, int, int, int]:
         """
         Encode a natural-position onset snippet.
 
@@ -1011,16 +1011,17 @@ class CarrierDetector:
         the PA transition stays at its natural position within the snippet,
         preserving the sample-boundary timing relationship needed for TDOA.
 
-        The server's xcorr aligns the PA features across nodes; no node-side
-        knee-finding is needed for timing.
-
         Returns
         -------
-        (bytes, det_idx, transition_start, transition_end)
-            bytes is the encoded snippet; det_idx is the detection point
-            within the concatenated pre+post buffer (used for sample_index);
-            transition_start and transition_end approximate the transition
-            zone within the trimmed snippet (for server-side xcorr windowing).
+        (bytes, snippet_start_in_iqcat, transition_start, transition_end)
+            bytes: the encoded snippet.
+            snippet_start_in_iqcat: index within the concatenated pre+post
+                buffer where the trimmed snippet begins.  The caller combines
+                this with ``pre_snap_start`` (the absolute stream sample of
+                iq_cat[0]) to get the snippet's absolute stream sample index,
+                which is what gets shipped to the server as the timing anchor.
+            transition_start, transition_end: samples-into-snippet markers
+                for the detection zone, used server-side as knee-search hints.
         """
         assert pre_snap or post_buf, "Both pre_snap and post_buf are empty - cannot happen"
         parts = list(pre_snap) + list(post_buf or [])
@@ -1032,7 +1033,7 @@ class CarrierDetector:
         det_idx = min(pre_len, len(iq_cat) - 1)
 
         # Trim to snippet_samples, keeping detection at ~1/4 from start
-        # so xcorr has noise (pre) and carrier (post) context.
+        # so the server has noise (pre) and carrier (post) context.
         pre_target = self._snippet_samples // 4
         start = max(0, det_idx - pre_target)
         end = start + self._snippet_samples
@@ -1048,12 +1049,11 @@ class CarrierDetector:
         int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
         int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
 
-        # Approximate transition zone: detection is near bottom of rise,
-        # plateau is a few windows ahead.  Use a generous window so xcorr
-        # has the full transition to work with.
+        # Transition zone: detection is near bottom of rise; give the server
+        # a generous window up the ramp so its knee-finder has room to work.
         t_start = max(0, det_idx - start)
         t_end = min(len(iq_trim), det_idx - start + 8 * self._window)
-        return int8_ri.tobytes(), det_idx, t_start, t_end
+        return int8_ri.tobytes(), start, t_start, t_end
 
     def _encode_offset_snippet(
         self,
@@ -1068,7 +1068,10 @@ class CarrierDetector:
         the PA transition stays at its natural position within the snippet,
         preserving the sample-boundary timing relationship needed for TDOA.
 
-        Returns (bytes, det_idx, transition_start, transition_end).
+        Returns (bytes, snippet_start_in_iqcat, transition_start, transition_end).
+        ``snippet_start_in_iqcat`` is the index within the concatenated pre+post
+        buffer where the trimmed snippet begins; the caller combines it with
+        ``pre_snap_start`` to get the snippet's absolute stream sample index.
         """
         parts = list(pre_snap) + list(post_buf or [])
         assert parts, "No IQ data for offset snippet - cannot happen"
@@ -1080,7 +1083,7 @@ class CarrierDetector:
         det_idx = min(pre_len, len(iq_cat) - 1)
 
         # Trim to snippet_samples, keeping detection at ~3/4 from start
-        # so xcorr has carrier (pre) and noise (post) context.
+        # so the server has carrier (pre) and noise (post) context.
         pre_target = (self._snippet_samples * 3) // 4
         start = max(0, det_idx - pre_target)
         end = start + self._snippet_samples
@@ -1096,11 +1099,11 @@ class CarrierDetector:
         int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
         int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
 
-        # Approximate transition zone: detection is near bottom of fall,
-        # plateau is a few windows behind.
+        # Transition zone: detection is near bottom of fall; plateau is a few
+        # windows behind.  The server's knee-finder uses this window.
         t_start = max(0, det_idx - start - 8 * self._window)
         t_end = min(len(iq_trim), det_idx - start)
-        return int8_ri.tobytes(), det_idx, t_start, t_end
+        return int8_ri.tobytes(), start, t_start, t_end
 
     def _snippet_has_transition(self, snippet: bytes) -> bool:
         """Check that an encoded IQ snippet contains a genuine power transition.

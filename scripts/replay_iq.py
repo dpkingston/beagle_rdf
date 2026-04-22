@@ -110,8 +110,8 @@ def main() -> int:
         measurements.append(m)
         print(
             f"  MEASUREMENT #{len(measurements):<4d}"
-            f"  sync_delta={m.sync_delta_ns:+12,d} ns"
-            f"  ({m.sync_delta_ns / 1e6:+.3f} ms)"
+            f"  sync_delta={m.sync_to_snippet_start_ns:+12,d} ns"
+            f"  ({m.sync_to_snippet_start_ns / 1e6:+.3f} ms)"
             f"  corr={m.corr_peak:.3f}"
             f"  power={m.onset_power_db:.1f} dBFS"
         )

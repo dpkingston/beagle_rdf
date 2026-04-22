@@ -50,26 +50,26 @@ def test_basic_measurement():
     m = results[0]
     assert isinstance(m, TDOAMeasurement)
     assert m.sync_sample == 1000
-    assert m.target_sample == 3560
+    assert m.snippet_start_sample == 3560
 
 
 def test_sync_delta_ns_value():
-    """sync_delta_ns = (target - sync) * 1e9 / rate."""
+    """sync_to_snippet_start_ns = (target - sync) * 1e9 / rate."""
     dc = make_dc()
     dc.feed_sync(make_sync(0))
     results = dc.feed_onset(make_onset(2560))   # 10 ms at 256 kHz
     assert len(results) == 1
     expected_ns = int(round(2560 * 1e9 / RATE))   # 10_000_000 ns
-    assert results[0].sync_delta_ns == expected_ns
+    assert results[0].sync_to_snippet_start_ns == expected_ns
 
 
 def test_zero_delta():
-    """Onset at the same sample as sync -> sync_delta_ns = 0."""
+    """Onset at the same sample as sync -> sync_to_snippet_start_ns = 0."""
     dc = make_dc()
     dc.feed_sync(make_sync(5000))
     results = dc.feed_onset(make_onset(5000))
     assert len(results) == 1
-    assert results[0].sync_delta_ns == 0
+    assert results[0].sync_to_snippet_start_ns == 0
 
 
 def test_uses_most_recent_sync():
@@ -112,7 +112,7 @@ def test_crystal_correction_applied():
 
     assert len(r_corr) == 1 and len(r_nocorr) == 1
     # With faster crystal, corrected_rate is higher -> delta_ns is smaller
-    assert r_corr[0].sync_delta_ns != r_nocorr[0].sync_delta_ns
+    assert r_corr[0].sync_to_snippet_start_ns != r_nocorr[0].sync_to_snippet_start_ns
     assert r_corr[0].sample_rate_correction == correction
 
 
@@ -169,8 +169,8 @@ def test_onset_before_sync_buffered_then_resolved():
     r2 = dc.feed_onset(make_onset(2000))
 
     # Both onsets should now be resolved
-    assert any(m.target_sample == 500  for m in r2)
-    assert any(m.target_sample == 2000 for m in r2)
+    assert any(m.snippet_start_sample == 500  for m in r2)
+    assert any(m.snippet_start_sample == 2000 for m in r2)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ def test_onset_aged_out_dropped(caplog):
         r2 = dc.feed_onset(make_onset(300))
 
     # The original onset at 0 is too old; only the new one at 300 resolves
-    assert all(m.target_sample != 0 for m in r2)
+    assert all(m.snippet_start_sample != 0 for m in r2)
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ def test_offset_produces_measurement():
     assert len(results) == 1
     m = results[0]
     assert isinstance(m, TDOAMeasurement)
-    assert m.target_sample == 2560
+    assert m.snippet_start_sample == 2560
     assert m.sync_sample == 0
 
 
@@ -243,12 +243,12 @@ def test_offset_event_type():
 
 
 def test_offset_delta_ns_value():
-    """sync_delta_ns is computed the same way for offset as for onset."""
+    """sync_to_snippet_start_ns is computed the same way for offset as for onset."""
     dc = make_dc()
     dc.feed_sync(make_sync(0))
     results = dc.feed_offset(make_offset(2560))  # 10 ms at 256 kHz
     expected_ns = int(round(2560 * 1e9 / RATE))
-    assert results[0].sync_delta_ns == expected_ns
+    assert results[0].sync_to_snippet_start_ns == expected_ns
 
 
 def test_onset_and_offset_same_sync():
@@ -259,7 +259,7 @@ def test_onset_and_offset_same_sync():
     r_off = dc.feed_offset(make_offset(3000))
     assert len(r_on) == 1 and len(r_off) == 1
     assert r_on[0].sync_sample == r_off[0].sync_sample == 0
-    assert r_off[0].sync_delta_ns > r_on[0].sync_delta_ns
+    assert r_off[0].sync_to_snippet_start_ns > r_on[0].sync_to_snippet_start_ns
 
 
 def test_offset_before_sync_buffered():
@@ -270,8 +270,8 @@ def test_offset_before_sync_buffered():
 
     dc.feed_sync(make_sync(200))
     r2 = dc.feed_offset(make_offset(2000))
-    assert any(m.target_sample == 500  for m in r2)
-    assert any(m.target_sample == 2000 for m in r2)
+    assert any(m.snippet_start_sample == 500  for m in r2)
+    assert any(m.snippet_start_sample == 2000 for m in r2)
 
 
 def test_offset_aged_out_dropped(caplog):
@@ -286,7 +286,7 @@ def test_offset_aged_out_dropped(caplog):
     with caplog.at_level(logging.WARNING):
         r2 = dc.feed_offset(make_offset(300))
 
-    assert all(m.target_sample != 0 for m in r2)
+    assert all(m.snippet_start_sample != 0 for m in r2)
 
 
 def test_reset_clears_pending_offset():
@@ -299,7 +299,7 @@ def test_reset_clears_pending_offset():
     results = dc.feed_offset(make_offset(1000))
     # Only the new offset resolves; the pre-reset one was cleared
     assert len(results) == 1
-    assert results[0].target_sample == 1000
+    assert results[0].snippet_start_sample == 1000
 
 
 # ---------------------------------------------------------------------------

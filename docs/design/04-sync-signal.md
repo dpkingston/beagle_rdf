@@ -161,7 +161,7 @@ correction error - negligible for the system's overall accuracy target.
   ~10 dB, `corr_peak` drops and sync events are rejected by
   `min_corr_peak`.  Most urban environments are fine.
 - All nodes in a deployment **must use the same primary station** for their
-  `sync_delta_ns` measurements to be comparable.
+  `sync_to_snippet_start_ns` measurements to be comparable.
 
 ---
 
@@ -169,7 +169,7 @@ correction error - negligible for the system's overall accuracy target.
 
 Because the FM broadcast signal travels at the speed of light from a fixed
 transmitter, it arrives at nodes at different times based on their distances.
-This introduces a deterministic offset into each node's `sync_delta_ns` that
+This introduces a deterministic offset into each node's `sync_to_snippet_start_ns` that
 must be removed before computing TDOA.
 
 ### The problem
@@ -227,7 +227,7 @@ calibration check that requires no test transmitter.
 
 ### Principle
 
-When a node tracks two FM stations simultaneously, it computes `sync_delta_ns`
+When a node tracks two FM stations simultaneously, it computes `sync_to_snippet_start_ns`
 relative to each:
 
 ```
@@ -259,7 +259,7 @@ bias, etc.).
 3. **Per-node calibration** - `calibration_offset_ns` in `clock:` can be tuned until
    the dual-station residual is minimised.
 4. **Inter-node consistency** - if two nodes both show the same dual-station residual,
-   their `sync_delta_ns` values are consistent even without a test transmitter.
+   their `sync_to_snippet_start_ns` values are consistent even without a test transmitter.
 
 ### Current implementation status
 

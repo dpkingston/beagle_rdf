@@ -28,7 +28,7 @@ database:
 pairing:
   # Bucketing window for T_sync - the estimated absolute time of the FM sync
   # event at the transmitter, derived per-event as:
-  #   T_sync = onset_time_ns - sync_delta_ns - dist(sync_tx, node) / c
+  #   T_sync = onset_time_ns - sync_to_snippet_start_ns - dist(sync_tx, node) / c
   # Events from different nodes land in the same bucket if their T_sync values
   # agree within this window. Rapid key-ups produce distinct T_sync values and
   # are correctly placed into separate groups.

@@ -21,12 +21,12 @@ import aiosqlite
 
 _OPERATIONAL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id      TEXT    UNIQUE NOT NULL,
-    node_id       TEXT    NOT NULL,
-    channel_hz    REAL    NOT NULL,
-    sync_delta_ns INTEGER NOT NULL,
-    sync_tx_id    TEXT    NOT NULL,
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id                 TEXT    UNIQUE NOT NULL,
+    node_id                  TEXT    NOT NULL,
+    channel_hz               REAL    NOT NULL,
+    sync_to_snippet_start_ns INTEGER NOT NULL,
+    sync_tx_id               TEXT    NOT NULL,
     sync_tx_lat   REAL    NOT NULL,
     sync_tx_lon   REAL    NOT NULL,
     node_lat      REAL    NOT NULL,
@@ -215,22 +215,22 @@ async def upsert_event(db: aiosqlite.Connection, event_data: dict[str, Any]) -> 
     await db.execute(
         """
         INSERT INTO events
-            (event_id, node_id, channel_hz, sync_delta_ns,
+            (event_id, node_id, channel_hz, sync_to_snippet_start_ns,
              sync_tx_id, sync_tx_lat, sync_tx_lon,
              node_lat, node_lon, event_type, onset_time_ns,
              corr_peak, received_at, raw_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(event_id) DO UPDATE SET
-            sync_delta_ns  = excluded.sync_delta_ns,
-            corr_peak      = excluded.corr_peak,
-            received_at    = excluded.received_at,
-            raw_json       = excluded.raw_json
+            sync_to_snippet_start_ns = excluded.sync_to_snippet_start_ns,
+            corr_peak                = excluded.corr_peak,
+            received_at              = excluded.received_at,
+            raw_json                 = excluded.raw_json
         """,
         (
             event_data["event_id"],
             event_data["node_id"],
             event_data["channel_hz"],
-            event_data["sync_delta_ns"],
+            event_data["sync_to_snippet_start_ns"],
             event_data["sync_tx_id"],
             event_data["sync_tx_lat"],
             event_data["sync_tx_lon"],

@@ -408,7 +408,7 @@ def test_relocated_node_fresh_heartbeat_wins_over_stale_event(
             """
             INSERT INTO events
                 (event_id, node_id, received_at, channel_hz, event_type,
-                 sync_delta_ns, sync_tx_id, sync_tx_lat, sync_tx_lon,
+                 sync_to_snippet_start_ns, sync_tx_id, sync_tx_lat, sync_tx_lon,
                  node_lat, node_lon, onset_time_ns, raw_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -480,7 +480,7 @@ def test_fresh_event_wins_over_stale_heartbeat(
             """
             INSERT INTO events
                 (event_id, node_id, received_at, channel_hz, event_type,
-                 sync_delta_ns, sync_tx_id, sync_tx_lat, sync_tx_lon,
+                 sync_to_snippet_start_ns, sync_tx_id, sync_tx_lat, sync_tx_lon,
                  node_lat, node_lon, onset_time_ns, raw_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,

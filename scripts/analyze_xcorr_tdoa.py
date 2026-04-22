@@ -49,7 +49,7 @@ def _to_db_dict(row: sqlite3.Row) -> dict:
         "sync_tx_id":           tx.get("station_id"),
         "sync_tx_lat":          tx.get("latitude_deg"),
         "sync_tx_lon":          tx.get("longitude_deg"),
-        "sync_delta_ns":        row["sync_delta_ns"],
+        "sync_to_snippet_start_ns":        row["sync_to_snippet_start_ns"],
         "onset_time_ns":        row["onset_time_ns"],
         "channel_hz":           row["channel_hz"],
         "event_type":           row["event_type"],
@@ -151,7 +151,7 @@ def main() -> None:
     db.row_factory = sqlite3.Row
     rows = db.execute(
         "SELECT node_id, event_type, channel_hz, sync_tx_id, "
-        "       onset_time_ns, sync_delta_ns, corr_peak, raw_json "
+        "       onset_time_ns, sync_to_snippet_start_ns, corr_peak, raw_json "
         "FROM events ORDER BY onset_time_ns"
     ).fetchall()
 
