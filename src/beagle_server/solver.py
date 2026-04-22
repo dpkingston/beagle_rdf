@@ -192,6 +192,7 @@ def solve_fix(
     min_xcorr_snr: float = 0.5,
     max_xcorr_baseline_km: float = 50.0,
     savgol_window_us: float = 360.0,
+    tdoa_method: str = "xcorr",
 ) -> FixResult | None:
     """
     Compute a transmitter fix from a list of events from the same transmission.
@@ -254,6 +255,7 @@ def solve_fix(
                 min_xcorr_snr=min_xcorr_snr,
                 max_xcorr_baseline_km=max_xcorr_baseline_km,
                 savgol_window_us=savgol_window_us,
+                tdoa_method=tdoa_method,
             )
             if tdoa is not None:
                 pairs.append((i, j, tdoa))

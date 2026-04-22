@@ -631,6 +631,7 @@ def compute_tdoa_s(
     xcorr_target_rate_hz: float | None = None,
     max_xcorr_baseline_km: float = 100.0,
     savgol_window_us: float = 360.0,
+    tdoa_method: str = "xcorr",
 ) -> float | None:
     """
     Compute the corrected TDOA between two events in **seconds**.
@@ -643,24 +644,20 @@ def compute_tdoa_s(
     ------
     1. Compute raw_ns = sync_delta_a - sync_delta_b (sync-to-detection diff)
     2. Apply per-pair grid calibration (removes node-pair pilot phase offset)
-    3. Find the PA transition *knee* in each snippet using Savgol-smoothed
-       second derivative: seed with argmax(d1) for onset / argmin(d1) for
-       offset and take the first significant local d2 minimum on the
-       plateau side.  Avoids mistaking plateau-noise d2 minima for the
-       real corner, which previously drove per-node systematic bias.
-       Gives sub-sample position.
-    4. Compute knee_adj_ns = (knee_a - det_a)/rate_a - (knee_b - det_b)/rate_b,
-       which shifts each node's reference from detection to the physical PA
-       edge.  Detection position comes from ``transition_start``/``transition_end``.
-    5. Apply path correction (sync-transmitter geometry)
-    6. Disambiguate modulo RDS bit period.
-    7. Geometric plausibility check against max_xcorr_baseline_km.
-
-    Previously used inter-node cross-correlation on d2-of-envelope (see
-    ``cross_correlate_snippets``), but empirically that pipeline was dominated
-    by boundary artifacts of the zero-pad convolution, locking xcorr on the
-    wrong feature.  Per-node knee finding with Savgol avoids this and gives
-    ~40% lower median per-event error on a corpus of real Magnolia fixes.
+    3. Refinement (per ``tdoa_method``):
+         "xcorr" (default): inter-node cross-correlation on the second
+           derivative of each snippet's power envelope.  Returns a single
+           pair-level lag directly, and works even when each node's
+           individual knee SNR is low.  Empirically best for offsets
+           (knee SNR typically << 1 for offsets) and matches or improves
+           on per-node knee finding for onsets, with full event yield.
+         "knee": per-node Savgol-smoothed second derivative knee finder,
+           seeded by argmax(d1) / argmin(d1), taking the first significant
+           d2 local minimum on the plateau side.  Gives sub-sample position
+           per snippet.  Retained for comparison / tests.
+    4. Apply path correction (sync-transmitter geometry)
+    5. Disambiguate modulo RDS bit period.
+    6. Geometric plausibility check against max_xcorr_baseline_km.
 
     Parameters
     ----------
@@ -670,27 +667,32 @@ def compute_tdoa_s(
         transition_start, transition_end.
         onset_time_ns (optional): wall-clock time of the carrier edge in ns.
     min_xcorr_snr : float
-        Minimum knee-finder SNR (|min(d2)| vs out-of-region RMS of d2) to
-        accept the result.  Pairs failing this gate are dropped.
-        Retains the old parameter name for config compatibility.
+        Minimum refinement-SNR required to accept the pair.  For "xcorr" this
+        is the peak-to-sidelobe ratio returned by ``cross_correlate_snippets``;
+        for "knee" it is ``|peak(d1)|`` vs out-of-region RMS.  Retained as a
+        single parameter name for config compatibility.
     xcorr_target_rate_hz : float or None
-        Currently unused (retained for API compatibility).  Previously used
-        to resample envelopes before inter-node xcorr.
+        Target rate for envelope resampling inside ``cross_correlate_snippets``.
+        None (default) uses the lower of the two snippet rates.  Only applies
+        when ``tdoa_method="xcorr"``.
     max_xcorr_baseline_km : float
         Maximum node-pair separation in km.  Used as a geometric plausibility
         filter: any TDOA whose magnitude exceeds (baseline / c) after
         disambiguation is treated as a false detection and rejected.
     savgol_window_us : float
-        Savgol smoothing window in microseconds (auto-converted to an odd
-        number of samples at each snippet's rate).  240 µs is the empirical
-        sweet spot: narrower admits more AM noise, wider smears the knee
-        position.  Kept time-domain so the same value works across target
-        channel rates.
+        Only used when ``tdoa_method="knee"``.  Savgol smoothing window in
+        microseconds (auto-converted to an odd number of samples at each
+        snippet's rate).
+    tdoa_method : "xcorr" or "knee"
+        Pair-level refinement method.  Defaults to "xcorr" based on empirical
+        comparison on the 2026-04-21 Magnolia corpus (xcorr has equal-or-lower
+        per-pair std, full event yield, and works for offsets where the per-
+        snippet knee SNR is < 1).
 
     Returns
     -------
     float or None
-        TDOA in seconds, or None on missing data, failed knee finding,
+        TDOA in seconds, or None on missing data, failed refinement,
         low SNR, or geometric implausibility.  Positive -> A heard the
         carrier *later* than B.
     """
@@ -815,49 +817,65 @@ def compute_tdoa_s(
     ts_b = int(event_b.get("transition_start", 0))
     te_b = int(event_b.get("transition_end", 0))
 
-    iq_a = _decode_iq_snippet(iq_a_b64)
-    iq_b = _decode_iq_snippet(iq_b_b64)
-
-    knee_a_result = _find_knee_sub_sample(
-        iq_a, event_type, ts_a, te_a,
-        sample_rate_hz=rate_a, savgol_window_us=savgol_window_us,
-    )
-    knee_b_result = _find_knee_sub_sample(
-        iq_b, event_type, ts_b, te_b,
-        sample_rate_hz=rate_b, savgol_window_us=savgol_window_us,
-    )
-    if knee_a_result is None or knee_b_result is None:
-        logger.warning(
-            "Knee finding failed for %s<->%s (%s); pair skipped",
-            node_a, node_b, event_type,
+    if tdoa_method == "xcorr":
+        # Inter-node cross-correlation on d²(power envelope).  Returns a
+        # single pair-level lag directly.  See ``cross_correlate_snippets``.
+        lag_ns, xcorr_snr = cross_correlate_snippets(
+            iq_a_b64, iq_b_b64,
+            sample_rate_hz_a=rate_a, sample_rate_hz_b=rate_b,
+            target_rate_hz=xcorr_target_rate_hz, event_type=event_type,
         )
-        return None
-    knee_a, snr_a = knee_a_result
-    knee_b, snr_b = knee_b_result
+        if xcorr_snr < min_xcorr_snr:
+            logger.warning(
+                "Xcorr SNR too low: %.2f < %.2f for %s<->%s (%s); pair skipped",
+                xcorr_snr, min_xcorr_snr, node_a, node_b, event_type,
+            )
+            return None
+        refinement_ns = lag_ns
+        # Kept for diagnostic logging below.
+        snr_a = snr_b = xcorr_snr
+        refinement_desc = "xcorr_lag"
+    elif tdoa_method == "knee":
+        iq_a = _decode_iq_snippet(iq_a_b64)
+        iq_b = _decode_iq_snippet(iq_b_b64)
 
-    # SNR gate: reject when either node's knee is not clearly distinguishable
-    # from envelope noise.  Reuses the min_xcorr_snr config so the existing
-    # threshold continues to apply (semantics are similar — peak |d1| vs
-    # out-of-region RMS).
-    min_snr = min(snr_a, snr_b)
-    if min_snr < min_xcorr_snr:
-        logger.warning(
-            "Knee SNR too low: min(%.2f, %.2f) < %.2f for %s<->%s (%s); pair skipped",
-            snr_a, snr_b, min_xcorr_snr, node_a, node_b, event_type,
+        knee_a_result = _find_knee_sub_sample(
+            iq_a, event_type, ts_a, te_a,
+            sample_rate_hz=rate_a, savgol_window_us=savgol_window_us,
         )
-        return None
+        knee_b_result = _find_knee_sub_sample(
+            iq_b, event_type, ts_b, te_b,
+            sample_rate_hz=rate_b, savgol_window_us=savgol_window_us,
+        )
+        if knee_a_result is None or knee_b_result is None:
+            logger.warning(
+                "Knee finding failed for %s<->%s (%s); pair skipped",
+                node_a, node_b, event_type,
+            )
+            return None
+        knee_a, snr_a = knee_a_result
+        knee_b, snr_b = knee_b_result
 
-    # Convert each node's knee position to a (knee − detection) offset in ns,
-    # then take the inter-node difference.  This is what we add to raw_ns to
-    # shift the measurement from "sync-to-detection" to "sync-to-knee".
-    knee_adj_a_ns = (knee_a - det_a) * 1e9 / rate_a
-    knee_adj_b_ns = (knee_b - det_b) * 1e9 / rate_b
-    knee_adj_ns = knee_adj_a_ns - knee_adj_b_ns
+        min_snr = min(snr_a, snr_b)
+        if min_snr < min_xcorr_snr:
+            logger.warning(
+                "Knee SNR too low: min(%.2f, %.2f) < %.2f for %s<->%s (%s); pair skipped",
+                snr_a, snr_b, min_xcorr_snr, node_a, node_b, event_type,
+            )
+            return None
 
-    # Combine: raw sync_delta (sync-to-detection) + knee adjustment +
-    # FM path correction.  The knee adjustment moves each node's reference
-    # from its noisy detection point to the physical PA edge.
-    combined_ns = raw_ns + knee_adj_ns + correction_ns
+        # (knee_a - det_a)/rate_a - (knee_b - det_b)/rate_b shifts each node's
+        # reference from detection to the physical PA edge.
+        knee_adj_a_ns = (knee_a - det_a) * 1e9 / rate_a
+        knee_adj_b_ns = (knee_b - det_b) * 1e9 / rate_b
+        refinement_ns = knee_adj_a_ns - knee_adj_b_ns
+        refinement_desc = "knee_adj"
+    else:
+        raise ValueError(f"tdoa_method must be 'xcorr' or 'knee', got {tdoa_method!r}")
+
+    # Combine: raw sync_delta (sync-to-detection) + pair refinement +
+    # FM path correction.
+    combined_ns = raw_ns + refinement_ns + correction_ns
 
     # Sync period disambiguation: resolve which RDS bit boundary each node
     # referenced.  Applied AFTER the knee adjustment so the round() decision
@@ -880,17 +898,17 @@ def compute_tdoa_s(
         if abs(tdoa_ns) > max_tdoa_ns:
             logger.warning(
                 "TDOA implausible: %.1f ns > %.0f ns max for %s<->%s "
-                "(%s, knee_adj=%.1f, SNR=[%.2f,%.2f]); pair skipped",
+                "(%s, %s=%.1f, SNR=[%.2f,%.2f]); pair skipped",
                 tdoa_ns, max_tdoa_ns, node_a, node_b, event_type,
-                knee_adj_ns, snr_a, snr_b,
+                refinement_desc, refinement_ns, snr_a, snr_b,
             )
             return None
 
     coarse_tdoa_ns = raw_ns + correction_ns
     logger.info(
-        "TDOA (savgol_knee): %.1f ns (coarse=%.1f + knee_adj=%.1f, "
+        "TDOA (%s): %.1f ns (coarse=%.1f + %s=%.1f, "
         "SNR=[%.2f,%.2f], type=%s) %s<->%s",
-        tdoa_ns, coarse_tdoa_ns, knee_adj_ns, snr_a, snr_b, event_type,
-        node_a, node_b,
+        tdoa_method, tdoa_ns, coarse_tdoa_ns, refinement_desc, refinement_ns,
+        snr_a, snr_b, event_type, node_a, node_b,
     )
     return float(tdoa_ns / 1e9)

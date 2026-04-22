@@ -403,7 +403,7 @@ def test_compute_tdoa_known_geometry():
                                      sample_rate_hz=fs)
     ev_b = _make_event_with_snippet(47.5, -122.3, 0, _iq_to_b64(iq_b), node_id="node-b",
                                      sample_rate_hz=fs)
-    tdoa = compute_tdoa_s(ev_a, ev_b)
+    tdoa = compute_tdoa_s(ev_a, ev_b, tdoa_method="knee")
     expected_s = prop_delay / fs  # positive = A later
     assert tdoa is not None
     # d2 knee finder on 48-sample synthetic ramp has ~2-sample precision floor
@@ -440,6 +440,40 @@ def test_compute_tdoa_path_delay_applied():
 # compute_tdoa_s - xcorr primary path
 # ---------------------------------------------------------------------------
 
+def test_compute_tdoa_xcorr_method_rejects_low_snr():
+    """
+    Default xcorr path rejects pairs whose xcorr SNR is below min_xcorr_snr.
+    Verifies the SNR gate wiring in compute_tdoa_s; xcorr's numerical
+    accuracy on real snippets is covered by test_xcorr.py.
+    """
+    rng = np.random.default_rng(42)
+    noise_a = (rng.standard_normal(5120) + 1j * rng.standard_normal(5120)).astype(np.complex64)
+    noise_b = (rng.standard_normal(5120) + 1j * rng.standard_normal(5120)).astype(np.complex64)
+    ev_a = _make_event_with_snippet(
+        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(noise_a),
+        node_id="node-a", transition_start=2460, transition_end=2580,
+    )
+    ev_b = _make_event_with_snippet(
+        47.6, -122.3, sync_delta_ns=0, snippet_b64=_iq_to_b64(noise_b),
+        node_id="node-b", transition_start=2460, transition_end=2580,
+    )
+    # Very high gate — even if xcorr returns a finite SNR on pure noise, it
+    # will be well below 100.
+    tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=100.0)
+    assert tdoa is None
+
+
+def test_compute_tdoa_invalid_method_raises():
+    """Unknown tdoa_method value raises ValueError."""
+    iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=0, snr_db=30.0)
+    ev_a = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0,
+                                     snippet_b64=_iq_to_b64(iq_a), node_id="a")
+    ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=0,
+                                     snippet_b64=_iq_to_b64(iq_b), node_id="b")
+    with pytest.raises(ValueError, match="tdoa_method"):
+        compute_tdoa_s(ev_a, ev_b, tdoa_method="nonsense")
+
+
 def test_compute_tdoa_xcorr_refines_sync_delta():
     """
     xcorr provides sub-sample refinement on top of the sync_delta TDOA.
@@ -466,7 +500,7 @@ def test_compute_tdoa_xcorr_refines_sync_delta():
                                      sample_rate_hz=fs, node_id="node-a")
     ev_b = _make_event_with_snippet(47.6, -122.3, sync_delta_ns=sd_b, snippet_b64=_iq_to_b64(iq_b),
                                      sample_rate_hz=fs, node_id="node-b")
-    tdoa = compute_tdoa_s(ev_a, ev_b)
+    tdoa = compute_tdoa_s(ev_a, ev_b, tdoa_method="knee")
     assert tdoa is not None
     # Expected: 100 µs (detection diff) − 31 µs (knee-to-detection diff) = 69 µs
     expected = (100_000 - prop_delay * 1e9 / fs) / 1e9   # ~69 µs
@@ -652,7 +686,7 @@ def test_compute_tdoa_xcorr_large_lag_accepted_onset():
         sample_rate_hz=fs, node_id="node-b", event_type="onset",
         transition_start=300, transition_end=380,
     )
-    tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3)
+    tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=1.3, tdoa_method="knee")
     assert tdoa is not None, "Expected valid TDOA for plausible knee offset"
     # Expected ~156 µs (10-sample knee offset at 64 kHz) plus noise floor.
     assert abs(tdoa * 1e6) < 300.0, f"TDOA {tdoa*1e6:.0f} µs seems too large"

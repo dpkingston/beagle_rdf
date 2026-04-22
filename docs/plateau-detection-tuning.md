@@ -4,6 +4,14 @@ This doc describes the server-side timing-refinement step (run inside
 `compute_tdoa_s()` in `src/beagle_server/tdoa.py`) and the two parameters
 that matter for field tuning.
 
+> **Note (2026-04-21):** The server default is now `tdoa_method="xcorr"`
+> (inter-node cross-correlation on `d²(power envelope)` — see
+> `cross_correlate_snippets`). On the 2026-04-21 Magnolia corpus xcorr
+> matches or beats the Savgol knee finder on per-pair std, has full event
+> yield, and works for offsets (where per-snippet knee SNR is typically
+> < 1). The Savgol-knee algorithm documented below is the `tdoa_method="knee"`
+> path — still supported and test-covered, but no longer the default.
+
 ## Algorithm
 
 For each carrier event the node ships an IQ snippet plus the `transition_start`

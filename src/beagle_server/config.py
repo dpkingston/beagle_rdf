@@ -199,10 +199,21 @@ class SolverConfig(BaseModel):
     (sync_cal) lines.  Useful for verifying RDS bit-boundary alignment across
     nodes.  Can also be enabled via the BEAGLE_SYNC_DIAG=1 environment variable.
     """
+    tdoa_method: str = "xcorr"
+    """
+    Pair-level TDOA refinement method:
+      "xcorr" (default): cross-correlate d²(power envelope) between the two
+        snippets.  Returns a single pair-level lag; needs only pair-level SNR
+        rather than per-snippet knee SNR.  Empirically best for offsets and
+        matches knee performance for onsets with full event yield.
+      "knee": per-node Savgol-smoothed second-derivative knee finder.  Uses
+        ``savgol_window_us``.  Retained for comparison.
+    """
     xcorr_resample_rate_hz: float | None = None
     """
     Target sample rate (Hz) to resample IQ snippets to before cross-correlation
-    when two nodes captured at different rates.
+    when two nodes captured at different rates.  Applied when
+    ``tdoa_method="xcorr"``.
 
     Mixed-hardware deployments produce snippets at different rates.
     With target_decimation=8 (post-2026-04-19):
@@ -218,10 +229,6 @@ class SolverConfig(BaseModel):
     Set explicitly to force all pairs to a specific rate regardless of hardware:
       250000.0 - RSPduo native rate (all nodes downsampled if needed)
       256000.0 - RTL-SDR native rate (RSPduo nodes upsampled if needed)
-
-    NOTE: this setting only applied to the legacy inter-node xcorr pipeline
-    (cross_correlate_snippets).  The current per-node knee finder works in
-    each snippet's native rate independently and does not resample.
     """
 
 

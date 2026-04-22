@@ -168,6 +168,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     min_xcorr_snr=cfg.solver.min_xcorr_snr,
                     max_xcorr_baseline_km=cfg.solver.max_xcorr_baseline_km,
                     savgol_window_us=cfg.solver.savgol_window_us,
+                    tdoa_method=cfg.solver.tdoa_method,
                 ),
             )
 
