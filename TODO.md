@@ -11,6 +11,8 @@
 - [manage_nodes: add group-update command](#manage_nodes-add-group-update-command)
 - [Review functioning of frequency groups](#review-functioning-of-frequency-groups)
 - [Reduce snippet_samples once centered-span knee finder is validated](#reduce-snippet_samples-once-centered-span-knee-finder-is-validated)
+- [Config handling review: auto-reload log gap, missing Revert button, general polish](#config-handling-review-auto-reload-log-gap-missing-revert-button-general-polish)
+- [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
 - [✓ Web UI: User Management, Login, 2FA, Google OAuth](#web-ui-user-management-login-2fa-google-oauth)
@@ -315,6 +317,103 @@ Gate the reduction behind:
    per-event cross-node K std at the reduced snippet size.
 2. An updated `snippet_post_windows` default (needs to be
    ``>= snippet_samples // 2 / window_samples``).
+
+---
+
+### Config handling review: auto-reload log gap, missing Revert button, general polish
+
+Observed (Apr-23): edited three remote config files in rapid succession
+(`dpk-tdoa1`, `dpk-tdoa2`, `n7jmv-tdoa-qth`, `kb7ryy` — which ones
+exactly TBD from server logs).  Only `dpk-tdoa2` produced the expected
+`Config auto-reload: <node> updated to v<N>` log line; the corresponding
+messages for `n7jmv-tdoa-qth` and `kb7ryy` did not appear.  Nodes'
+snippet geometry showed mixed `snippet_post_windows` values (28-38
+instead of the intended 45), consistent with a partial config update.
+
+Three separate items to investigate / fix:
+
+1. **Auto-reload log drops consecutive "updated" results.**
+   ``src/beagle_server/api.py`` around line 1519-1534 logs only on status
+   transitions: ``if reload_result["status"] != prev.get("status")``.
+   When a node has already been in "updated" state (prior edit within the
+   retention window), a subsequent file edit produces another "updated"
+   which is NOT logged because the status didn't change.  This is
+   over-eager de-duping — the config really did get reloaded and the
+   version really did bump, we just didn't say so.
+   Fix: compare ``new_version`` rather than (or in addition to) status,
+   so every successful reload that actually bumps the version produces a
+   log line.  Does not require reverting all the "state-transition-only"
+   logic for error states, where de-duping is appropriate.
+
+2. **"Revert to File" button appears missing.**
+   The button is defined in ``src/beagle_server/map_output.py`` around
+   line 1957-1962 and gated on ``node.config_file_path`` being truthy.
+   If the button isn't rendering for some nodes, likely the
+   ``config_file_path`` field is NULL/empty in the registry DB for those
+   nodes.  Possibilities: (a) CLI node-registration didn't persist the
+   file path; (b) a migration dropped it; (c) frontend bug reading the
+   field.  Start by querying
+   ``select node_id, config_file_path from nodes`` on the production
+   registry DB and confirm which nodes actually have the path set.
+
+3. **General config-handling polish.**
+   Operator has expressed that config handling "feels awkward."  Worth a
+   structured pass covering: (a) remote-config polling lifecycle
+   (auto-reload vs. force-reload, when each fires); (b) per-node
+   ``config_file_path`` semantics and registration; (c) registry DB vs.
+   file as source-of-truth, and who wins on conflict; (d) UI surfacing
+   of divergence state and actions.  Probably produces a short design
+   note + a targeted set of follow-up fixes.
+
+---
+
+### Sync-lock gate: node warmup + server sanity filter
+
+Problem observed on the Apr-23 corpus (kb7ryy, but it's not a kb7ryy
+bug — any node restart would exhibit it): right after a node service
+start, the RDS pilot tracker hasn't converged yet, but the carrier
+detector is already live.  Carrier events that fire in the first ~1 s
+after startup carry sync references at wildly wrong phases (``frac``
+near a bit edge, ~400 µs off) and pollute every TDOA that uses them.
+
+Root cause is not kb7ryy; kb7ryy was manually restarted a few times
+and happens to have been caught with 3 bad startup-transient events.
+In steady state its sync precision is 357 ns — comparable to the
+other nodes.
+
+**Node-side: warmup gate before emitting carrier events.**
+Location candidates: ``src/beagle_node/events/reporter.py`` (drop at
+the last mile before ship) or ``src/beagle_node/main.py`` around the
+measurement-produced hook.
+Simplest:
+  - Skip event emission while ``total_samples_since_startup <
+    warmup_samples`` (e.g., 1 s * sample_rate_hz).
+Better, if the detector has lock signal:
+  - Require N consecutive sync events with ``corr_peak > threshold``
+    AND the fractional bit phase stable within, say, 20 µs.
+  - Log one INFO line when suppressing ("sync not yet locked; dropping
+    N carrier events during warmup") so operators see the gate
+    firing.
+Either approach can be made a small, tested change.
+
+**Server-side: per-event sanity filter on ingest.**
+Location: ``src/beagle_server/api.py`` event-ingest path, or inside
+``compute_tdoa_s`` before disambig.  Track per-node running mean and
+std of (sync_sample_index mod bit_period) in app.state, weighted EMA.
+Reject events where the frac deviates from the running mean by more
+than max(50 µs absolute, 3× running std).  Log rejections at debug
+level; surface a per-node "rejected" counter in the Nodes panel.
+
+This is defense-in-depth: the node-side gate should prevent most of
+these, but the server-side check costs almost nothing and catches the
+cases the node missed.
+
+**Tests:** both can be unit-tested with synthetic events carrying
+``sync_sample_index`` values at |frac| near 0.5.  The existing
+``test_delta.py`` / ``test_tdoa.py`` structure accommodates this.
+
+**Not TDOA-measurement-material** — this is pollution cleanup.  Park
+until after the knee-finder / averaging-solver work lands.
 
 ---
 
