@@ -289,13 +289,23 @@ class CarrierDetectConfig(BaseModel):
 
     When > 0, the detector defers emitting a CarrierOnset/CarrierOffset until it has
     collected this many additional windows of IQ *after* the threshold crossing.
-    _encode_combined() places the transition at the snippet midpoint, independent
-    of min_hold_windows.  This ensures consistent snippet anchoring across nodes
-    with different carrier detector settings - essential for mixed-hardware xcorr TDOA.
+    _encode_combined() / _encode_offset_snippet() then trim the concatenated
+    pre+post data so that the detection point lands at the midpoint of the
+    shipped snippet (``snippet_samples // 2``), giving the server symmetric
+    context around the PA knee.
+
+    To achieve the midpoint placement, the collected post-event IQ must be at
+    least ``snippet_samples // 2`` samples, i.e.
+
+        snippet_post_windows * window_samples >= snippet_samples // 2
+
+    With fewer post samples, the trim clamps at the tail of the available data
+    and the detection point slides toward the end of the snippet, pushing the
+    knee into the Savgol-filter edge zone of the server's knee finder.
 
     Trade-offs:
     - Latency: each event is delayed by snippet_post_windows x window_samples /
-      sample_rate_hz (e.g. 5 windows x 256 samples / 250000 Hz ~ 5 ms).
+      sample_rate_hz (e.g. 45 windows x 64 samples / 250000 Hz ~ 11.5 ms).
     - If an offset occurs during post-collection for an onset (or vice versa), the
       pending event is emitted immediately with only the pre-event snippet."""
 

@@ -1032,9 +1032,12 @@ class CarrierDetector:
         pre_len = sum(len(w) for w in pre_snap)
         det_idx = min(pre_len, len(iq_cat) - 1)
 
-        # Trim to snippet_samples, keeping detection at ~1/4 from start
-        # so the server has noise (pre) and carrier (post) context.
-        pre_target = self._snippet_samples // 4
+        # Trim to snippet_samples with detection at the midpoint.  Detection
+        # sits a bit before the knee (knee = top of rise, detection = threshold
+        # crossing during rise), so the detection-to-knee span straddles the
+        # centre of the snippet with generous symmetric context on both sides
+        # for the server's knee finder / xcorr.
+        pre_target = self._snippet_samples // 2
         start = max(0, det_idx - pre_target)
         end = start + self._snippet_samples
         if end > len(iq_cat):
@@ -1082,9 +1085,12 @@ class CarrierDetector:
         pre_len = sum(len(w) for w in pre_snap)
         det_idx = min(pre_len, len(iq_cat) - 1)
 
-        # Trim to snippet_samples, keeping detection at ~3/4 from start
-        # so the server has carrier (pre) and noise (post) context.
-        pre_target = (self._snippet_samples * 3) // 4
+        # Trim to snippet_samples with detection at the midpoint.  Detection
+        # sits a bit after the knee (knee = top of fall, detection = threshold
+        # crossing during fall), so the knee-to-detection span straddles the
+        # centre of the snippet with generous symmetric context on both sides
+        # for the server's knee finder / xcorr.
+        pre_target = self._snippet_samples // 2
         start = max(0, det_idx - pre_target)
         end = start + self._snippet_samples
         if end > len(iq_cat):

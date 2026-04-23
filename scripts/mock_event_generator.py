@@ -234,18 +234,14 @@ def _make_synthetic_iq_snippet(
     accuracy.  The snippet just needs a valid PA transition so the server
     can verify the event is genuine.
 
-    Transition placement matches the real node's carrier detector:
-      - onset:  noise->carrier at ~1/4 of the snippet
-      - offset: carrier->noise at ~3/4 of the snippet
+    Transition placement matches the real node's carrier detector (detection
+    anchored at the midpoint of the snippet for both event types).
 
     Encoded as interleaved int8 real/imag pairs.
     """
     buf = bytearray(n_samples * 2)  # 2 bytes per complex sample (I, Q)
 
-    if event_type == "offset":
-        mid = (n_samples * 3) // 4
-    else:
-        mid = n_samples // 4
+    mid = n_samples // 2
 
     for i in range(n_samples):
         if event_type == "offset":

@@ -10,6 +10,7 @@
 - [SoapySDR: long-term migration to direct SDRplay API](#soapysdr-long-term-migration-to-direct-sdrplay-api)
 - [manage_nodes: add group-update command](#manage_nodes-add-group-update-command)
 - [Review functioning of frequency groups](#review-functioning-of-frequency-groups)
+- [Reduce snippet_samples once centered-span knee finder is validated](#reduce-snippet_samples-once-centered-span-knee-finder-is-validated)
 
 **Completed**
 - [✓ Web UI: User Management, Login, 2FA, Google OAuth](#web-ui-user-management-login-2fa-google-oauth)
@@ -289,6 +290,31 @@ incidents to date have been confused by this:
 This is a design review, not a single change.  Pick it up after the
 auto-reload work has been in production for a few days and we can see
 how the operational story actually feels.
+
+---
+
+### Reduce snippet_samples once centered-span knee finder is validated
+
+Current production `snippet_samples` is 5120 (20.48 ms at 250 kHz).  The
+PA detection-to-knee span is ~1.5 ms; once the encoder centres detection
+at the snippet midpoint (commit TBD, Apr-23 work), the knee sits near
+sample 2560 ± ~375 samples with ~9.5 ms of clean context on each side.
+That is far more margin than the Savgol knee finder (360 µs window) or
+inter-node xcorr actually need — 3-4 Savgol widths (~1.5 ms) each side
+would suffice.
+
+Once the centred-span approach is deployed and we have confirmation that
+accuracy doesn't depend on generous margins, we can likely cut
+`snippet_samples` by 20-40% (e.g., 5120 → 3072 or 2560) with no impact
+on xcorr or knee-finder accuracy.  Benefits: smaller event payloads
+(proportional bandwidth / DB storage reduction), less server-side
+processing per event.
+
+Gate the reduction behind:
+1. A before/after fixture run demonstrating equivalent median |err| and
+   per-event cross-node K std at the reduced snippet size.
+2. An updated `snippet_post_windows` default (needs to be
+   ``>= snippet_samples // 2 / window_samples``).
 
 ---
 

@@ -151,7 +151,9 @@ class TestEncodeOffsetSnippetCentering:
         """
         Different offset_db thresholds cause detection to fire at different
         times after the PA shutoff.  The PA cutoff in the encoded snippet must
-        always appear near the 3/4 position (+/-10% tolerance) regardless.
+        always appear in roughly the same place regardless: detection is
+        anchored at the midpoint of the snippet, so the knee sits a short
+        span before the midpoint.
 
         Signal: -40 dBFS noise, -10 dBFS plateau (30 dB SNR).
         Onset threshold: -25 dBFS (well between noise and carrier).
@@ -198,17 +200,18 @@ class TestEncodeOffsetSnippetCentering:
         snippet_iq = _decode_snippet(off_ev.iq_snippet)
         assert len(snippet_iq) == snippet_samples
 
-        # Validate centering: the first 3/4 should have carrier power,
-        # the last 1/4 should be near the noise floor.  This is more
-        # robust than re-running argmin(deriv) on int8-decoded data,
-        # which can find a different minimum due to quantization.
+        # Validate centering: detection now sits at the snippet midpoint, so
+        # the first half should have carrier power (plateau + the fall's
+        # beginning) and the last half should trend toward the noise floor.
+        # Compare first quarter (clean plateau) vs last quarter (past-detection
+        # noise) to keep the ratio robust under gradual fades.
         env = _power_envelope(snippet_iq)
-        target = (snippet_samples * 3) // 4
-        first_half_power = float(np.mean(env[:target // 2]))
-        last_quarter_power = float(np.mean(env[target:]))
-        assert first_half_power > last_quarter_power * 5.0, (
+        midpoint = snippet_samples // 2
+        first_quarter_power = float(np.mean(env[:midpoint // 2]))
+        last_quarter_power = float(np.mean(env[midpoint + midpoint // 2:]))
+        assert first_quarter_power > last_quarter_power * 5.0, (
             f"offset_db={offset_db}: snippet not properly centered — "
-            f"first-half power {first_half_power:.4f} should be >> "
+            f"first-quarter power {first_quarter_power:.4f} should be >> "
             f"last-quarter power {last_quarter_power:.6f}"
         )
 
