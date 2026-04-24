@@ -83,6 +83,24 @@ class CarrierOffset:
     transition_end: int = 0    # Knee-search hint: samples into snippet, end of transition zone
 
 
+@dataclass(frozen=True)
+class CarrierPlateau:
+    """Periodic snapshot during a sustained carrier.
+
+    Emitted on a wall-clock timer while the detector is in the active
+    state, anchored (where possible) to a sync-pilot bit boundary so that
+    plateau snippets from independent nodes cover the same physical time
+    window.  Has no transition: ``transition_start`` / ``transition_end``
+    bound the entire snippet so the server's xcorr / PHAT can run over
+    the full plateau content.
+    """
+    sample_index: int           # Absolute stream sample index of the snippet's FIRST sample
+    power_db: float
+    iq_snippet: bytes = b""
+    transition_start: int = 0   # 0 — full-snippet xcorr/PHAT window
+    transition_end: int = 0     # set to len(iq_snippet) // 2 by encoder (full-snippet hint)
+
+
 _State = Literal["idle", "active"]
 
 
@@ -129,6 +147,7 @@ class CarrierDetector:
         onset_margin_db: float = 12.0,
         offset_margin_db: float = 6.0,
         auto_threshold_update_interval_s: float = 2.0,
+        plateau_event_interval_s: float = 0.0,
     ) -> None:
         if offset_threshold_db >= onset_threshold_db:
             raise ValueError(
@@ -167,6 +186,19 @@ class CarrierDetector:
         self._snippet_samples = int(snippet_samples)
         self._post_windows = int(snippet_post_windows)
         self._min_active_for_offset = int(min_active_windows_for_offset)
+
+        # Plateau-event emission while the carrier is sustained.  0.0
+        # disables.  When > 0, emit a CarrierPlateau every N seconds of
+        # wall-clock time while the detector is in the active state.
+        # The snippet is taken from the ring + recently-processed windows;
+        # cross-node alignment comes from NTP-synced wall clock (~10 ms),
+        # and the per-event timing precision (sync_to_snippet_start_ns)
+        # is sub-microsecond as for onset/offset.  Plateau snippets cover
+        # the same physical-time window across nodes (modulo NTP skew)
+        # because each node's wall-clock interval boundaries are nearly
+        # simultaneous.
+        self._plateau_interval_s: float = float(plateau_event_interval_s)
+        self._last_plateau_wall_s: float | None = None
 
         self._state: _State = "idle"
         self._cumulative_sample: int = 0   # total samples seen so far
@@ -466,21 +498,28 @@ class CarrierDetector:
 
     def _emit(
         self, events_list: list,
-        ev: "CarrierOnset | CarrierOffset",
+        ev: "CarrierOnset | CarrierOffset | CarrierPlateau",
     ) -> None:
         """Append ``ev`` to ``events_list`` iff it doesn't duplicate the
         previously-emitted event's type.
 
         A CarrierDetector is a two-state machine (idle <-> active).  By
         definition each edge event marks a transition between those
-        states, so the emitted type MUST alternate onset/offset/onset/...
-        If we ever try to emit two onsets (or two offsets) back-to-back
-        it means some path silently transitioned the state without
-        emitting the corresponding boundary event — the main culprits
-        are ``cancel_pending`` on discontinuity, ``prime_state`` at
-        block start, and ``reset``.  This wrapper suppresses the
-        duplicate and logs a warning so the root cause is visible.
+        states, so the emitted edge type MUST alternate
+        onset/offset/onset/...  If we ever try to emit two onsets (or two
+        offsets) back-to-back it means some path silently transitioned
+        the state without emitting the corresponding boundary event —
+        the main culprits are ``cancel_pending`` on discontinuity,
+        ``prime_state`` at block start, and ``reset``.
+
+        Plateau events are not edge events and don't participate in the
+        alternation invariant: many plateaus may be emitted in a row
+        between an onset and an offset.  They bypass the duplicate-type
+        check and don't update ``_last_emitted_type``.
         """
+        if isinstance(ev, CarrierPlateau):
+            events_list.append(ev)
+            return
         etype = "onset" if isinstance(ev, CarrierOnset) else "offset"
         if etype == self._last_emitted_type:
             logger.warning(
@@ -975,7 +1014,93 @@ class CarrierDetector:
             events = validated
         self._validate_snippets = False
 
+        # Plateau emission: while the carrier is sustained, periodically
+        # snap a snippet of the recent IQ for cross-node averaging.  Done
+        # after the FSM run so we don't interleave with onset/offset
+        # state transitions; only fires while in active state and not
+        # currently pending an onset/offset deferred emission.
+        self._maybe_emit_plateau(events, start_sample, n_windows)
+
         return events
+
+    def _maybe_emit_plateau(self, events: list, start_sample: int, n_windows: int) -> None:
+        """If a plateau event is due, append a CarrierPlateau to ``events``.
+
+        Eligibility:
+          - plateau_event_interval_s > 0
+          - state == "active"
+          - no pending onset/offset deferred emission
+          - wall-clock elapsed since last plateau >= interval (or never fired)
+          - IQ ring has at least snippet_samples worth of data
+
+        The snippet is taken from the most recent ring contents; the
+        ``sample_index`` is the absolute target-stream sample of the
+        snippet's first sample.  The DeltaComputer downstream will match
+        this against the most recent sync-pilot bit boundary, giving a
+        sub-microsecond ``sync_to_snippet_start_ns`` for the cross-node
+        correlation.
+
+        Cross-node alignment relies on each node firing at approximately
+        the same wall-clock instant (NTP-precision ~10 ms), which produces
+        snippets that overlap by snippet_duration - NTP_skew = ~64 ms out
+        of 65 ms — comfortably enough overlap for PHAT to lock on the
+        modulation content.
+        """
+        if self._plateau_interval_s <= 0.0:
+            return
+        if self._state != "active":
+            return
+        if self._pending_event_type is not None:
+            return
+        import time as _time
+        now = _time.time()
+        if self._last_plateau_wall_s is None:
+            # Anchor the cadence to the interval boundary so every node's
+            # plateaus fire on the same wall-clock instants (modulo NTP).
+            import math
+            self._last_plateau_wall_s = (
+                math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
+            )
+        if now - self._last_plateau_wall_s < self._plateau_interval_s:
+            return
+
+        # Need enough recent IQ to fill snippet_samples.
+        ring_total_samples = sum(len(w) for w in self._iq_ring)
+        if ring_total_samples < self._snippet_samples:
+            return
+
+        # Use the most recent snippet_samples from the ring.
+        # last_window_end_sample = sample of the last sample of the last
+        # window we accumulated (== start_sample + n_windows*window - 1).
+        last_window_end = start_sample + n_windows * self._window
+        snippet_first_sample = last_window_end - self._snippet_samples
+
+        iq_cat = np.concatenate(list(self._iq_ring))
+        iq_trim = iq_cat[-self._snippet_samples:]
+        scale = float(np.max(np.abs(iq_trim))) + 1e-30
+        normed = iq_trim / scale
+        int8_ri = np.empty(len(normed) * 2, dtype=np.int8)
+        int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
+        int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
+
+        # Plateau "transition" hint covers the full snippet — no knee, the
+        # server's PHAT/xcorr operates on the whole content.
+        ev = CarrierPlateau(
+            sample_index=snippet_first_sample,
+            power_db=self._noise_floor_db + 20.0,  # rough; not used downstream
+            iq_snippet=int8_ri.tobytes(),
+            transition_start=0,
+            transition_end=self._snippet_samples,
+        )
+        self._emit(events, ev)
+        # Advance the cadence by exactly one interval (don't drift on
+        # slow firing) so subsequent emissions stay phase-locked to the
+        # original schedule.
+        self._last_plateau_wall_s += self._plateau_interval_s
+        logger.debug(
+            "CarrierPlateau emitted at sample %d (interval %.1f s)",
+            snippet_first_sample, self._plateau_interval_s,
+        )
 
     def _encode_snippet(self) -> bytes:
         """

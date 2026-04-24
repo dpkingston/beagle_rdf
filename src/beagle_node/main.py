@@ -611,6 +611,7 @@ def run(args: argparse.Namespace | None = None) -> int:
             carrier_onset_margin_db=config.carrier.onset_margin_db,
             carrier_offset_margin_db=config.carrier.offset_margin_db,
             carrier_auto_threshold_update_interval_s=config.carrier.auto_threshold_update_interval_s,
+            carrier_plateau_event_interval_s=config.carrier.plateau_event_interval_s,
         ),
         on_measurement=on_measurement,
     )

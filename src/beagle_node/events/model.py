@@ -57,9 +57,17 @@ class CarrierEvent(BaseModel):
     IQ snippet (a stable sample boundary) instead of the transient detection
     point.  Detection point is still carried via ``transition_start`` /
     ``transition_end`` as the knee-search hint.
+
+    Schema version '1.6': added ``"plateau"`` event_type for periodic
+    snippets emitted while a carrier is sustained.  A plateau event is
+    anchored to a sync-pilot bit boundary (sync_to_snippet_start_ns ≈ 0)
+    so independent nodes' plateau snippets cover the same physical time
+    window.  Plateau events flow through the same TDOA pipeline as
+    onset/offset; they just give the server many more pair-samples per
+    transmission for averaging.
     """
 
-    schema_version: str = "1.5"
+    schema_version: str = "1.6"
 
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     """Node-local unique identifier. Stable across amendment POSTs."""
@@ -89,12 +97,16 @@ class CarrierEvent(BaseModel):
     sdr_mode: Literal["freq_hop", "two_sdr", "single_sdr", "rspduo"]
     pps_anchored: bool = False
     """True if two_sdr mode aligned streams via GPS 1PPS injection."""
-    event_type: Literal["onset", "offset"] = "onset"
+    event_type: Literal["onset", "offset", "plateau"] = "onset"
     """
-    Which carrier edge triggered this measurement.
-    'onset'  - rising edge (carrier appeared).
-    'offset' - falling edge (carrier disappeared).
-    The server must pair onset-with-onset and offset-with-offset across nodes.
+    Which carrier edge or sustained-carrier capture triggered this measurement.
+    'onset'   - rising edge (carrier appeared).
+    'offset'  - falling edge (carrier disappeared).
+    'plateau' - periodic snapshot during a sustained carrier, anchored to a
+                sync-pilot bit boundary so independent nodes cover the same
+                physical time window.
+    The server must pair onset-with-onset, offset-with-offset, and plateau-
+    with-plateau across nodes.
     """
 
     # Rough absolute time (event association only) -------------------------

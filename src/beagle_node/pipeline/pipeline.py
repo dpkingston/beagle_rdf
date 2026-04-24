@@ -36,7 +36,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from beagle_node.pipeline.carrier_detect import CarrierDetector, CarrierOnset, CarrierOffset
+from beagle_node.pipeline.carrier_detect import (
+    CarrierDetector, CarrierOnset, CarrierOffset, CarrierPlateau,
+)
 from beagle_node.pipeline.decimator import Decimator
 from beagle_node.pipeline.delta import DeltaComputer, TDOAMeasurement
 from beagle_node.pipeline.demodulator import FMDemodulator
@@ -114,6 +116,12 @@ class PipelineConfig:
     # is allowed.  0 = disabled (default, backward-compatible).  Set to 4+ in
     # freq_hop mode to suppress carrier-tail offsets anchored to the block boundary.
     carrier_min_active_windows_for_offset: int = 0
+    # Plateau-event interval (seconds).  When > 0, the carrier detector emits
+    # a CarrierPlateau every N seconds while the carrier is sustained, giving
+    # the server many additional pair-TDOA samples per transmission for
+    # averaging.  0 (default) = disabled.  Recommended: 1.0-2.0 s for typical
+    # PTT-radio transmissions of 5-30 s duration.
+    carrier_plateau_event_interval_s: float = 0.0
 
     # Auto-threshold tracking (matches GUI "Auto-Calibrate" button, applied
     # continuously so thresholds follow changing noise conditions without
@@ -184,6 +192,7 @@ class NodePipeline:
             onset_margin_db=c.carrier_onset_margin_db,
             offset_margin_db=c.carrier_offset_margin_db,
             auto_threshold_update_interval_s=c.carrier_auto_threshold_update_interval_s,
+            plateau_event_interval_s=c.carrier_plateau_event_interval_s,
         )
 
         # Delta computer
@@ -362,7 +371,7 @@ class NodePipeline:
         measurements: list[TDOAMeasurement] = []
 
         for event in carrier_events:
-            if isinstance(event, (CarrierOnset, CarrierOffset)):
+            if isinstance(event, (CarrierOnset, CarrierOffset, CarrierPlateau)):
                 # Convert target-dec sample index -> sync-dec sample index via raw:
                 #   raw_sample  = event.sample_index * target_decimation
                 #   sync_sample = raw_sample         // sync_decimation
@@ -382,7 +391,7 @@ class NodePipeline:
                         transition_end=event.transition_end,
                     )
                     new = self._delta.feed_onset(mapped)
-                else:
+                elif isinstance(event, CarrierOffset):
                     mapped = CarrierOffset(
                         sample_index=event_in_sync_space,
                         power_db=event.power_db,
@@ -391,6 +400,15 @@ class NodePipeline:
                         transition_end=event.transition_end,
                     )
                     new = self._delta.feed_offset(mapped)
+                else:  # CarrierPlateau
+                    mapped = CarrierPlateau(
+                        sample_index=event_in_sync_space,
+                        power_db=event.power_db,
+                        iq_snippet=event.iq_snippet,
+                        transition_start=event.transition_start,
+                        transition_end=event.transition_end,
+                    )
+                    new = self._delta.feed_plateau(mapped)
                 for m in new:
                     self._on_measurement(m)
                 measurements.extend(new)

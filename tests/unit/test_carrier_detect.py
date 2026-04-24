@@ -6,7 +6,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from beagle_node.pipeline.carrier_detect import CarrierDetector, CarrierOnset, CarrierOffset
+from beagle_node.pipeline.carrier_detect import (
+    CarrierDetector, CarrierOnset, CarrierOffset, CarrierPlateau,
+)
 
 RATE = 48_000.0
 ONSET  = -20.0   # dBFS
@@ -1485,3 +1487,74 @@ class TestOffsetSampleIndexRefinement:
             f"+ transition_end={ev.transition_end}) is {detection_abs - shutoff:+.0f} samples "
             f"from shutoff at {shutoff}; expected 0..{max_delay}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Plateau-event emission (sustained-carrier periodic snapshots)
+# ---------------------------------------------------------------------------
+
+class TestCarrierPlateauEmission:
+    """While the carrier is sustained, emit periodic CarrierPlateau events
+    that the server can use as additional pair-TDOA samples for averaging.
+    """
+
+    def _run(self, plateau_interval_s: float, total_seconds: float = 3.0,
+              rate: float = 48_000.0, window: int = 64,
+              snippet_samples: int = 1024) -> list:
+        """Drive the detector with carrier-on for the full duration; collect
+        all events.  Sleep briefly between buffers so wall-clock advances
+        across the plateau interval.
+        """
+        import time as _time
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=window,
+            snippet_samples=snippet_samples,
+            snippet_post_windows=2,        # short post window so onsets emit promptly
+            ring_lookback_windows=max(20, snippet_samples // window + 5),
+            plateau_event_interval_s=plateau_interval_s,
+        )
+        events: list = []
+        # Feed in 100 ms chunks so wall-clock time genuinely passes across
+        # ``total_seconds`` of test wall time.  Within each chunk the
+        # detector's own clock-querying happens once at the end (in
+        # ``_maybe_emit_plateau``).
+        chunk_samples = int(0.1 * rate)
+        n_chunks = int(total_seconds / 0.1)
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+        sample_index = 0
+        for _ in range(n_chunks):
+            new_events = det.process(carrier_iq, start_sample=sample_index)
+            events.extend(new_events)
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        return events
+
+    def test_no_plateau_emission_when_disabled(self):
+        events = self._run(plateau_interval_s=0.0, total_seconds=1.5)
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        assert plateaus == []
+
+    def test_plateau_emitted_periodically_during_active(self):
+        # 0.5 s interval over 2.5 s => expect ~4-5 plateau events.
+        events = self._run(plateau_interval_s=0.5, total_seconds=2.5)
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        assert 3 <= len(plateaus) <= 6, (
+            f"expected 3-6 plateau events for 0.5 s interval over 2.5 s, "
+            f"got {len(plateaus)}"
+        )
+        # Each plateau snippet should be the configured size.
+        for p in plateaus:
+            assert len(p.iq_snippet) == 1024 * 2  # int8-interleaved
+        # Sample indices should be monotonically increasing.
+        assert all(plateaus[i+1].sample_index > plateaus[i].sample_index
+                   for i in range(len(plateaus) - 1))
+
+    def test_plateau_does_not_violate_onset_offset_alternation(self):
+        """Plateau events between onset and offset should NOT trigger the
+        state-machine duplicate-emission warning.
+        """
+        events = self._run(plateau_interval_s=0.3, total_seconds=1.0)
+        # Should be at least one plateau and no warning-induced suppression.
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        assert plateaus, "plateau events expected"

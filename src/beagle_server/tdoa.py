@@ -790,30 +790,40 @@ def cross_correlate_coherent_phat(
         else:
             return int(np.argmin(region)) + lo
 
-    mid_a = _ramp_mid(iq_a, transition_start_a, transition_end_a)
-    mid_b = _ramp_mid(iq_b, transition_start_b, transition_end_b)
-    if mid_a is None or mid_b is None:
-        return None
-
-    # Carve out plateau segments (coherent side of the knee).
-    def _plateau_bounds(n: int, mid: int) -> tuple[int, int] | None:
-        if event_type == "onset":
-            lo = mid + int(1.5 * window)
-            hi = n - int(0.5 * window)
-        else:
-            lo = int(0.5 * window)
-            hi = mid - int(1.5 * window)
-        # Need enough samples for good freq-estimation + sharp PHAT peak.
-        # 500 samples at 250 kHz = 2 ms, several cycles of any plausible
-        # modulation tone.
-        if hi - lo < 500:
+    if event_type == "plateau":
+        # Plateau events have no ramp; use the entire snippet (with a
+        # small Savgol-window margin at each edge) as the coherent
+        # region for PHAT.  No ramp-mid, no ramp/plateau carve-out.
+        margin = window // 2 + 1
+        pl_a = (margin, max(margin + 1, len(iq_a) - margin))
+        pl_b = (margin, max(margin + 1, len(iq_b) - margin))
+        if pl_a[1] - pl_a[0] < 500 or pl_b[1] - pl_b[0] < 500:
             return None
-        return lo, hi
+    else:
+        mid_a = _ramp_mid(iq_a, transition_start_a, transition_end_a)
+        mid_b = _ramp_mid(iq_b, transition_start_b, transition_end_b)
+        if mid_a is None or mid_b is None:
+            return None
 
-    pl_a = _plateau_bounds(len(iq_a), mid_a)
-    pl_b = _plateau_bounds(len(iq_b), mid_b)
-    if pl_a is None or pl_b is None:
-        return None
+        # Carve out plateau segments (coherent side of the knee).
+        def _plateau_bounds(n: int, mid: int) -> tuple[int, int] | None:
+            if event_type == "onset":
+                lo = mid + int(1.5 * window)
+                hi = n - int(0.5 * window)
+            else:   # "offset"
+                lo = int(0.5 * window)
+                hi = mid - int(1.5 * window)
+            # Need enough samples for good freq-estimation + sharp PHAT peak.
+            # 500 samples at 250 kHz = 2 ms, several cycles of any plausible
+            # modulation tone.
+            if hi - lo < 500:
+                return None
+            return lo, hi
+
+        pl_a = _plateau_bounds(len(iq_a), mid_a)
+        pl_b = _plateau_bounds(len(iq_b), mid_b)
+        if pl_a is None or pl_b is None:
+            return None
 
     plateau_a = iq_a[pl_a[0]:pl_a[1]]
     plateau_b = iq_b[pl_b[0]:pl_b[1]]

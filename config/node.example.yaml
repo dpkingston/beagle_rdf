@@ -165,6 +165,19 @@ carrier:
                            # minimum is 128; 140 leaves a small safety margin.
                            # 0 = disabled (emit immediately; knee landing near snippet
                            # end, edge effects degrade knee finder).
+  plateau_event_interval_s: 0.0   # Periodic-snapshot interval (seconds) while the
+                                  # carrier is sustained.  0 = disabled (default,
+                                  # only onset/offset events emitted).
+                                  # When > 0, the detector emits a CarrierPlateau
+                                  # every N seconds during active state, giving
+                                  # the server many additional pair-TDOA samples
+                                  # per transmission for averaging.  Recommended:
+                                  # 1.0-2.0 s for typical PTT-radio transmissions
+                                  # of 5-30 s duration.  Cross-node alignment is
+                                  # NTP wall-clock precision (~10 ms), well within
+                                  # the snippet length (~65 ms at 16384 samples
+                                  # / 250 kHz) so snippets overlap heavily for
+                                  # cross-correlation.
   # ring_lookback_windows: null  # Depth of the IQ ring buffer in detector windows.
                                   # Auto-sized (default: 3 x snippet_windows, or the
                                   # minimum needed to fill snippet_samples, whichever

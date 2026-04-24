@@ -63,7 +63,7 @@ import os
 from dataclasses import dataclass
 from typing import Union
 
-from beagle_node.pipeline.carrier_detect import CarrierOnset, CarrierOffset
+from beagle_node.pipeline.carrier_detect import CarrierOnset, CarrierOffset, CarrierPlateau
 from beagle_node.pipeline.sync_detector import SyncEvent
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 _TIMING_DIAG = os.environ.get("BEAGLE_TIMING_DIAG") == "1"
 
 # Either edge of a carrier transition can produce a measurement.
-_CarrierEvent = Union[CarrierOnset, CarrierOffset]
+_CarrierEvent = Union[CarrierOnset, CarrierOffset, CarrierPlateau]
 
 
 @dataclass(frozen=True)
@@ -232,6 +232,18 @@ class DeltaComputer:
         other nodes (not with onset measurements).
         """
         self._pending_events.append((offset, "offset"))
+        return self._flush()
+
+    def feed_plateau(self, plateau) -> list[TDOAMeasurement]:
+        """
+        Record a CarrierPlateau (periodic capture during sustained carrier)
+        and attempt to match it to a SyncEvent for sub-microsecond timing.
+
+        Returns a list of TDOAMeasurement (0 or 1 element).
+        Plateau measurements pair across nodes only with other plateau
+        measurements that fall within the same wall-clock window.
+        """
+        self._pending_events.append((plateau, "plateau"))
         return self._flush()
 
     def _flush(self) -> list[TDOAMeasurement]:

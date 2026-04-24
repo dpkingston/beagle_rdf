@@ -52,7 +52,7 @@ def test_event_serializes_to_json():
     # Must round-trip through JSON without error
     json_str = json.dumps(d)
     parsed = json.loads(json_str)
-    assert parsed["schema_version"] == "1.5"
+    assert parsed["schema_version"] == "1.6"
     assert parsed["node_id"] == "seattle-north-01"
     assert parsed["sync_to_snippet_start_ns"] == 123_456_789
 
@@ -71,7 +71,7 @@ def test_event_pps_anchored_default_false():
 
 def test_event_schema_version():
     event = make_event()
-    assert event.schema_version == "1.5"
+    assert event.schema_version == "1.6"
 
 
 # ---------------------------------------------------------------------------

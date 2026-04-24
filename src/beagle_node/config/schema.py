@@ -311,6 +311,27 @@ class CarrierDetectConfig(BaseModel):
       sample_rate_hz (e.g. 45 windows x 64 samples / 250000 Hz ~ 11.5 ms).
     - If an offset occurs during post-collection for an onset (or vice versa), the
       pending event is emitted immediately with only the pre-event snippet."""
+    plateau_event_interval_s: float = 0.0
+    """Periodic plateau-snapshot emission interval, in seconds.  0 = disabled.
+
+    When > 0, the carrier detector emits a CarrierPlateau (event_type =
+    "plateau") every N seconds of wall-clock time while the detector is
+    in the active state.  Each plateau snippet covers the most recent
+    ``snippet_samples`` of IQ at emission time.  These give the server
+    many additional pair-TDOA samples per sustained transmission, which
+    can be averaged with the corresponding onset and offset measurements
+    to reduce the per-fix error roughly as 1/sqrt(N).
+
+    Cross-node alignment depends only on NTP-synchronised wall clocks
+    (~10 ms typical).  Plateau snippets between nodes overlap by
+    ``snippet_duration - NTP_skew`` -- e.g. ~64 ms out of 65 ms with the
+    standard 16384-sample / 250 kHz snippets -- which is more than enough
+    for the server's coherent cross-correlator to lock on the modulation
+    content (CTCSS tone, audio).
+
+    Recommended values: 1.0 - 2.0 seconds for typical PTT transmissions
+    of 5-30 s duration.  Lower values produce more samples per
+    transmission but more bandwidth; higher values produce fewer samples."""
 
     @model_validator(mode="after")
     def check_thresholds(self) -> "CarrierDetectConfig":
