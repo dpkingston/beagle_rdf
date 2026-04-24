@@ -101,6 +101,12 @@ class TestPipelineE2E:
             carrier_onset_db=-25.0,
             carrier_offset_db=-35.0,
             carrier_window_samples=32,
+            # Keep snippet size small for the synthetic test (1 s of data).
+            # Production uses larger snippets for coherent-IQ TDOA; that
+            # needs ring-buffer + sync-age depth that the 1-second test
+            # input doesn't have.
+            carrier_snippet_samples=5120,
+            carrier_snippet_post_windows=80,
             min_corr_peak=0.05,   # lower threshold for synthetic signal
         )
         pipeline = NodePipeline(
@@ -230,6 +236,9 @@ class TestFreqHopTiming:
             carrier_onset_db=-25.0,
             carrier_offset_db=-35.0,
             carrier_window_samples=32,
+            # Keep snippet small for synthetic freq-hop test (short data runs).
+            carrier_snippet_samples=5120,
+            carrier_snippet_post_windows=80,
             min_corr_peak=0.05,
         )
         pipeline = NodePipeline(
@@ -322,6 +331,8 @@ class TestFreqHopTiming:
             carrier_onset_db=-25.0,
             carrier_offset_db=-35.0,
             carrier_window_samples=32,
+            carrier_snippet_samples=5120,
+            carrier_snippet_post_windows=80,
             min_corr_peak=0.05,
         )
         pipeline_no = NodePipeline(

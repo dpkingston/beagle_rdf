@@ -241,13 +241,16 @@ class CarrierDetectConfig(BaseModel):
     Each sample is 2 int8 bytes on the wire (interleaved real/imag), so the
     payload per event ~ snippet_samples x 2 x 4/3 bytes base64-encoded:
 
-      640  samples -> ~1.7 KB   (default; 10 ms at 64 kHz)
-      1280 samples -> ~3.4 KB   (20 ms)
-      2560 samples -> ~6.8 KB   (40 ms - calibration/diagnostic mode)
+      640   samples -> ~1.7 KB   (code default; 10 ms at 64 kHz)
+      5120  samples -> ~14 KB    (legacy production; 20 ms at 250 kHz)
+      16384 samples -> ~44 KB    (current production; 65 ms at 250 kHz,
+                                   sized for coherent complex-IQ TDOA that
+                                   needs modulation bandwidth in the post-
+                                   knee plateau to correlate against)
 
     Use ``--analyze-snippets`` in colocated_pair_test.py to determine the
-    minimum value needed to cover your transmitters' full rise/fall time, then
-    scale back to avoid unnecessary bandwidth and storage."""
+    minimum value needed to cover your transmitters' full rise/fall time
+    plus enough plateau for modulation-content cross-correlation."""
     ring_lookback_windows: int | None = None
     """Depth of the IQ ring buffer in detector windows (independent of snippet size).
 

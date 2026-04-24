@@ -136,27 +136,33 @@ carrier:
   onset_margin_db: 12.0               # onset  = noise_floor + 12 dB
   offset_margin_db:  6.0              # offset = noise_floor +  6 dB (hysteresis)
   auto_threshold_update_interval_s: 2.0
-  window_samples: 256        # 256 samples ~= 1 ms at 250 kHz target rate.
+  window_samples: 64       # 64 samples = 256 µs at 250 kHz target rate.
+                           # Sets detection-window granularity.  Smaller gives
+                           # finer detection timing but less per-window noise
+                           # averaging.  Matches the production default.
   min_hold_windows: 1      # Onset: require N consecutive above-threshold windows
   min_release_windows: 1   # Offset: require N consecutive below-threshold windows
                            # Set to 4-8 to suppress mid-transmission chattering
-  snippet_samples: 5120    # IQ samples captured per event (pre-event ring buffer).
-                           # 5120 = ~20.5 ms at 250 kHz (~13 KB/event base64-encoded).
-                           # Contains pre-event noise, the PA transition, and post-
-                           # event context for robust server-side knee finding.
-  snippet_post_windows: 45 # Post-event windows appended to each IQ snippet.
+  snippet_samples: 16384   # IQ samples captured per event.
+                           # 16384 = ~65.5 ms at 250 kHz (~44 KB/event base64-encoded).
+                           # Sized to include ~30 ms of plateau after the knee
+                           # on onsets so the server can xcorr on modulation
+                           # content (CTCSS tone, audio).  The wider snippet is
+                           # necessary for coherent complex-IQ TDOA, which
+                           # relies on modulation bandwidth to produce a sharp
+                           # cross-correlation peak.
+  snippet_post_windows: 140 # Post-event windows appended to each IQ snippet.
                            # When > 0, the event is held until N additional windows
                            # have been captured after the threshold crossing. The
-                           # snippet then covers the full carrier rise/fall shape,
-                           # improving knee precision for gradual-onset transmitters
-                           # where co-located nodes may cross the threshold at
-                           # slightly different times. Each window ~ 0.26 ms at 250 kHz.
+                           # snippet then covers the full carrier rise/fall shape
+                           # plus post-event modulation content.
+                           # Each window ~ 0.26 ms at 250 kHz.
                            # The encoder centres the detection point in the snippet
                            # (snippet_samples // 2 post samples required), so this
                            # value must satisfy:
                            #   snippet_post_windows * window_samples >= snippet_samples // 2
-                           # At 64-sample windows and 5120-sample snippets the minimum
-                           # is 40; 45 leaves a small safety margin.
+                           # At 64-sample windows and 16384-sample snippets the
+                           # minimum is 128; 140 leaves a small safety margin.
                            # 0 = disabled (emit immediately; knee landing near snippet
                            # end, edge effects degrade knee finder).
   # ring_lookback_windows: null  # Depth of the IQ ring buffer in detector windows.

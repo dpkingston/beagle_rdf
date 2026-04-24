@@ -87,11 +87,16 @@ class PipelineConfig:
     # real-world signals to prevent chattering when power briefly dips below
     # the offset threshold mid-transmission.
     carrier_min_release_windows: int = 1
-    # Snippet size: 5120 samples = ~20.5 ms at 250 kHz (same duration as
-    # 1280 samples at 62.5 kHz in the old config).  ~10 KB raw, ~14 KB
-    # base64-encoded — within the agreed 5-10 KB budget.
-    carrier_snippet_samples: int = 5120
-    carrier_snippet_post_windows: int = 5     # Collect 5 windows after onset/offset detection.
+    # Snippet size: 16384 samples = ~65.5 ms at 250 kHz.  Sized to include
+    # ~30 ms of post-knee plateau on onsets so the server's coherent
+    # complex-IQ cross-correlation has real modulation bandwidth to lock
+    # onto (CTCSS tones, audio, data); the pure-carrier portion right at
+    # the knee carries no coherent timing information.  On-wire payload
+    # ~33 KB raw, ~44 KB base64-encoded per event.
+    carrier_snippet_samples: int = 16384
+    carrier_snippet_post_windows: int = 140   # Enough to centre detection
+                                              # when snippet_samples=16384
+                                              # and window_samples=64.
     # _encode_combined() places the transition at the snippet midpoint,
     # independent of min_hold_windows.  This ensures consistent snippet
     # anchoring across nodes with different carrier detector settings,
@@ -102,7 +107,7 @@ class PipelineConfig:
     # is gradual the shutoff may be many windows back.  Setting this well above
     # snippet_samples / window_samples guarantees the shutoff is captured for
     # any realistic fade.  Default: 3 x snippet windows (at 250 kHz with
-    # snippet=5120 and window=256: 3 x 20 = 60 windows = ~61 ms lookback).
+    # snippet=16384 and window=64: 3 x 256 = 768 windows = ~197 ms lookback).
     # None -> use 3x the snippet window count (same as the default).
     carrier_ring_lookback_windows: int | None = None
     # Minimum above-threshold windows since prime_state() before a CarrierOffset

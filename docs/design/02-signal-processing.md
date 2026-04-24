@@ -340,8 +340,11 @@ in noisy RF environments.
   passing to `DeltaComputer`).  At the current /8 target decimation the
   two domains have the same rate and the conversion is an identity.
 - An IQ snippet (int8 interleaved, base64 encoded) spanning the PA
-  transition, sized by `snippet_samples` (default 5120 samples = ~20.5 ms
-  at 250 kHz).  Used by the server for Savgol-based knee finding.
+  transition, sized by `snippet_samples` (production default 16384 samples
+  = ~65.5 ms at 250 kHz).  Used by the server for Savgol-based knee
+  finding and coherent complex-IQ cross-correlation; the latter needs
+  enough post-knee plateau to pick up modulation-bandwidth content
+  (CTCSS, audio) for a sharp correlation peak.
 - `transition_start` / `transition_end` indices within the snippet that
   bracket the reported PA transition zone.  The server's knee finder
   searches `argmin(d2)` within these bounds.
