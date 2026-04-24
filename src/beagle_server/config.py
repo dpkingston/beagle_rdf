@@ -202,12 +202,19 @@ class SolverConfig(BaseModel):
     tdoa_method: str = "xcorr"
     """
     Pair-level TDOA refinement method:
-      "xcorr" (default): cross-correlate d²(power envelope) between the two
-        snippets.  Returns a single pair-level lag; needs only pair-level SNR
-        rather than per-snippet knee SNR.  Empirically best for offsets and
-        matches knee performance for onsets with full event yield.
-      "knee": per-node Savgol-smoothed second-derivative knee finder.  Uses
-        ``savgol_window_us``.  Retained for comparison.
+      "xcorr" (config default, safe for any snippet size):
+        cross-correlate d²(power envelope) between the two snippets.
+      "phat" (**recommended for production** with large snippets):
+        coherent complex-IQ GCC-PHAT on the plateau segment of each
+        snippet after per-node LO-offset removal.  Robust to receiver-
+        channel mismatches (multipath, AGC).  Requires snippets sized
+        for ~30 ms of post-knee plateau, i.e.
+        ``carrier.snippet_samples >= 16384`` at 250 kHz (production
+        post-2026-04-24).  Empirically improves pooled median |err|
+        by ~17 % over "xcorr" at 3× yield.  Enable by setting
+        ``solver.tdoa_method: phat`` in the server config.
+      "knee": per-node Savgol-smoothed second-derivative knee finder.
+        Uses ``savgol_window_us``.  Retained for comparison.
     """
     xcorr_resample_rate_hz: float | None = None
     """

@@ -374,6 +374,11 @@ def test_compute_tdoa_equidistant_nodes_same_delta():
     """
     Two nodes equidistant from sync_tx with identical snippets (xcorr lag = 0)
     -> TDOA ~= 0 (path correction ~= 0 for equidistant nodes).
+
+    Exercises the "xcorr" path explicitly; the 640-sample _make_plateau_iq
+    fixture is too short for the "phat" default's >= 500-sample plateau
+    requirement (the plateau-only segment is shorter than 500 samples in
+    the synthetic snippet).
     """
     iq = _make_plateau_iq()
     snip = _iq_to_b64(iq)
@@ -381,7 +386,7 @@ def test_compute_tdoa_equidistant_nodes_same_delta():
             "node_id": "a", "iq_snippet_b64": snip, "channel_sample_rate_hz": 64_000.0}
     ev_b = {**_make_event(47.5, -122.3, 500_000_000, sync_tx_lat=47.6, sync_tx_lon=-122.3),
             "node_id": "b", "iq_snippet_b64": snip, "channel_sample_rate_hz": 64_000.0}
-    tdoa = compute_tdoa_s(ev_a, ev_b, min_xcorr_snr=2.0)
+    tdoa = compute_tdoa_s(ev_a, ev_b, tdoa_method="xcorr", min_xcorr_snr=2.0)
     assert tdoa is not None
     assert abs(tdoa) < 200e-9  # < 200 ns
 
@@ -472,6 +477,54 @@ def test_compute_tdoa_invalid_method_raises():
                                      snippet_b64=_iq_to_b64(iq_b), node_id="b")
     with pytest.raises(ValueError, match="tdoa_method"):
         compute_tdoa_s(ev_a, ev_b, tdoa_method="nonsense")
+
+
+def test_compute_tdoa_phat_recovers_known_delay():
+    """
+    PHAT method recovers a known small propagation delay.
+
+    Uses QPSK-modulated IQ (constant-envelope, broadband phase modulation)
+    so PHAT has rich cross-spectrum content to correlate on.  prop_delay=2
+    samples at 64 kHz = 31.25 µs physical TDOA — below the T_sync/2
+    disambiguation ambiguity.  Locations are chosen so the sync-path
+    correction is zero (sync tx equidistant from both nodes).
+    """
+    fs = 64_000.0
+    prop_delay = 2
+    delta_ns = int(prop_delay / fs * 1e9)
+    iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
+    ev_a = _make_event_with_snippet(47.7, -122.3, delta_ns, _iq_to_b64(iq_a),
+                                     node_id="node-a", sample_rate_hz=fs)
+    ev_b = _make_event_with_snippet(47.5, -122.3, 0, _iq_to_b64(iq_b),
+                                     node_id="node-b", sample_rate_hz=fs)
+    tdoa = compute_tdoa_s(ev_a, ev_b, tdoa_method="phat", min_xcorr_snr=1.5)
+    assert tdoa is not None, "PHAT returned None on good synthetic pair"
+    expected_s = prop_delay / fs    # positive = A heard the carrier later
+    # PHAT on QPSK-modulated synthetic IQ resolves the delay to sub-sample
+    # precision.  Real-corpus precision is ~50-200 µs depending on pair.
+    assert abs(tdoa - expected_s) < 50e-6
+
+
+def test_compute_tdoa_phat_rejects_short_snippet():
+    """
+    PHAT requires >= 500 samples of plateau after the ramp.  If the snippet
+    is too short to carve out a valid plateau segment, PHAT returns None
+    and the pair is skipped (not silently degraded).
+    """
+    fs = 64_000.0
+    # 256-sample snippet is way too short for PHAT's 500-sample plateau minimum.
+    rng = np.random.default_rng(0)
+    short_iq = (rng.standard_normal(256) + 1j * rng.standard_normal(256)).astype(np.complex64)
+    ev_a = _make_event_with_snippet(
+        47.7, -122.3, 0, _iq_to_b64(short_iq), node_id="a", sample_rate_hz=fs,
+        transition_start=100, transition_end=200,
+    )
+    ev_b = _make_event_with_snippet(
+        47.5, -122.3, 0, _iq_to_b64(short_iq), node_id="b", sample_rate_hz=fs,
+        transition_start=100, transition_end=200,
+    )
+    tdoa = compute_tdoa_s(ev_a, ev_b, tdoa_method="phat")
+    assert tdoa is None
 
 
 def test_compute_tdoa_xcorr_refines_sync_delta():

@@ -80,6 +80,17 @@ solver:
                                   # null (default) = automatically use the lower of the two
                                   # node rates for each pair (prefer downsampling).
                                   # Set to 62500.0 or 64000.0 to force a specific rate.
+  tdoa_method: phat               # Pair-level TDOA refinement method.
+                                  # "xcorr" (safe default for any snippet size): inter-node
+                                  #         cross-correlation on d2 of the power envelope.
+                                  # "phat"  (recommended for production): coherent complex-IQ
+                                  #         GCC-PHAT on the plateau segment of each snippet.
+                                  #         Requires carrier.snippet_samples >= 16384 at 250 kHz
+                                  #         (production default) for a plateau long enough to
+                                  #         include modulation content (CTCSS, audio).
+                                  #         Empirically ~17 % better pooled median |err| than
+                                  #         "xcorr" on real-corpus data, at 3x the event yield.
+                                  # "knee"  (diagnostic): per-node Savgol-smoothed d2 knee.
 
 map:
   output_dir: "data/maps"      # Directory for static Folium HTML snapshots.
