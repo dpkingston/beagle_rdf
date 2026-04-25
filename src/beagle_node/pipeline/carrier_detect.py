@@ -1066,10 +1066,20 @@ class CarrierDetector:
             return
         import time as _time
         now = _time.time()
+        import math
         if self._last_plateau_wall_s is None:
             # Anchor the cadence to the interval boundary so every node's
             # plateaus fire on the same wall-clock instants (modulo NTP).
-            import math
+            self._last_plateau_wall_s = (
+                math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
+            )
+        # If we've fallen far behind the schedule (e.g. carrier was inactive
+        # for a long stretch), snap forward to the current interval boundary
+        # rather than emitting back-to-back plateaus to "catch up".  Without
+        # this, every process() call after a long idle gap fires a plateau
+        # until _last_plateau_wall_s catches up — bursting at the chunk-arrival
+        # rate (~30 Hz) and saturating the reporter rate-limiter.
+        if now - self._last_plateau_wall_s > 2 * self._plateau_interval_s:
             self._last_plateau_wall_s = (
                 math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
             )
@@ -1105,9 +1115,9 @@ class CarrierDetector:
             transition_end=self._snippet_samples,
         )
         self._emit(events, ev)
-        # Advance the cadence by exactly one interval (don't drift on
-        # slow firing) so subsequent emissions stay phase-locked to the
-        # original schedule.
+        # Advance the cadence by exactly one interval so subsequent emissions
+        # stay phase-locked to the original schedule.  (The "far behind" snap
+        # above guarantees we won't emit more than once per process() call.)
         self._last_plateau_wall_s += self._plateau_interval_s
         logger.debug(
             "CarrierPlateau emitted at sample %d (interval %.1f s)",

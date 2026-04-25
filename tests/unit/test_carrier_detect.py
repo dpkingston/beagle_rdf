@@ -1558,3 +1558,58 @@ class TestCarrierPlateauEmission:
         # Should be at least one plateau and no warning-induced suppression.
         plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
         assert plateaus, "plateau events expected"
+
+    def test_plateau_no_burst_after_long_idle_gap(self):
+        """Regression: if the carrier was inactive for many intervals and then
+        becomes active again, the plateau emitter must NOT fire one plateau
+        per process() call to "catch up."  It should snap forward to the
+        current interval boundary and emit at most one plateau immediately.
+
+        Observed in production on dpk-tdoa1 (2026-04-24): after a long quiet
+        stretch, carrier-active resumed and the detector emitted plateaus at
+        ~30 Hz (the chunk-arrival rate), saturating the reporter rate-limit
+        and causing offset events to be dropped.
+        """
+        import time as _time
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)  # 100 ms chunks => 10 Hz process()
+        plateau_interval_s = 0.3
+
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=25,
+            plateau_event_interval_s=plateau_interval_s,
+        )
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+
+        # Warm up: feed enough chunks to cross at least one plateau interval
+        # boundary so detector enters "active" and emits a plateau, anchoring
+        # _last_plateau_wall_s.
+        sample_index = 0
+        warmup_events: list = []
+        for _ in range(6):  # 600 ms > 2× plateau_interval_s
+            warmup_events.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        warmup_plateaus = [e for e in warmup_events if isinstance(e, CarrierPlateau)]
+        assert len(warmup_plateaus) >= 1, "warmup should emit at least one plateau"
+
+        # Simulate "carrier was idle for a long time" by rewinding the
+        # plateau timestamp far into the past.  Without the fix this causes
+        # _maybe_emit_plateau to fire once per process() call until caught up.
+        det._last_plateau_wall_s = _time.time() - 60.0  # 60 intervals behind
+
+        # Now drive 5 fast process() calls (no sleep — like the production
+        # 30 Hz chunk-arrival path).  Expect at most ONE plateau.
+        burst_events: list = []
+        for _ in range(5):
+            burst_events.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+        burst_plateaus = [e for e in burst_events if isinstance(e, CarrierPlateau)]
+        assert len(burst_plateaus) <= 1, (
+            f"expected at most 1 plateau after long-idle snap-forward, "
+            f"got {len(burst_plateaus)} (catch-up burst regression)"
+        )
