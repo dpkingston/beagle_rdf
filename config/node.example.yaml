@@ -178,6 +178,15 @@ carrier:
                                   # the snippet length (~65 ms at 16384 samples
                                   # / 250 kHz) so snippets overlap heavily for
                                   # cross-correlation.
+  plateau_max_per_active: 30      # Safety cap: max plateau emissions during a
+                                  # single active period before muting until the
+                                  # next idle->active cycle (offset+onset).
+                                  # At plateau_event_interval_s=1.0, 30 = 30 s of
+                                  # continuous plateaus -- well above 95th-percentile
+                                  # voice key-down length, but bounded so a "stuck
+                                  # active" state machine cannot exhaust journal
+                                  # disk on resource-constrained hosts.  A WARN logs
+                                  # once when the cap trips.  0 = no cap (legacy).
   # ring_lookback_windows: null  # Depth of the IQ ring buffer in detector windows.
                                   # Auto-sized (default: 3 x snippet_windows, or the
                                   # minimum needed to fill snippet_samples, whichever

@@ -1613,3 +1613,176 @@ class TestCarrierPlateauEmission:
             f"expected at most 1 plateau after long-idle snap-forward, "
             f"got {len(burst_plateaus)} (catch-up burst regression)"
         )
+
+    def test_plateau_max_per_active_caps_emissions(self):
+        """When plateau_max_per_active=N, a single active period emits at
+        most N plateaus regardless of how long the carrier stays active.
+        """
+        events = self._run(
+            plateau_interval_s=0.1,   # fast cadence so we hit the cap quickly
+            total_seconds=2.0,        # 20 intervals worth of active time
+            snippet_samples=1024,
+        )
+        # Without cap, ~20 plateaus would emit.  With cap=3, expect <= 3.
+        # (The class helper _run doesn't accept the cap directly, so build
+        # a detector here that does.)
+        import time as _time
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=25,
+            plateau_event_interval_s=0.1,
+            plateau_max_per_active=3,
+        )
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+        all_events: list = []
+        sample_index = 0
+        for _ in range(20):  # 2 seconds
+            all_events.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        plateaus = [e for e in all_events if isinstance(e, CarrierPlateau)]
+        assert len(plateaus) == 3, (
+            f"plateau_max_per_active=3 should cap emissions at exactly 3 "
+            f"during a single active period; got {len(plateaus)}"
+        )
+
+    def test_plateau_max_per_active_resets_on_idle_active_cycle(self):
+        """After the cap fires and the carrier transitions idle->active again,
+        the counter resets and a new batch of plateaus is allowed."""
+        import time as _time
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=25,
+            plateau_event_interval_s=0.1,
+            plateau_max_per_active=2,
+        )
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+        # noise level just below offset threshold
+        rng = np.random.default_rng(42)
+        idle_iq = _noise(chunk_samples, power_db=-50.0, rng=rng)
+
+        sample_index = 0
+        all_events: list = []
+
+        # Active phase 1: cap should kick in after 2 plateaus
+        for _ in range(8):
+            all_events.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        n_after_phase1 = sum(1 for e in all_events if isinstance(e, CarrierPlateau))
+
+        # Idle phase: carrier off, state -> idle
+        for _ in range(4):
+            all_events.extend(det.process(idle_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.05)
+
+        # Active phase 2: another active period
+        for _ in range(8):
+            all_events.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        n_total = sum(1 for e in all_events if isinstance(e, CarrierPlateau))
+
+        # Phase 1 capped at 2; phase 2 should also cap at 2 (after counter reset)
+        assert n_after_phase1 == 2, (
+            f"phase 1 should cap at 2; got {n_after_phase1}"
+        )
+        assert n_total > n_after_phase1, (
+            f"phase 2 should produce additional plateaus after cycle reset; "
+            f"total {n_total} == after-phase1 {n_after_phase1} (no reset)"
+        )
+        assert n_total <= 2 + 2, (
+            f"phase 2 should also cap at 2; got {n_total - n_after_phase1} extra"
+        )
+
+    def test_plateau_max_per_active_zero_means_unlimited(self):
+        """plateau_max_per_active=0 must preserve legacy uncapped behaviour."""
+        import time as _time
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=25,
+            plateau_event_interval_s=0.1,
+            plateau_max_per_active=0,   # disabled
+        )
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+        all_events: list = []
+        sample_index = 0
+        for _ in range(15):  # 1.5 sec → 15 intervals of 0.1 s
+            all_events.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        plateaus = [e for e in all_events if isinstance(e, CarrierPlateau)]
+        # Without a cap we expect emissions throughout the active period.
+        # Don't assert an exact count (timing variability) — just assert the
+        # cap of 3 from the previous test is exceeded, proving 0 disables it.
+        assert len(plateaus) > 5, (
+            f"plateau_max_per_active=0 should not cap; got only {len(plateaus)}"
+        )
+
+    def test_plateau_max_per_active_warn_logged_once(self, caplog):
+        """A WARNING is logged exactly once when the cap is hit."""
+        import logging as _logging
+        import time as _time
+        caplog.set_level(_logging.WARNING,
+                          logger="beagle_node.pipeline.carrier_detect")
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=25,
+            plateau_event_interval_s=0.1,
+            plateau_max_per_active=2,
+        )
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+        sample_index = 0
+        # Drive enough time for several would-be emissions past the cap.
+        for _ in range(15):
+            det.process(carrier_iq, start_sample=sample_index)
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        warns = [r for r in caplog.records
+                 if r.levelno == _logging.WARNING and "Plateau cap reached" in r.message]
+        assert len(warns) == 1, (
+            f"expected exactly one cap-reached WARN; got {len(warns)}"
+        )
+
+    def test_update_thresholds_can_change_max_per_active(self):
+        """Hot-reload of plateau_max_per_active takes effect immediately."""
+        det = make_detector(
+            sample_rate_hz=48_000.0,
+            plateau_event_interval_s=1.0,
+            plateau_max_per_active=10,
+        )
+        assert det._plateau_max_per_active == 10
+        det.update_thresholds(plateau_max_per_active=30)
+        assert det._plateau_max_per_active == 30
+        # Negative is a hard error.
+        with pytest.raises(ValueError, match="plateau_max_per_active"):
+            det.update_thresholds(plateau_max_per_active=-1)
+
+    def test_constructor_rejects_negative_max_per_active(self):
+        with pytest.raises(ValueError, match="plateau_max_per_active"):
+            CarrierDetector(
+                sample_rate_hz=48_000.0,
+                onset_threshold_db=-20, offset_threshold_db=-30,
+                plateau_max_per_active=-1,
+            )

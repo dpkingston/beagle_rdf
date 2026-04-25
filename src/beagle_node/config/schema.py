@@ -332,6 +332,27 @@ class CarrierDetectConfig(BaseModel):
     Recommended values: 1.0 - 2.0 seconds for typical PTT transmissions
     of 5-30 s duration.  Lower values produce more samples per
     transmission but more bandwidth; higher values produce fewer samples."""
+    plateau_max_per_active: int = 30
+    """Maximum plateau emissions allowed in a single active period, before
+    the emitter mutes itself until the next state -> idle -> active cycle.
+
+    Safety net for "stuck active" failures where the detector latches into
+    the active state without ever transitioning back to idle (e.g. noise
+    floor drifts above the offset threshold mid-transmission).  Without a
+    cap, plateau emissions continue indefinitely, exhausting journal disk
+    on resource-constrained hosts (Raspberry Pi).
+
+    At the recommended ``plateau_event_interval_s = 1.0``, a cap of 30
+    corresponds to 30 s of continuous plateaus -- comfortably above 95th-
+    percentile voice-traffic key-down length, and far below a stuck-
+    active failure (which typically runs for many minutes).
+
+    A WARNING is logged once when the cap is hit so it shows up
+    prominently in production logs.  Plateaus resume on the next idle ->
+    active transition (i.e. after a normal offset/onset cycle).
+
+    0 = no cap (legacy behaviour; emit plateaus indefinitely while active).
+    """
 
     @model_validator(mode="after")
     def check_thresholds(self) -> "CarrierDetectConfig":

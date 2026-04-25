@@ -122,6 +122,11 @@ class PipelineConfig:
     # averaging.  0 (default) = disabled.  Recommended: 1.0-2.0 s for typical
     # PTT-radio transmissions of 5-30 s duration.
     carrier_plateau_event_interval_s: float = 0.0
+    # Maximum plateau emissions allowed in a single active period before the
+    # emitter mutes itself until the next idle->active transition.  Safety net
+    # for "stuck active" failures; 0 = no cap (legacy).  See carrier.
+    # plateau_max_per_active in the node config schema for full discussion.
+    carrier_plateau_max_per_active: int = 30
 
     # Auto-threshold tracking (matches GUI "Auto-Calibrate" button, applied
     # continuously so thresholds follow changing noise conditions without
@@ -193,6 +198,7 @@ class NodePipeline:
             offset_margin_db=c.carrier_offset_margin_db,
             auto_threshold_update_interval_s=c.carrier_auto_threshold_update_interval_s,
             plateau_event_interval_s=c.carrier_plateau_event_interval_s,
+            plateau_max_per_active=c.carrier_plateau_max_per_active,
         )
 
         # Delta computer

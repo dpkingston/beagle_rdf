@@ -148,7 +148,12 @@ class CarrierDetector:
         offset_margin_db: float = 6.0,
         auto_threshold_update_interval_s: float = 2.0,
         plateau_event_interval_s: float = 0.0,
+        plateau_max_per_active: int = 0,
     ) -> None:
+        if plateau_max_per_active < 0:
+            raise ValueError(
+                f"plateau_max_per_active must be >= 0, got {plateau_max_per_active}"
+            )
         if offset_threshold_db >= onset_threshold_db:
             raise ValueError(
                 f"offset_threshold_db ({offset_threshold_db}) must be < "
@@ -199,6 +204,17 @@ class CarrierDetector:
         # simultaneous.
         self._plateau_interval_s: float = float(plateau_event_interval_s)
         self._last_plateau_wall_s: float | None = None
+
+        # Stuck-active safety: cap plateau emissions per active period.
+        # 0 = unlimited (legacy).  When > 0, after this many plateaus in a
+        # single active period the emitter mutes itself; emission resumes
+        # only after a state -> idle -> active transition (i.e. an offset
+        # then a fresh onset).  Catches "stuck active" failures that would
+        # otherwise emit one plateau per second indefinitely, exhausting
+        # journal/disk on resource-constrained hosts.
+        self._plateau_max_per_active: int = int(plateau_max_per_active)
+        self._plateau_count_this_active: int = 0
+        self._plateau_cap_warned: bool = False
 
         self._state: _State = "idle"
         self._cumulative_sample: int = 0   # total samples seen so far
@@ -409,6 +425,7 @@ class CarrierDetector:
         min_release_windows: int | None = None,
         min_active_windows_for_offset: int | None = None,
         plateau_event_interval_s: float | None = None,
+        plateau_max_per_active: int | None = None,
     ) -> None:
         """Update detection thresholds on a live detector without resetting state.
 
@@ -450,11 +467,22 @@ class CarrierDetector:
             if self._plateau_interval_s != plateau_event_interval_s:
                 self._last_plateau_wall_s = None
             self._plateau_interval_s = float(plateau_event_interval_s)
+        if plateau_max_per_active is not None:
+            if plateau_max_per_active < 0:
+                raise ValueError(
+                    f"plateau_max_per_active must be >= 0, got {plateau_max_per_active}"
+                )
+            self._plateau_max_per_active = int(plateau_max_per_active)
+            # Re-arm the warn flag so a fresh cap value gets a fresh WARN
+            # if/when it trips.
+            self._plateau_cap_warned = False
         logger.info(
             "Thresholds updated: onset=%.1f offset=%.1f hold=%d release=%d "
-            "min_active_for_offset=%d plateau_event_interval_s=%.2f",
+            "min_active_for_offset=%d plateau_event_interval_s=%.2f "
+            "plateau_max_per_active=%d",
             self._onset_db, self._offset_db, self._min_hold, self._min_release,
             self._min_active_for_offset, self._plateau_interval_s,
+            self._plateau_max_per_active,
         )
 
     def _apply_auto_thresholds(self) -> None:
@@ -1061,8 +1089,28 @@ class CarrierDetector:
         if self._plateau_interval_s <= 0.0:
             return
         if self._state != "active":
+            # Reset stuck-active counter so when we re-enter active it
+            # starts fresh and the WARN-once flag re-arms.
+            self._plateau_count_this_active = 0
+            self._plateau_cap_warned = False
             return
         if self._pending_event_type is not None:
+            return
+        # Stuck-active safety cap.  After plateau_max_per_active emissions
+        # in a single active period the emitter mutes itself; only a
+        # state -> idle -> active transition (offset + onset) re-enables it.
+        if (
+            self._plateau_max_per_active > 0
+            and self._plateau_count_this_active >= self._plateau_max_per_active
+        ):
+            if not self._plateau_cap_warned:
+                logger.warning(
+                    "Plateau cap reached at N=%d emissions during a single "
+                    "active period; stuck-active suspected, emissions paused "
+                    "until next idle->active cycle (offset+onset).",
+                    self._plateau_max_per_active,
+                )
+                self._plateau_cap_warned = True
             return
         import time as _time
         now = _time.time()
@@ -1115,6 +1163,7 @@ class CarrierDetector:
             transition_end=self._snippet_samples,
         )
         self._emit(events, ev)
+        self._plateau_count_this_active += 1
         # Advance the cadence by exactly one interval so subsequent emissions
         # stay phase-locked to the original schedule.  (The "far behind" snap
         # above guarantees we won't emit more than once per process() call.)
