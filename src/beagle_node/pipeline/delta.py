@@ -337,7 +337,14 @@ class DeltaComputer:
         noise_floor = getattr(event, "noise_floor_db", -100.0)
 
         if _TIMING_DIAG:
-            logger.info(
+            # Plateau events fire at the configured cadence (default 1/s)
+            # while a carrier is sustained.  In production this is the
+            # dominant journal source on resource-constrained hosts; demote
+            # to DEBUG so it can be enabled selectively.  Onset/offset stay
+            # at INFO because they're rare (per-key-down) and high-signal.
+            _level = logging.DEBUG if event_type == "plateau" else logging.INFO
+            logger.log(
+                _level,
                 "TIMING_DIAG %s",
                 _json.dumps({
                     "stage": "delta",

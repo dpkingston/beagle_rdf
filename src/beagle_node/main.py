@@ -616,7 +616,15 @@ def run(args: argparse.Namespace | None = None) -> int:
         )
         if _TIMING_DIAG:
             _snippet_hash = hashlib.sha256(m.iq_snippet).hexdigest()[:16]
-            logger.info(
+            # Plateau events fire at the configured cadence (default 1/s)
+            # while a carrier is sustained.  In steady-state operation they
+            # are the dominant journal source; demote plateau diagnostics
+            # to DEBUG so journals stay manageable on Pi-class hosts.
+            # Onset/offset stay at INFO -- rare (per-key-down) and useful
+            # for incident triage.
+            _level = logging.DEBUG if m.event_type == "plateau" else logging.INFO
+            logger.log(
+                _level,
                 "TIMING_DIAG %s",
                 _json.dumps({
                     "stage": "event",
@@ -637,7 +645,10 @@ def run(args: argparse.Namespace | None = None) -> int:
             )
         reporter.submit(event)
         health.record_event()
-        logger.info(
+        # See _level rationale above: plateau measurement summaries are
+        # demoted to DEBUG; onset/offset stay at INFO.
+        logger.log(
+            logging.DEBUG if m.event_type == "plateau" else logging.INFO,
             "Measurement: %s sync_to_snippet_start_ns=%d corr=%.3f",
             m.event_type, corrected_delta, m.corr_peak,
         )
