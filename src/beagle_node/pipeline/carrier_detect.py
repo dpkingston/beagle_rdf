@@ -408,6 +408,7 @@ class CarrierDetector:
         min_hold_windows: int | None = None,
         min_release_windows: int | None = None,
         min_active_windows_for_offset: int | None = None,
+        plateau_event_interval_s: float | None = None,
     ) -> None:
         """Update detection thresholds on a live detector without resetting state.
 
@@ -438,11 +439,22 @@ class CarrierDetector:
                     f"got {min_active_windows_for_offset}"
                 )
             self._min_active_for_offset = min_active_windows_for_offset
+        if plateau_event_interval_s is not None:
+            if plateau_event_interval_s < 0.0:
+                raise ValueError(
+                    f"plateau_event_interval_s must be >= 0, got {plateau_event_interval_s}"
+                )
+            # Reset cadence anchor so the new interval takes effect on the
+            # next aligned wall-clock boundary; otherwise we'd inherit the
+            # old interval's last-fired timestamp.
+            if self._plateau_interval_s != plateau_event_interval_s:
+                self._last_plateau_wall_s = None
+            self._plateau_interval_s = float(plateau_event_interval_s)
         logger.info(
             "Thresholds updated: onset=%.1f offset=%.1f hold=%d release=%d "
-            "min_active_for_offset=%d",
+            "min_active_for_offset=%d plateau_event_interval_s=%.2f",
             self._onset_db, self._offset_db, self._min_hold, self._min_release,
-            self._min_active_for_offset,
+            self._min_active_for_offset, self._plateau_interval_s,
         )
 
     def _apply_auto_thresholds(self) -> None:

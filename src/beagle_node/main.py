@@ -287,43 +287,70 @@ def run(args: argparse.Namespace | None = None) -> int:
                 )
 
             # --- Carrier config: split into hot-reload vs restart ---
+            #
+            # SAFETY: each carrier sub-field is explicitly classified.  Any
+            # field that has changed and is NOT in either set forces a
+            # restart, so a newly-added schema field can never be silently
+            # dropped on the running detector.
+            _CARRIER_HOT_FIELDS = frozenset({
+                "onset_db", "offset_db",
+                "min_hold_windows", "min_release_windows",
+                "min_active_windows_for_offset",
+                "plateau_event_interval_s",
+            })
+            _CARRIER_RESTART_FIELDS = frozenset({
+                "window_samples", "snippet_samples",
+                "snippet_post_windows", "ring_lookback_windows",
+                "auto_threshold_margins",
+                "onset_margin_db", "offset_margin_db",
+                "auto_threshold_update_interval_s",
+            })
             if new_config.carrier != config.carrier:
-                # Fields that change ring buffer geometry require restart
-                _carrier_restart_fields = (
-                    "window_samples", "snippet_samples",
-                    "snippet_post_windows", "ring_lookback_windows",
-                )
-                carrier_needs_restart = any(
-                    getattr(new_config.carrier, f) != getattr(config.carrier, f)
-                    for f in _carrier_restart_fields
-                )
-                if carrier_needs_restart:
+                changed_carrier = {
+                    f for f in new_config.carrier.model_fields
+                    if getattr(new_config.carrier, f) != getattr(config.carrier, f)
+                }
+                restart_changes  = changed_carrier & _CARRIER_RESTART_FIELDS
+                hot_changes      = changed_carrier & _CARRIER_HOT_FIELDS
+                unknown_changes  = changed_carrier - _CARRIER_RESTART_FIELDS - _CARRIER_HOT_FIELDS
+
+                if unknown_changes:
+                    need_restart = True
+                    logger.warning(
+                        "Remote config update: carrier field(s) %s have no "
+                        "hot-reload classification in main.py; forcing restart "
+                        "to apply safely.  Add them to _CARRIER_HOT_FIELDS or "
+                        "_CARRIER_RESTART_FIELDS once the appropriate behaviour "
+                        "is decided.",
+                        sorted(unknown_changes),
+                    )
+                if restart_changes:
                     need_restart = True
                     logger.info(
-                        "Remote config update: carrier geometry changed - "
-                        "initiating restart"
+                        "Remote config update: carrier %s changed - initiating restart",
+                        sorted(restart_changes),
                     )
-                # Threshold/debounce fields are hot-reloadable
+                # Apply hot-reloadable changes regardless: they take effect
+                # immediately, and if a restart is also queued the cold
+                # start will pick them up from the YAML on relaunch.
                 config.carrier = new_config.carrier
-                try:
-                    pipeline.carrier_detector.update_thresholds(
-                        onset_threshold_db=new_config.carrier.onset_db,
-                        offset_threshold_db=new_config.carrier.offset_db,
-                        min_hold_windows=new_config.carrier.min_hold_windows,
-                        min_release_windows=new_config.carrier.min_release_windows,
-                        min_active_windows_for_offset=new_config.carrier.min_active_windows_for_offset,
-                    )
-                    logger.info(
-                        "Remote config update: carrier thresholds applied "
-                        "(onset=%.1f offset=%.1f hold=%d release=%d "
-                        "min_active_for_offset=%d)",
-                        new_config.carrier.onset_db, new_config.carrier.offset_db,
-                        new_config.carrier.min_hold_windows,
-                        new_config.carrier.min_release_windows,
-                        new_config.carrier.min_active_windows_for_offset,
-                    )
-                except Exception as exc:
-                    logger.error("Failed to update carrier thresholds: %s", exc)
+                if hot_changes:
+                    try:
+                        pipeline.carrier_detector.update_thresholds(
+                            onset_threshold_db=new_config.carrier.onset_db,
+                            offset_threshold_db=new_config.carrier.offset_db,
+                            min_hold_windows=new_config.carrier.min_hold_windows,
+                            min_release_windows=new_config.carrier.min_release_windows,
+                            min_active_windows_for_offset=new_config.carrier.min_active_windows_for_offset,
+                            plateau_event_interval_s=new_config.carrier.plateau_event_interval_s,
+                        )
+                        logger.info(
+                            "Remote config update: carrier hot-reload applied (%s)",
+                            sorted(hot_changes),
+                        )
+                    except Exception as exc:
+                        logger.error("Failed to apply carrier hot-reload: %s", exc)
+                        need_restart = True
 
             # --- Hot-reloadable: target channels ---
             if new_config.target_channels != config.target_channels:
@@ -370,6 +397,42 @@ def run(args: argparse.Namespace | None = None) -> int:
                     old_loc.latitude_deg, old_loc.longitude_deg,
                     new_config.location.latitude_deg,
                     new_config.location.longitude_deg,
+                )
+
+            # --- SAFETY NET: any other top-level config field that has
+            # changed but has no explicit handler above forces a restart.
+            #
+            # This guards against silently dropping changes to fields that
+            # don't have hot-reload paths.  When a new field is added to
+            # NodeConfig (or to any nested model) and someone forgets to
+            # extend the corresponding handler, the resulting unhandled
+            # change will trigger a restart with a clear log message
+            # pointing to the missing handler.  Hot-reload becomes
+            # opt-in: explicit allowlist rather than implicit dropthrough.
+            #
+            # Top-level fields with explicit handling above:
+            _HANDLED_TOP_FIELDS = frozenset({
+                # Restart-triggering (handled by _restart_checks above):
+                "sdr_mode", "freq_hop", "rspduo", "sync_sdr", "target_sdr",
+                # Hot-reload with sub-field allowlist (handled above):
+                "carrier", "sync_signal",
+                # Hot-reload (whole section):
+                "target_channels", "clock", "location",
+            })
+            unhandled = {
+                f for f in new_config.model_fields
+                if (getattr(new_config, f, None) != getattr(config, f, None)
+                    and f not in _HANDLED_TOP_FIELDS)
+            }
+            if unhandled:
+                need_restart = True
+                logger.warning(
+                    "Remote config update: top-level field(s) %s changed but "
+                    "have no hot-reload handler in main.py; forcing restart "
+                    "to apply safely.  Add an explicit handler and append "
+                    "to _HANDLED_TOP_FIELDS once the desired behaviour is "
+                    "decided.",
+                    sorted(unhandled),
                 )
 
             # Update health endpoint with any config changes
