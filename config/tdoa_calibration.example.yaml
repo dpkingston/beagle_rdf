@@ -1,0 +1,16 @@
+# Per-node TDOA bias calibration.  Fitted by
+# scripts/fit_tdoa_calibration.py against a known-position transmitter.
+# δ values are in seconds; positive δ means the node reports later than truth.
+tdoa_calibration:
+  enabled: true
+  reference_node: dpk-tdoa1
+  node_offsets_s:
+    dpk-tdoa1: 0.0           # reference
+    dpk-tdoa2: +7.918322e-06    # +7.918 µs
+    n7jmv-tdoa-qth: -7.486309e-05    # -74.863 µs
+  fit_transmitter_label: "Magnolia"
+  fit_transmitter_lat: 47.65133
+  fit_transmitter_lon: -122.3918318
+  fit_n_pairs: 128
+  fit_residual_rms_us: 0.496
+  fit_date: "2026-04-25"

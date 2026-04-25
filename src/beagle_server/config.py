@@ -265,12 +265,71 @@ class MapConfig(BaseModel):
     """
 
 
+class TdoaCalibrationConfig(BaseModel):
+    """
+    Per-node TDOA bias calibration.
+
+    Each node carries an intrinsic timing offset δ_n (seconds) caused by
+    cable delay, processing pipeline offset, crystal-clock idiosyncrasies,
+    and any other constant timing artefact in its receive chain.  Pair TDOA
+    is corrected as:
+
+        calibrated_tdoa(a, b) = compute_tdoa_s(a, b) - (δ_a - δ_b)
+
+    The offsets are fitted by least-squares against pair biases observed
+    against a known-position transmitter (see ``scripts/fit_tdoa_calibration.py``).
+    Set the reference node to 0 and express the others relative to it; the
+    sign convention is "δ positive = node reports later than truth".
+
+    The model is plateau-only: per-event-type biases differ by ~7-17 µs
+    on real hardware (different code paths in compute_tdoa_s for onset/
+    offset/plateau), so calibration is fitted from plateau measurements
+    and consumed by plateau measurements.  Onset/offset measurements
+    are uncalibrated and should not be used for fine fixes.
+    """
+
+    enabled: bool = False
+    """Apply the per-node δ corrections.  Default False so that an
+    unfitted calibration table doesn't silently bias output."""
+
+    node_offsets_s: dict[str, float] = Field(default_factory=dict)
+    """
+    Per-node δ in **seconds**, relative to the chosen reference node.
+    Empty dict (default) means "no calibration data."  Nodes not present
+    are treated as δ = 0 (reference-aligned).
+
+    Example::
+
+        node_offsets_s:
+          dpk-tdoa1:        0.0          # reference
+          dpk-tdoa2:        7.928e-6     # +7.928 µs
+          n7jmv-tdoa-qth:  -74.861e-6    # -74.861 µs
+    """
+
+    reference_node: str = ""
+    """Documentation only: which node has δ = 0 by construction."""
+
+    fit_transmitter_label: str = ""
+    """Documentation: label of the transmitter the calibration was fitted against."""
+    fit_transmitter_lat: float = 0.0
+    fit_transmitter_lon: float = 0.0
+    fit_n_pairs: int = 0
+    """Number of pair-event observations used in the fit (provenance)."""
+    fit_residual_rms_us: float = 0.0
+    """Residual RMS of the per-pair model fit, in µs.  A value > 5-10 µs
+    suggests the per-node δ model is not capturing the true bias structure
+    (e.g. multipath-driven per-pair-per-target effects)."""
+    fit_date: str = ""
+    """ISO date string YYYY-MM-DD."""
+
+
 class ServerFullConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     pairing: PairingConfig = Field(default_factory=PairingConfig)
     solver: SolverConfig = Field(default_factory=SolverConfig)
     map: MapConfig = Field(default_factory=MapConfig)
+    tdoa_calibration: TdoaCalibrationConfig = Field(default_factory=TdoaCalibrationConfig)
 
 
 def load_config(path: str | Path) -> ServerFullConfig:

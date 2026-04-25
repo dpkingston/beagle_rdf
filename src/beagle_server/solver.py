@@ -193,6 +193,7 @@ def solve_fix(
     max_xcorr_baseline_km: float = 50.0,
     savgol_window_us: float = 360.0,
     tdoa_method: str = "xcorr",
+    node_offsets_s: dict[str, float] | None = None,
 ) -> FixResult | None:
     """
     Compute a transmitter fix from a list of events from the same transmission.
@@ -208,6 +209,10 @@ def solve_fix(
         Initial search point and centre of the bounding box.
     search_radius_km :
         Solver search radius.
+    node_offsets_s :
+        Optional per-node bias-calibration table (δ_n in seconds), forwarded
+        to ``compute_tdoa_s`` for each pair.  See
+        ``TdoaCalibrationConfig.node_offsets_s``.
 
     Returns
     -------
@@ -257,6 +262,7 @@ def solve_fix(
                 max_xcorr_baseline_km=max_xcorr_baseline_km,
                 savgol_window_us=savgol_window_us,
                 tdoa_method=tdoa_method,
+                node_offsets_s=node_offsets_s,
             )
             if tdoa is not None:
                 pairs.append((i, j, tdoa))

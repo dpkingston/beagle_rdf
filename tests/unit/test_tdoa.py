@@ -1272,3 +1272,145 @@ class TestSyncCalibratorNominalRate:
             f"got {c:+.1f} ns (expected ~0 because post-restart diff is "
             f"an integer bit multiple)"
         )
+
+
+# ---------------------------------------------------------------------------
+# compute_tdoa_s — per-node δ bias calibration (node_offsets_s)
+# ---------------------------------------------------------------------------
+
+def _ev(node_id: str, sync_to_snippet_start_ns: int = 0,
+        node_lat: float = 47.65, node_lon: float = -122.31) -> dict:
+    """Minimal event for calibration tests.
+
+    Uses sync_delta-only path (no IQ refinement, no plausibility issues)
+    to keep tests focussed on the calibration arithmetic.  Both nodes are
+    near each other so path-delay correction is small and predictable.
+    """
+    return {
+        **_make_event(node_lat, node_lon,
+                      sync_to_snippet_start_ns=sync_to_snippet_start_ns),
+        "node_id": node_id,
+    }
+
+
+def test_calibration_none_unchanged():
+    """node_offsets_s=None must produce the same result as omitting it."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_no_arg = compute_tdoa_s(ev_a, ev_b)
+    t_none = compute_tdoa_s(ev_a, ev_b, node_offsets_s=None)
+    t_empty = compute_tdoa_s(ev_a, ev_b, node_offsets_s={})
+    assert t_no_arg is not None
+    assert t_no_arg == t_none == t_empty
+
+
+def test_calibration_subtracts_node_delta_diff():
+    """Calibrated TDOA = raw_tdoa - (δ_a - δ_b)."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_raw = compute_tdoa_s(ev_a, ev_b)
+    assert t_raw is not None
+    # δ_a = +10 µs, δ_b = -3 µs ⇒ subtract +13 µs from raw.
+    delta_a, delta_b = 10e-6, -3e-6
+    t_cal = compute_tdoa_s(ev_a, ev_b, node_offsets_s={"a": delta_a, "b": delta_b})
+    assert t_cal is not None
+    assert t_cal == pytest.approx(t_raw - (delta_a - delta_b), abs=1e-10)
+
+
+def test_calibration_missing_node_uses_zero():
+    """Nodes not present in the table are treated as δ = 0."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_raw = compute_tdoa_s(ev_a, ev_b)
+    delta_a = 7.5e-6
+    # Only "a" is in the table; "b" should default to 0.
+    t_cal = compute_tdoa_s(ev_a, ev_b, node_offsets_s={"a": delta_a})
+    assert t_raw is not None and t_cal is not None
+    assert t_cal == pytest.approx(t_raw - delta_a, abs=1e-10)
+
+
+def test_calibration_antisymmetric():
+    """Swapping (a, b) negates the calibrated TDOA — (δ_a - δ_b) flips sign too."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    offsets = {"a": 12e-6, "b": -4e-6}
+    t_ab = compute_tdoa_s(ev_a, ev_b, node_offsets_s=offsets)
+    t_ba = compute_tdoa_s(ev_b, ev_a, node_offsets_s=offsets)
+    assert t_ab is not None and t_ba is not None
+    assert t_ab == pytest.approx(-t_ba, abs=1e-10)
+
+
+def test_calibration_zero_offsets_unchanged():
+    """All-zero offsets must produce the same result as no calibration."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_raw = compute_tdoa_s(ev_a, ev_b)
+    t_zero = compute_tdoa_s(ev_a, ev_b, node_offsets_s={"a": 0.0, "b": 0.0})
+    assert t_raw == t_zero
+
+
+def test_calibration_config_loads_from_yaml():
+    """TdoaCalibrationConfig parses a fitted calibration block from YAML."""
+    import yaml
+    from beagle_server.config import ServerFullConfig
+    yaml_text = """
+tdoa_calibration:
+  enabled: true
+  reference_node: dpk-tdoa1
+  node_offsets_s:
+    dpk-tdoa1: 0.0
+    dpk-tdoa2: 7.918322e-06
+    n7jmv-tdoa-qth: -7.486309e-05
+  fit_transmitter_label: "Magnolia"
+  fit_transmitter_lat: 47.65133
+  fit_transmitter_lon: -122.3918318
+  fit_n_pairs: 128
+  fit_residual_rms_us: 0.496
+  fit_date: "2026-04-25"
+"""
+    raw = yaml.safe_load(yaml_text)
+    cfg = ServerFullConfig.model_validate(raw)
+    assert cfg.tdoa_calibration.enabled is True
+    assert cfg.tdoa_calibration.reference_node == "dpk-tdoa1"
+    assert cfg.tdoa_calibration.node_offsets_s["dpk-tdoa1"] == 0.0
+    assert cfg.tdoa_calibration.node_offsets_s["dpk-tdoa2"] == pytest.approx(7.918322e-6)
+    assert cfg.tdoa_calibration.node_offsets_s["n7jmv-tdoa-qth"] == pytest.approx(-7.486309e-5)
+    assert cfg.tdoa_calibration.fit_n_pairs == 128
+    assert cfg.tdoa_calibration.fit_residual_rms_us == pytest.approx(0.496)
+
+
+def test_calibration_config_default_disabled():
+    """Default config has calibration disabled and empty offsets."""
+    from beagle_server.config import ServerFullConfig
+    cfg = ServerFullConfig()
+    assert cfg.tdoa_calibration.enabled is False
+    assert cfg.tdoa_calibration.node_offsets_s == {}
+
+
+def test_calibration_collapses_known_bias():
+    """End-to-end: simulate a +20 µs per-node bias on node 'a' by adding
+    20 µs to its sync_to_snippet_start_ns; calibration table {a: +20µs, b: 0}
+    should remove that exact offset.
+    """
+    raw_delta_ns = 5000
+    bias_ns = 20_000  # +20 µs of physical/clock bias on node 'a'
+    ev_a_clean = _ev("a", sync_to_snippet_start_ns=raw_delta_ns)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_truth = compute_tdoa_s(ev_a_clean, ev_b)
+
+    # Inject a +20 µs bias into a's reported timing.
+    ev_a_biased = {**ev_a_clean,
+                   "sync_to_snippet_start_ns": raw_delta_ns + bias_ns}
+    # Without calibration, the biased measurement is off by 20 µs.
+    t_biased = compute_tdoa_s(ev_a_biased, ev_b)
+    assert t_truth is not None and t_biased is not None
+    assert (t_biased - t_truth) == pytest.approx(bias_ns / 1e9, abs=1e-10)
+
+    # With the matching calibration, biased measurement collapses back to
+    # the truth.
+    t_calibrated = compute_tdoa_s(
+        ev_a_biased, ev_b,
+        node_offsets_s={"a": bias_ns / 1e9, "b": 0.0},
+    )
+    assert t_calibrated is not None
+    assert t_calibrated == pytest.approx(t_truth, abs=1e-10)

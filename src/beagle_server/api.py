@@ -157,6 +157,16 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 channel_hz / 1e6, len(events), node_ids, event_ids, onset_ns,
             )
 
+            # Per-node δ calibration: applied only if explicitly enabled in
+            # config.  Disabled (None) keeps the historic behaviour and
+            # avoids silently biasing results when an unfitted table is
+            # present.
+            calib = cfg.tdoa_calibration
+            node_offsets_s = (
+                dict(calib.node_offsets_s) if (calib.enabled and calib.node_offsets_s)
+                else None
+            )
+
             loop = asyncio.get_event_loop()
             fix = await loop.run_in_executor(
                 None,
@@ -169,6 +179,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     max_xcorr_baseline_km=cfg.solver.max_xcorr_baseline_km,
                     savgol_window_us=cfg.solver.savgol_window_us,
                     tdoa_method=cfg.solver.tdoa_method,
+                    node_offsets_s=node_offsets_s,
                 ),
             )
 

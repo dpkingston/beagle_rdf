@@ -873,6 +873,7 @@ def compute_tdoa_s(
     max_xcorr_baseline_km: float = 100.0,
     savgol_window_us: float = 360.0,
     tdoa_method: str = "xcorr",
+    node_offsets_s: dict[str, float] | None = None,
 ) -> float | None:
     """
     Compute the corrected TDOA between two events in **seconds**.
@@ -940,6 +941,19 @@ def compute_tdoa_s(
         (coherent GCC-PHAT improves pooled median |err| by ~17 % vs
         envelope xcorr at 3× yield, and reaches best-pair median |err| of
         47 µs with 17 µs std).
+    node_offsets_s : dict[node_id, seconds] or None
+        Per-node bias calibration (δ_n).  When provided, the result is
+        adjusted as ``tdoa -= (δ_a - δ_b)`` to remove constant per-node
+        clock/cable/processing offsets, where δ_a is ``node_offsets_s.get(
+        event_a["node_id"], 0.0)``.  Missing nodes default to δ = 0 (no
+        correction).  None (default) skips calibration entirely.
+
+        Calibration is applied AFTER sync disambiguation and BEFORE the
+        geometric-plausibility check, so a calibrated TDOA outside the
+        baseline budget is correctly rejected.
+
+        See ``TdoaCalibrationConfig`` for the fitted offsets table and
+        ``scripts/fit_tdoa_calibration.py`` for the fitting procedure.
 
     Returns
     -------
@@ -1163,6 +1177,26 @@ def compute_tdoa_s(
 
     tdoa_ns = combined_ns
 
+    # Per-node bias calibration (δ_a - δ_b).  Removes constant per-node
+    # clock/cable/processing offsets fitted against a known-position
+    # transmitter.  Applied after disambiguation (so the round() picks the
+    # correct sync bit boundary on the raw measurement, before bias is
+    # removed) and before the plausibility check (so a calibrated value
+    # outside the baseline budget is still rejected).
+    calibration_ns = 0.0
+    if node_offsets_s:
+        delta_a = float(node_offsets_s.get(node_a, 0.0))
+        delta_b = float(node_offsets_s.get(node_b, 0.0))
+        calibration_ns = (delta_a - delta_b) * 1e9
+        if calibration_ns != 0.0:
+            logger.debug(
+                "TDOA calibration %s<->%s: δ_a=%+.3f µs, δ_b=%+.3f µs, "
+                "applied=%+.3f µs",
+                node_a, node_b,
+                delta_a * 1e6, delta_b * 1e6, calibration_ns / 1e3,
+            )
+            tdoa_ns -= calibration_ns
+
     # Geometric plausibility: total TDOA must not exceed max physical TDOA
     # for the node baseline.
     if max_xcorr_baseline_km > 0:
@@ -1178,9 +1212,10 @@ def compute_tdoa_s(
 
     coarse_tdoa_ns = raw_ns + correction_ns
     logger.info(
-        "TDOA (%s): %.1f ns (coarse=%.1f + %s=%.1f, "
+        "TDOA (%s): %.1f ns (coarse=%.1f + %s=%.1f%s, "
         "SNR=[%.2f,%.2f], type=%s) %s<->%s",
         tdoa_method, tdoa_ns, coarse_tdoa_ns, refinement_desc, refinement_ns,
+        f", calib=-{calibration_ns:.1f}" if calibration_ns else "",
         snr_a, snr_b, event_type, node_a, node_b,
     )
     return float(tdoa_ns / 1e9)
