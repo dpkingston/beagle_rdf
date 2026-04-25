@@ -13,10 +13,11 @@
 - [Reduce snippet_samples once centered-span knee finder is validated](#reduce-snippet_samples-once-centered-span-knee-finder-is-validated)
 - [Config handling review: auto-reload log gap, missing Revert button, general polish](#config-handling-review-auto-reload-log-gap-missing-revert-button-general-polish)
 - [Carrier detector: investigate stuck-active root cause](#carrier-detector-investigate-stuck-active-root-cause)
-- [Carrier detector: throttle per-plateau journal verbosity in production](#carrier-detector-throttle-per-plateau-journal-verbosity-in-production)
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Node: emit first plateau as soon as ring clears onset edge](#node-emit-first-plateau-as-soon-as-ring-clears-onset-edge)
+- [✓ Node: demote per-plateau diagnostic logs to DEBUG](#node-demote-per-plateau-diagnostic-logs-to-debug)
 - [✓ Server: per-node TDOA bias calibration (option-2 plateau-only)](#server-per-node-tdoa-bias-calibration-option-2-plateau-only)
 - [✓ Node: cap plateau emissions per active period (stuck-active safety)](#node-cap-plateau-emissions-per-active-period-stuck-active-safety)
 - [✓ Node: stop plateau emitter from bursting after long idle gaps](#node-stop-plateau-emitter-from-bursting-after-long-idle-gaps)
@@ -407,29 +408,6 @@ machine path that consumes the threshold values.
 
 ---
 
-### Carrier detector: throttle per-plateau journal verbosity in production
-
-Currently every plateau emission produces multiple journal log lines
-(`TIMING_DIAG ... event_type: plateau`, `Measurement: plateau ...`,
-plus a delta-stage TIMING_DIAG).  At 1/s for hours of accumulated
-active state, this is real disk pressure on a Raspberry Pi (the
-2026-04-25 kb7ryy non-responsiveness incident was likely partially
-disk-bound).
-
-Plan:
-- Demote the per-event TIMING_DIAG and Measurement lines to DEBUG for
-  `event_type == "plateau"`, keep INFO for onset/offset (rare, useful).
-- Optionally: when plateaus are emitting at the configured cadence in
-  steady state, log one INFO line per N plateaus or per minute, not
-  per emission.
-- Verify with `journalctl --disk-usage` before/after on a Pi.
-
-This complements the `plateau_max_per_active` cap (which bounds the
-worst-case stuck-active footprint) by reducing the steady-state log
-footprint of *normal* plateau operation.
-
----
-
 ### Sync-lock gate: node warmup + server sanity filter
 
 Problem observed on the Apr-23 corpus (kb7ryy, but it's not a kb7ryy
@@ -481,6 +459,71 @@ until after the knee-finder / averaging-solver work lands.
 ---
 
 ## Completed
+
+### ✓ Node: emit first plateau as soon as ring clears onset edge
+
+Closes the "short transmission, no plateau" gap created by the plateau-
+only fix policy (commit `a4eebeb`).  Previously the plateau emitter
+fired only on wall-clock interval boundaries (default 1 s), so any
+transmission shorter than the next interval boundary produced an
+onset and an offset but no plateau — leaving the server with no
+calibrated TDOA measurement for that key-down.
+
+New behaviour: at every state→active transition the detector records
+the onset transition sample.  In `_maybe_emit_plateau` the snippet
+boundary is gated on `snippet_first_sample >= onset_sample +
+edge_clearance` (where `edge_clearance = 4 × window_samples`) so the
+snippet contains clean post-onset content.  When that gate first
+opens during an active period, the plateau fires immediately rather
+than waiting for the next wall-clock interval — typically ~65 ms
+after the onset edge for the production 16384-sample / 250 kHz
+configuration.  Subsequent plateaus phase-lock back to the wall-
+clock interval grid as before, preserving cross-node alignment.
+
+Coverage by transmission length (at default 1 s plateau interval):
+  - < ~65 ms: no plateau (below snippet duration)
+  - 65 ms – 1 s: 1 (the new first-plateau-asap)
+  - 1 s – 2 s: 1–2
+  - 5 s: 5–6
+
+Implementation: `src/beagle_node/pipeline/carrier_detect.py` adds an
+`_active_onset_sample` tracker set at the three state→active sites
+(idle→active in main loop, deferred-path opposite-fired, prime_state),
+and reset to None on state≠active.  Tests: 4 new under
+`TestCarrierPlateauEmission` covering first-plateau-fast, edge-
+clearance enforcement, wall-clock anchoring of subsequent plateaus,
+and reset across idle→active cycles.
+
+---
+
+### ✓ Node: demote per-plateau diagnostic logs to DEBUG
+
+In steady-state operation plateau events are the dominant journal
+producer (default cadence 1/s during any sustained carrier).
+Demoted plateau emissions at the two per-measurement log sites
+(`delta.py` TIMING_DIAG, `main.py` TIMING_DIAG + Measurement
+summary) to DEBUG; onset/offset stay at INFO.  Onset/offset are rare
+(per-key-down) and high-signal for incident triage; plateaus are
+high-volume and only individually interesting during diagnostics.
+
+Pairs with `plateau_max_per_active` (commit `7f96dd7`) as the "Pi
+resource hygiene" deploy: the cap bounds the worst-case stuck-active
+footprint, this change reduces the steady-state log footprint of
+normal plateau operation.  Triggered by the kb7ryy non-responsive
+incident (2026-04-25) where 1/s plateau emissions over many minutes
+likely contributed to journal-disk pressure.
+
+The four TIMING_DIAG sites in `carrier_detect.py` are unaffected —
+they're hardcoded to "onset"/"offset" event_type and never fire for
+plateau.  The plateau-emission DEBUG log inside `_maybe_emit_plateau`
+itself was already at DEBUG.
+
+To re-enable plateau-stage diagnostics for an investigation, raise
+the node log level via the standard log-level config knob;
+`BEAGLE_TIMING_DIAG=1` continues to gate emission of the structured-
+JSON form for all event types.
+
+---
 
 ### ✓ Server: per-node TDOA bias calibration (option-2 plateau-only)
 

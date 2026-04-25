@@ -173,11 +173,17 @@ carrier:
                                   # the server many additional pair-TDOA samples
                                   # per transmission for averaging.  Recommended:
                                   # 1.0-2.0 s for typical PTT-radio transmissions
-                                  # of 5-30 s duration.  Cross-node alignment is
-                                  # NTP wall-clock precision (~10 ms), well within
-                                  # the snippet length (~65 ms at 16384 samples
-                                  # / 250 kHz) so snippets overlap heavily for
-                                  # cross-correlation.
+                                  # of 5-30 s duration.
+                                  # The FIRST plateau in each active period fires
+                                  # as soon as the IQ ring clears the onset edge
+                                  # (snippet_duration ms after onset, e.g. ~65 ms
+                                  # at 16384 samples / 250 kHz), guaranteeing at
+                                  # least one plateau even for transmissions much
+                                  # shorter than the configured interval.  All
+                                  # SUBSEQUENT plateaus phase-lock to the wall-
+                                  # clock interval grid (floor(now/interval)*
+                                  # interval), so cross-node snippets overlap to
+                                  # within NTP precision (~10 ms) for PHAT.
   plateau_max_per_active: 30      # Safety cap: max plateau emissions during a
                                   # single active period before muting until the
                                   # next idle->active cycle (offset+onset).

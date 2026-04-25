@@ -1786,3 +1786,178 @@ class TestCarrierPlateauEmission:
                 onset_threshold_db=-20, offset_threshold_db=-30,
                 plateau_max_per_active=-1,
             )
+
+    def _drive_idle_then_active(
+        self,
+        det: "CarrierDetector",
+        chunk_samples: int,
+        n_idle_chunks: int = 5,
+        n_active_chunks: int = 25,
+        sleep_s: float = 0.1,
+        seed: int = 7,
+    ) -> tuple[list, int]:
+        """Drive the detector through idle (noise) → active (carrier) so
+        we go through a real onset transition.  Returns (events,
+        final_sample_index)."""
+        import time as _time
+        rng = np.random.default_rng(seed)
+        idle_iq = _noise(chunk_samples, power_db=-50.0, rng=rng)
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+        events: list = []
+        sample_index = 0
+        for _ in range(n_idle_chunks):
+            events.extend(det.process(idle_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(sleep_s)
+        for _ in range(n_active_chunks):
+            events.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(sleep_s)
+        return events, sample_index
+
+    def test_first_plateau_fires_quickly_after_onset(self):
+        """A short transmission (much shorter than plateau_event_interval_s)
+        must still produce at least one plateau, fired as soon as the IQ
+        ring clears the onset edge."""
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        snippet_samples = 1024  # ~21 ms at 48 kHz
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=snippet_samples,
+            snippet_post_windows=2,
+            ring_lookback_windows=30,
+            plateau_event_interval_s=10.0,   # much longer than the active span
+            plateau_max_per_active=30,
+        )
+        # 5 idle + 5 active chunks (~500 ms active) — well under the 10 s
+        # cadence interval, but enough for the ring to clear the edge.
+        events, _ = self._drive_idle_then_active(
+            det, chunk_samples, n_idle_chunks=5, n_active_chunks=5,
+        )
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        assert len(plateaus) >= 1, (
+            "first-plateau-asap: a 500 ms active period must produce "
+            "≥ 1 plateau even when the configured interval is 10 s; "
+            f"got {len(plateaus)}"
+        )
+
+    def test_first_plateau_does_not_straddle_onset_edge(self):
+        """The first plateau snippet's first sample must be at or past the
+        onset transition + edge clearance; otherwise the snippet would
+        contain the rising edge and PHAT would correlate against the
+        transition instead of the modulation content."""
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        window_samples = 64
+        snippet_samples = 1024
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=window_samples,
+            snippet_samples=snippet_samples,
+            snippet_post_windows=2,
+            ring_lookback_windows=30,
+            plateau_event_interval_s=10.0,
+            plateau_max_per_active=30,
+        )
+        events, _ = self._drive_idle_then_active(
+            det, chunk_samples, n_idle_chunks=5, n_active_chunks=10,
+        )
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        assert plateaus, "expected at least one plateau"
+        first = plateaus[0]
+        # The snippet's first sample must be past the onset transition.
+        # The detector exposed _active_onset_sample for the test to verify.
+        assert det._active_onset_sample is not None
+        edge_clearance = window_samples * 4
+        assert first.sample_index >= det._active_onset_sample + edge_clearance, (
+            f"first plateau snippet starts at sample {first.sample_index}, "
+            f"but onset was at {det._active_onset_sample}; should be at "
+            f"least onset + {edge_clearance} (edge clearance) past it"
+        )
+
+    def test_plateau_first_anchors_subsequent_to_wall_clock(self):
+        """First plateau fires ASAP after onset, but subsequent plateaus
+        align to the wall-clock interval grid so all nodes phase-lock."""
+        import math
+        import time as _time
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=30,
+            plateau_event_interval_s=0.5,
+            plateau_max_per_active=30,
+        )
+        events, _ = self._drive_idle_then_active(
+            det, chunk_samples,
+            n_idle_chunks=5, n_active_chunks=20,   # 2 s active
+        )
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        assert len(plateaus) >= 3, (
+            f"expected ≥ 3 plateaus for 2 s active at 0.5 s interval; "
+            f"got {len(plateaus)}"
+        )
+        # After the first plateau, _last_plateau_wall_s should sit on a
+        # wall-clock interval boundary (modulo float precision).
+        anchor = det._last_plateau_wall_s
+        assert anchor is not None
+        boundary = math.floor(anchor / 0.5) * 0.5
+        # Anchor should be within float-epsilon of the boundary, OR within
+        # one interval ahead of it (post-emit advances by one interval).
+        diff = abs(anchor - boundary)
+        assert diff < 1e-6 or abs(diff - 0.5) < 1e-6, (
+            f"_last_plateau_wall_s={anchor} should be on the 0.5 s grid "
+            f"(boundary={boundary}, diff={diff})"
+        )
+
+    def test_first_plateau_resets_on_idle_active_cycle(self):
+        """A second active period (after intervening idle) gets its own
+        first-plateau-ASAP trigger, even if the overall plateau interval
+        hasn't elapsed yet."""
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=30,
+            plateau_event_interval_s=10.0,   # very long
+            plateau_max_per_active=30,
+        )
+        # First active period
+        events, sample_index = self._drive_idle_then_active(
+            det, chunk_samples,
+            n_idle_chunks=5, n_active_chunks=5,
+        )
+        first_plateaus = sum(1 for e in events if isinstance(e, CarrierPlateau))
+        assert first_plateaus >= 1, "first active period should produce a plateau"
+
+        # Idle phase to drop state back to idle
+        import time as _time
+        rng = np.random.default_rng(9)
+        idle_iq = _noise(chunk_samples, power_db=-50.0, rng=rng)
+        for _ in range(10):
+            events.extend(det.process(idle_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.05)
+        # Confirm we did transition back to idle
+        offsets = [e for e in events if isinstance(e, CarrierOffset)]
+        assert len(offsets) >= 1, "expected a CarrierOffset during the idle phase"
+
+        # Second active period — should fire another first-plateau-ASAP
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+        for _ in range(5):
+            events.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        total_plateaus = sum(1 for e in events if isinstance(e, CarrierPlateau))
+        assert total_plateaus > first_plateaus, (
+            f"second active period should add ≥ 1 plateau; "
+            f"first={first_plateaus}, total={total_plateaus}"
+        )

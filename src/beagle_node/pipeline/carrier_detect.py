@@ -216,6 +216,15 @@ class CarrierDetector:
         self._plateau_count_this_active: int = 0
         self._plateau_cap_warned: bool = False
 
+        # Onset-edge tracker for first-plateau-of-active-period coverage.
+        # Records the absolute target-stream sample at which the carrier
+        # transitioned to active.  The plateau emitter requires the snippet
+        # boundary to be at least edge_clearance samples *past* this value
+        # before firing the first plateau, so the snippet contains clean
+        # post-onset content rather than straddling the rising edge.
+        # None when state is not "active".
+        self._active_onset_sample: int | None = None
+
         self._state: _State = "idle"
         self._cumulative_sample: int = 0   # total samples seen so far
 
@@ -688,6 +697,7 @@ class CarrierDetector:
                         if self._pre_onset_count >= self._min_hold:
                             opposite_fired = True
                             self._state = "active"
+                            self._active_onset_sample = window_sample
                             self._pre_onset_count = 0
                             self._pre_offset_count = 0
                     else:
@@ -821,6 +831,7 @@ class CarrierDetector:
                     self._pre_onset_count += 1
                     if self._pre_onset_count >= self._min_hold:
                         self._state = "active"
+                        self._active_onset_sample = window_sample
                         self._pre_onset_count = 0
                         self._pre_offset_count = 0
                         logger.debug(
@@ -1070,8 +1081,20 @@ class CarrierDetector:
           - plateau_event_interval_s > 0
           - state == "active"
           - no pending onset/offset deferred emission
-          - wall-clock elapsed since last plateau >= interval (or never fired)
           - IQ ring has at least snippet_samples worth of data
+          - snippet boundary is past the onset transition + edge clearance
+            (so the snippet is clean of the rising-edge transient)
+
+        Cadence:
+          - First plateau of an active period fires as soon as the IQ ring
+            clears the onset edge — typically ~snippet_duration ms after
+            the onset (e.g. ~65 ms for 16384 samples at 250 kHz).  This
+            ensures even short transmissions (>= snippet_duration) yield
+            at least one plateau measurement.
+          - Subsequent plateaus fire on the wall-clock interval grid
+            (floor(now/interval)*interval), so all nodes' plateaus are
+            phase-locked to within NTP precision (~10 ms) for cross-node
+            PHAT correlation.
 
         The snippet is taken from the most recent ring contents; the
         ``sample_index`` is the absolute target-stream sample of the
@@ -1079,20 +1102,18 @@ class CarrierDetector:
         this against the most recent sync-pilot bit boundary, giving a
         sub-microsecond ``sync_to_snippet_start_ns`` for the cross-node
         correlation.
-
-        Cross-node alignment relies on each node firing at approximately
-        the same wall-clock instant (NTP-precision ~10 ms), which produces
-        snippets that overlap by snippet_duration - NTP_skew = ~64 ms out
-        of 65 ms — comfortably enough overlap for PHAT to lock on the
-        modulation content.
         """
         if self._plateau_interval_s <= 0.0:
             return
         if self._state != "active":
-            # Reset stuck-active counter so when we re-enter active it
-            # starts fresh and the WARN-once flag re-arms.
+            # Reset stuck-active counter, cadence anchor, and onset-edge
+            # tracker so the next active period starts fresh: the WARN-once
+            # flag re-arms, and the first plateau on the next active period
+            # fires ASAP (after onset-edge clearance) rather than waiting
+            # for the next wall-clock interval boundary.
             self._plateau_count_this_active = 0
             self._plateau_cap_warned = False
+            self._last_plateau_wall_s = None
             return
         if self._pending_event_type is not None:
             return
@@ -1112,27 +1133,6 @@ class CarrierDetector:
                 )
                 self._plateau_cap_warned = True
             return
-        import time as _time
-        now = _time.time()
-        import math
-        if self._last_plateau_wall_s is None:
-            # Anchor the cadence to the interval boundary so every node's
-            # plateaus fire on the same wall-clock instants (modulo NTP).
-            self._last_plateau_wall_s = (
-                math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
-            )
-        # If we've fallen far behind the schedule (e.g. carrier was inactive
-        # for a long stretch), snap forward to the current interval boundary
-        # rather than emitting back-to-back plateaus to "catch up".  Without
-        # this, every process() call after a long idle gap fires a plateau
-        # until _last_plateau_wall_s catches up — bursting at the chunk-arrival
-        # rate (~30 Hz) and saturating the reporter rate-limiter.
-        if now - self._last_plateau_wall_s > 2 * self._plateau_interval_s:
-            self._last_plateau_wall_s = (
-                math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
-            )
-        if now - self._last_plateau_wall_s < self._plateau_interval_s:
-            return
 
         # Need enough recent IQ to fill snippet_samples.
         ring_total_samples = sum(len(w) for w in self._iq_ring)
@@ -1144,6 +1144,50 @@ class CarrierDetector:
         # window we accumulated (== start_sample + n_windows*window - 1).
         last_window_end = start_sample + n_windows * self._window
         snippet_first_sample = last_window_end - self._snippet_samples
+
+        # Onset-edge clearance: the first plateau of an active period must
+        # wait until the IQ ring is filled with samples taken AFTER the
+        # rising edge.  Otherwise the snippet straddles the edge and PHAT
+        # locks onto the transition rather than the modulation content.
+        # edge_clearance gives a small margin past the bare snippet_first
+        # >= onset_sample condition for post-onset transient ringing.
+        edge_clearance = self._window * 4
+        if (
+            self._active_onset_sample is not None
+            and snippet_first_sample < self._active_onset_sample + edge_clearance
+        ):
+            return
+
+        import time as _time
+        now = _time.time()
+        import math
+        if self._last_plateau_wall_s is None:
+            # First plateau of this active period.  The ring is clean of
+            # onset-edge content (above check passed), so emit immediately
+            # without waiting for the next wall-clock interval boundary;
+            # this catches short transmissions that wouldn't otherwise
+            # produce a plateau.  Anchor the cadence to the wall-clock
+            # grid for subsequent plateaus so they remain phase-locked
+            # across nodes.
+            self._last_plateau_wall_s = (
+                math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
+                - self._plateau_interval_s
+            )
+            # Falls through to emission below (now - last == interval, so
+            # the elapsed-interval check passes).
+        # If we've fallen far behind the schedule (e.g. an exceptionally
+        # long active period crossed many intervals between process()
+        # calls), snap forward to the current interval boundary rather
+        # than emitting back-to-back plateaus to "catch up".  Without
+        # this, every process() call could fire a plateau until
+        # _last_plateau_wall_s catches up to wall time — bursting at
+        # the chunk-arrival rate.
+        if now - self._last_plateau_wall_s > 2 * self._plateau_interval_s:
+            self._last_plateau_wall_s = (
+                math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
+            )
+        if now - self._last_plateau_wall_s < self._plateau_interval_s:
+            return
 
         iq_cat = np.concatenate(list(self._iq_ring))
         iq_trim = iq_cat[-self._snippet_samples:]
@@ -1375,6 +1419,12 @@ class CarrierDetector:
             if power_db >= self._onset_db:
                 self._state = "active"
                 self._primed_active = True
+                # Treat prime_state-induced active as having an onset at the
+                # current sample boundary: the carrier is already on, but we
+                # need to wait for snippet_samples of post-prime IQ to
+                # accumulate before the first plateau snippet is clean of
+                # whatever was in the ring before this freq-hop block.
+                self._active_onset_sample = self._cumulative_sample
             else:
                 self._state = "idle"
                 self._primed_active = False
@@ -1465,6 +1515,10 @@ class CarrierDetector:
         self._idle_window_count = 1000   # normal reset: first block works like any other
         self._primed_active = False
         self._active_window_count = 0
+        self._active_onset_sample = None
+        self._plateau_count_this_active = 0
+        self._plateau_cap_warned = False
+        self._last_plateau_wall_s = None
         # Reset the emission invariant tracker: next event of either type
         # is accepted (see _emit docstring).
         self._last_emitted_type = None
