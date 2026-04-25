@@ -105,3 +105,36 @@ map:
   heatmap_sigma_cells: 1.5     # Standard deviation of the Gaussian kernel in cell units.
                                # 1.5 = a fix at a cell centre gives neighbours 1 cell away
                                # weight exp(-0.5) = 0.61, 2 cells away exp(-2) = 0.14.
+
+# Per-node TDOA bias calibration.
+# ----------------------------------------------------------------------------
+# Each node carries an intrinsic timing offset δ_n (seconds) from cable delay,
+# processing pipeline offset, crystal-clock idiosyncrasies, etc.  Pair TDOA is
+# corrected as
+#     calibrated_tdoa(a, b) = compute_tdoa_s(a, b) - (δ_a - δ_b)
+# Plateau-only by design: per-event-type biases differ on real hardware, and
+# plateau is the cleanest measurement -- calibration is fitted from plateau
+# pairs and consumed by plateau pairs at fix time.
+#
+# Fit a calibration with scripts/fit_tdoa_calibration.py against any known-
+# position transmitter, then paste the emitted block here.  The
+# config/tdoa_calibration.example.yaml file shows a real fit from the
+# 2026-04-25 Magnolia corpus.
+#
+# Default is enabled: false so that an unfitted calibration table cannot
+# silently bias output.  Set enabled: true once the table has been validated.
+tdoa_calibration:
+  enabled: false
+  reference_node: ""           # Node id whose δ is fixed at 0 by construction.
+  node_offsets_s: {}           # {node_id: δ_seconds}.  Empty = no calibration.
+                               #   dpk-tdoa1: 0.0
+                               #   dpk-tdoa2: 7.918e-6
+                               #   n7jmv-tdoa-qth: -74.863e-6
+  fit_transmitter_label: ""    # Provenance: human label of fit source.
+  fit_transmitter_lat: 0.0     # Provenance.
+  fit_transmitter_lon: 0.0     # Provenance.
+  fit_n_pairs: 0               # Provenance: number of pair-events used.
+  fit_residual_rms_us: 0.0     # Provenance: LSQ residual RMS.  > 5 µs suggests
+                               # the per-node-δ model isn't capturing all bias
+                               # structure (multipath, per-pair-per-target).
+  fit_date: ""                 # Provenance: YYYY-MM-DD.

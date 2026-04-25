@@ -12,9 +12,14 @@
 - [Review functioning of frequency groups](#review-functioning-of-frequency-groups)
 - [Reduce snippet_samples once centered-span knee finder is validated](#reduce-snippet_samples-once-centered-span-knee-finder-is-validated)
 - [Config handling review: auto-reload log gap, missing Revert button, general polish](#config-handling-review-auto-reload-log-gap-missing-revert-button-general-polish)
+- [Carrier detector: investigate stuck-active root cause](#carrier-detector-investigate-stuck-active-root-cause)
+- [Carrier detector: throttle per-plateau journal verbosity in production](#carrier-detector-throttle-per-plateau-journal-verbosity-in-production)
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Server: per-node TDOA bias calibration (option-2 plateau-only)](#server-per-node-tdoa-bias-calibration-option-2-plateau-only)
+- [✓ Node: cap plateau emissions per active period (stuck-active safety)](#node-cap-plateau-emissions-per-active-period-stuck-active-safety)
+- [✓ Node: stop plateau emitter from bursting after long idle gaps](#node-stop-plateau-emitter-from-bursting-after-long-idle-gaps)
 - [✓ Web UI: User Management, Login, 2FA, Google OAuth](#web-ui-user-management-login-2fa-google-oauth)
 - [✓ Code Cleanup: items from code review](#code-cleanup-items-from-code-review)
 - [✓ Database Maintenance: automated pruning script](#database-maintenance-automated-pruning-script)
@@ -367,6 +372,64 @@ Three separate items to investigate / fix:
 
 ---
 
+### Carrier detector: investigate stuck-active root cause
+
+A `plateau_max_per_active` safety cap (default 30) was added 2026-04-25
+to bound the damage from a stuck-active failure observed on kb7ryy
+(continuous 1/s plateau emissions for many minutes, eventually rendering
+the Pi non-responsive — likely journal disk pressure).  The cap is a
+defensive measure; the underlying state-machine condition that latched
+the detector into "active" without ever transitioning back to "idle"
+is still unidentified.
+
+Hypotheses to test against the next stuck-active journal capture:
+1. **Noise-floor drift.** The auto-threshold logic raises onset/offset
+   thresholds when the EMA noise floor climbs.  If the noise floor
+   dropped *during* a transmission (e.g. interferer went away), the
+   running offset threshold could end up *below* the new noise level —
+   carrier_detect can never see the power dip below offset_db, so it
+   stays active forever.  Look for `auto_thresholds` log lines in the
+   stuck-active window and compare offset_db vs. the post-transmission
+   noise level.
+2. **Min-active-windows-for-offset gate.** When set > 0 (it's 0 for
+   Magnolia config, but worth checking) it can suppress the offset
+   transition under specific conditions.  Re-read the relevant code
+   path with the gate enabled.
+3. **Carrier-power calculation underflow / NaN.** A transient SDR-
+   driver fault could feed garbage into the power EMA and freeze it
+   at a value above offset_db.
+
+Once we have the journal sample (~1000 lines around the kb7ryy event)
+walk through the `_check_transition` / `_apply_auto_thresholds` flow
+with the actual numbers and identify which path latched.  Likely fix
+will be in either `auto_threshold_margins` clamping or the state-
+machine path that consumes the threshold values.
+
+---
+
+### Carrier detector: throttle per-plateau journal verbosity in production
+
+Currently every plateau emission produces multiple journal log lines
+(`TIMING_DIAG ... event_type: plateau`, `Measurement: plateau ...`,
+plus a delta-stage TIMING_DIAG).  At 1/s for hours of accumulated
+active state, this is real disk pressure on a Raspberry Pi (the
+2026-04-25 kb7ryy non-responsiveness incident was likely partially
+disk-bound).
+
+Plan:
+- Demote the per-event TIMING_DIAG and Measurement lines to DEBUG for
+  `event_type == "plateau"`, keep INFO for onset/offset (rare, useful).
+- Optionally: when plateaus are emitting at the configured cadence in
+  steady state, log one INFO line per N plateaus or per minute, not
+  per emission.
+- Verify with `journalctl --disk-usage` before/after on a Pi.
+
+This complements the `plateau_max_per_active` cap (which bounds the
+worst-case stuck-active footprint) by reducing the steady-state log
+footprint of *normal* plateau operation.
+
+---
+
 ### Sync-lock gate: node warmup + server sanity filter
 
 Problem observed on the Apr-23 corpus (kb7ryy, but it's not a kb7ryy
@@ -418,6 +481,93 @@ until after the knee-finder / averaging-solver work lands.
 ---
 
 ## Completed
+
+### ✓ Server: per-node TDOA bias calibration (option-2 plateau-only)
+
+Added `TdoaCalibrationConfig` to the server config carrying per-node
+δ values (clock/cable/processing offsets) fitted against a known-
+position transmitter.  `compute_tdoa_s` applies them as
+`calibrated_tdoa(a, b) = compute_tdoa_s(a, b) - (δ_a - δ_b)` after
+disambiguation, before the geometric-plausibility check.
+
+Plateau-only by design: per-event-type biases on real hardware
+differ by 7-17 µs (different code paths through PHAT for onset/offset/
+plateau).  Plateau is the cleanest path; we fit from plateau pairs and
+consume on plateau pairs.  Onset/offset are intentionally not
+calibrated and should not be used for fine fixes.
+
+Empirical validation on the 2026-04-25 post-fix Magnolia corpus
+(3 nodes: dpk-tdoa1, dpk-tdoa2, n7jmv-tdoa-qth):
+- Per-pair biases collapsed from −8/+75/+82 µs to ±0.5 µs after
+  applying the fitted calibration on the same plateau pairs.
+- LSQ residual RMS = 0.5 µs (1/60 of the per-event noise floor).
+- Position uncertainty (GDOP-projected) drops from a 70 km ellipse
+  to a few-km bound (heavy-tailed plateau σ then dominates;
+  tightening that with outlier rejection is the next step).
+
+Fitted calibration values landed at `config/tdoa_calibration.example.yaml`:
+  dpk-tdoa1:        0           (reference)
+  dpk-tdoa2:       +7.918 µs
+  n7jmv-tdoa-qth: -74.863 µs
+
+Files:
+- `src/beagle_server/config.py` — TdoaCalibrationConfig + ServerFullConfig
+- `src/beagle_server/tdoa.py` — node_offsets_s param + application
+- `src/beagle_server/solver.py` — pass-through
+- `src/beagle_server/api.py` — wire from config (only when enabled+populated)
+- `scripts/fit_tdoa_calibration.py` — corpus → YAML fitter
+- `tests/unit/test_tdoa.py` — 8 new tests
+- `tests/unit/test_fit_tdoa_calibration.py` — 7 new tests
+- `config/tdoa_calibration.example.yaml`, `config/server.example.yaml` (docs)
+
+Default is `enabled: false` so an unfitted table can never silently
+bias output.  Switch to `enabled: true` once the fitted values are
+reviewed.
+
+---
+
+### ✓ Node: cap plateau emissions per active period (stuck-active safety)
+
+Added `carrier.plateau_max_per_active` (default 30).  After N plateau
+emissions in a single active period the emitter mutes itself; emission
+resumes only on the next idle→active cycle (offset+onset).  At
+`plateau_event_interval_s = 1.0` the default of 30 covers ~95th-
+percentile voice key-down length but bounds a stuck-active failure
+to 30 s of plateau spam.
+
+Triggered by a kb7ryy report (2026-04-25): a Pi went non-responsive
+after a long stretch of 1/s plateau emissions in what appears to
+have been a stuck active state.  The cap bounds the symptom; root-
+cause investigation of the stuck-active condition itself is queued
+under "Carrier detector: investigate stuck-active root cause".
+
+Behaviour: counter resets on state≠"active"; single WARN per active
+period when cap fires; 0 = no cap (legacy); hot-reloadable.  Tests:
+6 new under `TestCarrierPlateauEmission`.
+
+---
+
+### ✓ Node: stop plateau emitter from bursting after long idle gaps
+
+Fixed a 30 Hz plateau-emission burst observed on dpk-tdoa1 (2026-
+04-24): when the carrier went inactive for many seconds and then
+came back active, the cadence tracker tried to "catch up" by emitting
+one plateau per process() call until `_last_plateau_wall_s` reached
+real time — at the chunk arrival rate of ~30 Hz.  This saturated the
+node-side reporter rate-limit (60/30 s) and dropped offset events,
+which fire later in each transmission cycle.
+
+Fix: when `_last_plateau_wall_s` falls more than 2× the interval
+behind, snap forward to the current interval boundary instead of
+catching up step-by-step.  Phase-lock across nodes is preserved
+because the snap target is the same wall-clock boundary on every
+node.  Test added: `test_plateau_no_burst_after_long_idle_gap`.
+
+Verified in production: post-deploy on tdoa1/tdoa2/n7jmv all show
+1:1 onset:offset ratios and identical 1/s plateau cadence; pre-fix
+kb7ryy continued to show the 30 Hz burst until its own redeploy.
+
+---
 
 ### ✓ Web UI: User Management, Login, 2FA, Google OAuth
 
