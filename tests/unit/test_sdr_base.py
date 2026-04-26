@@ -37,3 +37,36 @@ def test_sdr_receiver_context_manager(sdr_config):
     assert buf.ndim == 1
     assert len(buf) > 0
     assert disc is False
+
+
+def test_sdr_base_set_target_frequency_default_raises():
+    """The abstract base class default raises NotImplementedError, signalling
+    callers to fall back to a process restart for the retune."""
+    # Construct a minimal concrete subclass that implements the OTHER
+    # abstract methods but inherits the default set_target_frequency.
+    class _StubReceiver(SDRReceiver):
+        def __init__(self):
+            self._cfg = SDRConfig(
+                center_frequency_hz=100e6, sample_rate_hz=2e6, gain_db=20,
+            )
+        @property
+        def config(self): return self._cfg
+        def open(self): pass
+        def close(self): pass
+        def stream(self): yield (np.zeros(0, dtype=np.complex64), False)
+
+    rx = _StubReceiver()
+    with pytest.raises(NotImplementedError, match="restart"):
+        rx.set_target_frequency(155e6)
+
+
+def test_mock_receiver_set_target_frequency_updates_config(sdr_config):
+    """MockReceiver.set_target_frequency updates the recorded center_frequency_hz."""
+    from beagle_node.sdr.mock import MockReceiver
+    rx = MockReceiver.synthetic(config=sdr_config, duration_s=0.1)
+    old_freq = rx.config.center_frequency_hz
+    new_freq = old_freq + 5e6
+    rx.set_target_frequency(new_freq)
+    assert rx.config.center_frequency_hz == new_freq
+    # And original freq is no longer there.
+    assert rx.config.center_frequency_hz != old_freq

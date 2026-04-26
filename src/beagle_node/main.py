@@ -354,13 +354,64 @@ def run(args: argparse.Namespace | None = None) -> int:
                         logger.error("Failed to apply carrier hot-reload: %s", exc)
                         need_restart = True
 
-            # --- Hot-reloadable: target channels ---
+            # --- Hot-reloadable: target_channels (with SDR retune) ---
+            # The previous version of this branch updated config.target_channels
+            # in memory but did NOT retune the SDR, so assigning a node to a
+            # different frequency group did nothing visible.  Now: call
+            # ``set_target_frequency`` on the receiver.  Receivers that don't
+            # implement runtime retune raise NotImplementedError, which we
+            # convert to a restart so the change still takes effect (just
+            # with a brief outage instead of a seamless retune).
             if new_config.target_channels != config.target_channels:
-                config.target_channels = new_config.target_channels
-                logger.info(
-                    "Remote config update: target_channels updated (%d channels)",
-                    len(new_config.target_channels),
+                old_targets = config.target_channels
+                new_targets = new_config.target_channels
+                # Identify the new primary target frequency (first channel).
+                new_primary_freq = (
+                    new_targets[0].frequency_hz if new_targets else None
                 )
+                old_primary_freq = (
+                    old_targets[0].frequency_hz if old_targets else None
+                )
+                if new_primary_freq is None:
+                    logger.warning(
+                        "Remote config update: target_channels became empty; "
+                        "ignoring (cannot retune to nothing).",
+                    )
+                elif new_primary_freq == old_primary_freq:
+                    # Frequency unchanged but other fields differ (e.g. label).
+                    # Just update the in-memory config; no retune needed.
+                    config.target_channels = new_targets
+                    logger.info(
+                        "Remote config update: target_channels metadata "
+                        "updated (%d channels, frequency unchanged)",
+                        len(new_targets),
+                    )
+                else:
+                    # Real frequency change: try a runtime retune.
+                    try:
+                        receiver.set_target_frequency(new_primary_freq)
+                        config.target_channels = new_targets
+                        logger.info(
+                            "Remote config update: SDR retuned to "
+                            "%.4f MHz (was %.4f MHz)",
+                            new_primary_freq / 1e6,
+                            (old_primary_freq or 0.0) / 1e6,
+                        )
+                    except NotImplementedError:
+                        need_restart = True
+                        logger.info(
+                            "Remote config update: target_channels changed "
+                            "but receiver type %s does not support runtime "
+                            "retune; initiating restart to apply.",
+                            type(receiver).__name__,
+                        )
+                    except Exception as exc:
+                        need_restart = True
+                        logger.error(
+                            "Remote config update: SDR retune to %.4f MHz "
+                            "failed (%s); initiating restart.",
+                            new_primary_freq / 1e6, exc,
+                        )
 
             # --- Hot-reloadable: clock calibration ---
             if new_config.clock != config.clock:
@@ -416,10 +467,11 @@ def run(args: argparse.Namespace | None = None) -> int:
             _HANDLED_TOP_FIELDS = frozenset({
                 # Restart-triggering (handled by _restart_checks above):
                 "sdr_mode", "freq_hop", "rspduo", "sync_sdr", "target_sdr",
+                "target_channels",
                 # Hot-reload with sub-field allowlist (handled above):
                 "carrier", "sync_signal",
                 # Hot-reload (whole section):
-                "target_channels", "clock", "location",
+                "clock", "location",
             })
             unhandled = {
                 f for f in new_config.model_fields
@@ -477,7 +529,14 @@ def run(args: argparse.Namespace | None = None) -> int:
                 except Exception:
                     pass
 
-        _remote_fetcher.start_poll(_on_config_update)
+        # NOTE: ``_remote_fetcher.start_poll`` is deferred until AFTER the
+        # SDR receiver is created (below).  ``_on_config_update`` references
+        # ``receiver`` for the runtime-retune path on target_channels
+        # changes; calling start_poll before the receiver exists would
+        # NameError on the first config update that includes a target
+        # frequency change.  Moving the start AFTER receiver creation
+        # delays config-update intake by the SDR-init duration (a few
+        # seconds), which is acceptable.
 
     # ------------------------------------------------------------------
     # SDR receiver
@@ -508,6 +567,12 @@ def run(args: argparse.Namespace | None = None) -> int:
         receiver = create_receiver(config)
         logger.info("Using real SDR receiver (mode=%s)", config.sdr_mode)
     health.set_config(sample_rate_hz=receiver.config.sample_rate_hz)
+
+    # Now that ``receiver`` exists in scope, start the remote-config poll
+    # so the ``_on_config_update`` callback (defined above) can safely
+    # reference it for runtime SDR retunes.
+    if _remote_fetcher is not None:
+        _remote_fetcher.start_poll(_on_config_update)
 
     # ------------------------------------------------------------------
     # Pipeline

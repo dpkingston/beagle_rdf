@@ -16,6 +16,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Node: target_channels hot-reload now actually retunes the SDR](#node-target_channels-hot-reload-now-actually-retunes-the-sdr)
 - [✓ Server: median calibration + per-pair outlier filter (heavy-tail robustness)](#server-median-calibration--per-pair-outlier-filter-heavy-tail-robustness)
 - [✓ Server: per-pair TDOA bias calibration (target-specific accuracy mode)](#server-per-pair-tdoa-bias-calibration-target-specific-accuracy-mode)
 - [✓ Server: suppress non-fix solver outputs (boundary clamp, multistart ambiguity)](#server-suppress-non-fix-solver-outputs-boundary-clamp-multistart-ambiguity)
@@ -462,6 +463,61 @@ until after the knee-finder / averaging-solver work lands.
 ---
 
 ## Completed
+
+### ✓ Node: target_channels hot-reload now actually retunes the SDR
+
+Reported bug (2026-04-26): assigning a node to a different frequency
+group (which changes the group's target frequency) did not switch
+the node's listening frequency.  The node would log "Remote config
+update: target_channels updated (1 channels)" but continue listening
+on the old frequency.
+
+Root cause: ``main.py`` had a "hot-reloadable: target channels" branch
+that updated ``config.target_channels`` in memory but never called
+any retune API on the receiver.  The receiver's ``__init__`` consumed
+``target_frequency_hz`` once and never read it again.
+
+Fix:
+
+  - Added abstract ``set_target_frequency(frequency_hz)`` to
+    ``SDRReceiver`` in ``sdr/base.py``.  Default raises
+    ``NotImplementedError`` so callers know to fall back to a process
+    restart.
+  - Implemented in concrete receivers:
+      * ``RSPduoReceiver``: ``self._dev.setFrequency(SOAPY_SDR_RX, 1, ...)``
+        on the target tuner (ch1), independently of the sync tuner (ch0).
+        Sets ``_discontinuity_pending`` so the pipeline resets state.
+      * ``SoapyReceiver``: ``setFrequency(SOAPY_SDR_RX, 0, ...)`` on the
+        single channel; updates stored ``SDRConfig`` via dataclass
+        ``replace``.  Sets ``_discontinuity_pending``.
+      * ``FreqHopReceiver``: replaces ``self._config.center_frequency_hz``
+        atomically; the hop loop reads it on the next sync→target
+        transition, so the next hop tunes to the new frequency.
+      * ``MockReceiver``: updates ``_config.center_frequency_hz``.
+
+  - Rewrote the ``main.py`` hot-reload branch to call
+    ``receiver.set_target_frequency(new_freq)`` when the primary
+    target frequency changes.  Three special cases:
+      (a) target_channels list became empty: warn and ignore.
+      (b) frequency unchanged but other fields differ (e.g. label):
+          update the in-memory config, no retune.
+      (c) NotImplementedError or any other exception during retune:
+          fall back to ``need_restart = True`` so systemd brings the
+          node back up with the new frequency.
+
+  - Deferred ``_remote_fetcher.start_poll(_on_config_update)`` from
+    *before* receiver creation to *after*, so the callback's reference
+    to ``receiver`` is safe.  The few-seconds delay during SDR init
+    is acceptable.
+
+Tests: 2 new under ``test_sdr_base.py``:
+  - test_sdr_base_set_target_frequency_default_raises (default
+    NotImplementedError signals restart-fallback)
+  - test_mock_receiver_set_target_frequency_updates_config
+
+763 tests pass.
+
+---
 
 ### ✓ Server: median calibration + per-pair outlier filter (heavy-tail robustness)
 

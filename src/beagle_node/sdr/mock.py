@@ -199,6 +199,17 @@ class MockReceiver(SDRReceiver):
     def close(self) -> None:
         self._stop_event.set()
 
+    def set_target_frequency(self, frequency_hz: float) -> None:
+        """Update the recorded target frequency.
+
+        The mock receiver doesn't actually generate frequency-modulated IQ
+        samples — it replays whatever was loaded — so this only updates
+        the bookkeeping ``config.center_frequency_hz``.  Useful for tests
+        that exercise the hot-reload retune path.
+        """
+        from dataclasses import replace
+        self._config = replace(self._config, center_frequency_hz=float(frequency_hz))
+
     def stream(self) -> Generator[tuple[np.ndarray, bool], None, None]:
         buf_size = self._config.buffer_size
         samples = self._samples

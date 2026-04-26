@@ -78,6 +78,27 @@ class SDRReceiver(abc.ABC):
         pipeline state when this flag is set.
         """
 
+    def set_target_frequency(self, frequency_hz: float) -> None:
+        """Retune the target-channel receiver to a new frequency at runtime.
+
+        Default implementation raises ``NotImplementedError``.  Receivers
+        that support runtime retuning (e.g. via SoapySDR ``setFrequency``)
+        override this to call the underlying device API on the target
+        channel only — the sync channel is unaffected.
+
+        Callers should treat NotImplementedError as a signal to restart
+        the process so the new frequency takes effect.
+
+        Implementations SHOULD also flag a sample-stream discontinuity
+        (so downstream pipelines reset their state) since the few-ms
+        retune transient produces samples that are neither at the old
+        nor at the new frequency.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support runtime retune; "
+            "restart the process to change target frequency."
+        )
+
     @property
     def overflow_count(self) -> int:
         """Number of sample overflow events since open(). Override if supported."""

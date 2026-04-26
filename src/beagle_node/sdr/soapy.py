@@ -116,6 +116,37 @@ class SoapyReceiver(SDRReceiver):
         self._device.activateStream(self._stream)
         self._is_open = True
 
+    def set_target_frequency(self, frequency_hz: float) -> None:
+        """Retune to a new center frequency at runtime.
+
+        For single-tuner SDRs used as the *target* receiver (i.e. in
+        two_sdr mode where a separate SDR handles the sync channel),
+        this directly retunes the only channel.  Flags a sample-stream
+        discontinuity so the pipeline resets across the brief retune
+        transient.
+        """
+        if not self._is_open or self._device is None:
+            raise RuntimeError(
+                "SoapyReceiver.set_target_frequency: device not open"
+            )
+        old_freq = self._config.center_frequency_hz
+        try:
+            self._device.setFrequency(_SoapySDR.SOAPY_SDR_RX, 0, float(frequency_hz))
+            actual = self._device.getFrequency(_SoapySDR.SOAPY_SDR_RX, 0)
+        except Exception as exc:  # pragma: no cover - hardware path
+            raise RuntimeError(
+                f"SoapyReceiver retune {old_freq/1e6:.4f}->"
+                f"{frequency_hz/1e6:.4f} MHz failed: {exc}"
+            ) from exc
+        # Update stored config to reflect the new tuning.
+        from dataclasses import replace
+        self._config = replace(self._config, center_frequency_hz=float(actual))
+        logger.info(
+            "SoapyReceiver retuned: %.4f MHz -> %.4f MHz",
+            old_freq / 1e6, actual / 1e6,
+        )
+        self._discontinuity_pending = True
+
     def close(self) -> None:
         if not self._is_open:
             return

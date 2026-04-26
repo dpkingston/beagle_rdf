@@ -363,6 +363,53 @@ class RSPduoReceiver(SDRReceiver):
         self._is_open = True
         logger.info("RSPduo open - both tuners active (DT mode, independent tuning)")
 
+    def set_target_frequency(self, frequency_hz: float) -> None:
+        """Retune ch1 (target tuner) to a new frequency at runtime.
+
+        SoapySDR's ``setFrequency`` is the standard runtime-retune API for
+        the SDRplay driver in dual-tuner mode.  Channel 1 (Tuner_B) is
+        independently retunable from channel 0 (Tuner_A, sync) once the
+        device's lazy split into independent tuners has fired during
+        ``open()``.
+
+        Flags a sample-stream discontinuity so the downstream pipeline
+        resets state across the brief retune transient (samples between
+        the API call and the new frequency settling are at neither the
+        old nor the new tuning).
+        """
+        if not self._is_open or self._dev is None:
+            raise RuntimeError(
+                "RSPduo.set_target_frequency: device not open"
+            )
+        old_freq = self._target_freq
+        self._target_freq = float(frequency_hz)
+        try:
+            self._dev.setFrequency(_SoapySDR.SOAPY_SDR_RX, 1, self._target_freq)
+            actual = self._dev.getFrequency(_SoapySDR.SOAPY_SDR_RX, 1)
+        except Exception as exc:  # pragma: no cover - hardware path
+            # On failure, restore the recorded frequency so subsequent
+            # state is consistent with the actual hardware (which is
+            # presumably still on the old frequency).
+            self._target_freq = old_freq
+            raise RuntimeError(
+                f"RSPduo target retune {old_freq/1e6:.4f}->"
+                f"{frequency_hz/1e6:.4f} MHz failed: {exc}"
+            ) from exc
+        if abs(actual - self._target_freq) > 1000.0:
+            logger.warning(
+                "RSPduo retune frequency mismatch: requested %.4f MHz, "
+                "got %.4f MHz",
+                self._target_freq / 1e6, actual / 1e6,
+            )
+        else:
+            logger.info(
+                "RSPduo target retuned: %.4f MHz -> %.4f MHz (confirmed)",
+                old_freq / 1e6, actual / 1e6,
+            )
+        # The retune produces a brief sample transient.  Mark
+        # discontinuity so the pipeline resets its sync/carrier state.
+        self._discontinuity_pending = True
+
     def close(self) -> None:
         if not self._is_open:
             return

@@ -177,6 +177,25 @@ class FreqHopReceiver(SDRReceiver):
     def config(self) -> SDRConfig:
         return self._config
 
+    def set_target_frequency(self, frequency_hz: float) -> None:
+        """Update the target frequency used at each hop.
+
+        The hop loop reads ``self._config.center_frequency_hz`` once per
+        sync→target transition (see ``_run_loop``); replacing the config
+        atomically here means the very next hop tunes the SDR to the new
+        frequency.  No stream restart needed.
+        """
+        from dataclasses import replace
+        old = self._config.center_frequency_hz
+        self._config = replace(
+            self._config, center_frequency_hz=float(frequency_hz)
+        )
+        logger.info(
+            "FreqHop target frequency updated: %.4f MHz -> %.4f MHz "
+            "(takes effect on next sync->target hop)",
+            old / 1e6, float(frequency_hz) / 1e6,
+        )
+
     @property
     def overflow_count(self) -> int:
         return 0
