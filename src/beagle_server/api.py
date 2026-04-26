@@ -180,6 +180,8 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     savgol_window_us=cfg.solver.savgol_window_us,
                     tdoa_method=cfg.solver.tdoa_method,
                     node_offsets_s=node_offsets_s,
+                    boundary_clamp_km=cfg.solver.boundary_clamp_km,
+                    multistart_disagreement_km=cfg.solver.multistart_disagreement_km,
                 ),
             )
 
@@ -189,6 +191,13 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     "events=%d  nodes=%s  onset_ns=%d",
                     channel_hz / 1e6, len(events), node_ids, onset_ns,
                 )
+                return
+
+            # Suppression: solver flagged this fix as a non-finding (boundary
+            # clamp, multistart-disagreement, etc.).  Already logged with
+            # WARN inside ``solve_fix`` — drop here so it never reaches the
+            # live map / heatmap / SSE channel.
+            if fix.suppressed:
                 return
 
             # Reject fixes whose residual exceeds the configured ceiling.

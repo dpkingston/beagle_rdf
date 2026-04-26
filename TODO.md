@@ -16,6 +16,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Server: suppress non-fix solver outputs (boundary clamp, multistart ambiguity)](#server-suppress-non-fix-solver-outputs-boundary-clamp-multistart-ambiguity)
 - [✓ Node: emit first plateau as soon as ring clears onset edge](#node-emit-first-plateau-as-soon-as-ring-clears-onset-edge)
 - [✓ Node: demote per-plateau diagnostic logs to DEBUG](#node-demote-per-plateau-diagnostic-logs-to-debug)
 - [✓ Server: per-node TDOA bias calibration (option-2 plateau-only)](#server-per-node-tdoa-bias-calibration-option-2-plateau-only)
@@ -459,6 +460,54 @@ until after the knee-finder / averaging-solver work lands.
 ---
 
 ## Completed
+
+### ✓ Server: suppress non-fix solver outputs (boundary clamp, multistart ambiguity)
+
+After deploying calibration on 2026-04-25, the live map showed multiple
+non-physical fix-pile-up patterns:
+- Vertical line of fixes at the eastern search-radius boundary
+  (−121.0106°W, ~75 fixes), and similar at the northern boundary —
+  L-BFGS-B clamping when the cost minimum is outside the search area
+  or the surface drives iteration against the bound.
+- Two symmetric inland clusters at (47.8853, −122.6173) and (47.8853,
+  −122.0767) — multistart attractors where two of the five start
+  points each converged to a local minimum about 9 km south of the
+  start, NOT to the true Magnolia transmitter.
+
+These are not real geolocations and degrade the live-map signal-to-
+noise ratio.  Two suppression criteria added:
+
+1. **boundary_clamp_km** (default 2.0): when the converged fix is
+   within this many km of the search bounds, mark suppressed with
+   reason `boundary_clamped`.  Catches both pile-up patterns at the
+   search-area edges.
+
+2. **multistart_disagreement_km** (default 5.0): retain *all* five
+   L-BFGS-B convergence points and compute the maximum pairwise
+   distance between any two whose cost is within 2× the best result's
+   cost.  A rough cost surface (calibration residual, 2-node
+   hyperbola, etc.) produces multiple comparable minima; the
+   optimizer's choice between them is noise-dependent.  When the
+   disagreement exceeds the threshold, mark suppressed with reason
+   `multistart_ambiguous`.
+
+The existing **max_residual_ns** ceiling already handled the easy case
+of "obviously bad fit" — these two new criteria cover the harder cases
+where the cost is locally minimised (so residual is fine) but the
+position is geometrically unreliable.
+
+`solve_fix` returns the FixResult with `suppressed: True` /
+`suppression_reason: <str>` plus the underlying metrics
+(`boundary_distance_km`, `multistart_disagreement_km`) so logs and
+tests can inspect; `api.py` skips the live-map data path for any
+suppressed fix.  WARN logs cite the specific reason and the metric
+value so operators can see suppression in the journal.
+
+Files: `src/beagle_server/solver.py`, `src/beagle_server/config.py`,
+`src/beagle_server/api.py`, `tests/unit/test_solver.py` (6 new tests),
+`config/server.example.yaml`.
+
+---
 
 ### ✓ Node: emit first plateau as soon as ring clears onset edge
 

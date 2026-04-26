@@ -49,6 +49,29 @@ class FixResult:
     channel_hz: float
     event_type: str
 
+    # Quality / suppression metrics.  Set in solve_fix; consumed by api.py
+    # when deciding whether to surface the fix on the live map.  None when
+    # the metric was not computed (defensive default for tests / callers
+    # that build FixResult directly).
+    suppressed: bool = False
+    """True when the fix should not be written to the live-map data path
+    because one of the suppression criteria fired (boundary clamp,
+    multistart-ambiguity, etc.)  The fix is still returned so callers can
+    log / inspect it."""
+    suppression_reason: str | None = None
+    """Human-readable cause when ``suppressed`` is True (e.g.
+    ``"boundary_clamped"``, ``"multistart_ambiguous"``)."""
+    boundary_distance_km: float | None = None
+    """Distance (km) from the converged fix to the nearest search-area
+    boundary.  Small values indicate the optimizer was clamped to the
+    search bounds rather than finding a true interior minimum."""
+    multistart_disagreement_km: float | None = None
+    """Maximum geographic distance (km) between multistart converged
+    positions that have residuals within 2x the best result's cost.  A
+    rough cost surface produces multiple comparable local minima; large
+    disagreement means the optimizer's choice between them is
+    noise-dependent and the fix is unreliable."""
+
 
 def _predicted_tdoa_s(
     lat: float, lon: float,
@@ -66,11 +89,23 @@ def _run_optimizer(
     search_center_lat: float,
     search_center_lon: float,
     search_radius_km: float,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, float]:
     """
     Run the L-BFGS-B multi-start optimizer for the given TDOA pairs.
 
-    Returns (fix_lat, fix_lon, rms_residual_ns).
+    Returns (fix_lat, fix_lon, rms_residual_ns, multistart_disagreement_km,
+    boundary_distance_km).
+
+    multistart_disagreement_km is the maximum great-circle distance between
+    any two of the multi-start converged positions whose cost values are
+    within 2x of the best cost.  When the cost surface has multiple
+    comparable minima (a sign of biased / inconsistent TDOA inputs), this
+    value is large and the choice of "best" is noise-dependent.
+
+    boundary_distance_km is the minimum great-circle distance from the
+    converged best position to the search-area bounds.  When small, the
+    optimizer was clamped to the constraint boundary rather than finding
+    a true interior minimum.
     """
     def cost(xy: np.ndarray) -> float:
         lat, lon = float(xy[0]), float(xy[1])
@@ -86,10 +121,9 @@ def _run_optimizer(
 
     deg_lat = search_radius_km / 111.0
     deg_lon = search_radius_km / (111.0 * math.cos(math.radians(search_center_lat)))
-    bounds = [
-        (search_center_lat - deg_lat, search_center_lat + deg_lat),
-        (search_center_lon - deg_lon, search_center_lon + deg_lon),
-    ]
+    lat_bounds = (search_center_lat - deg_lat, search_center_lat + deg_lat)
+    lon_bounds = (search_center_lon - deg_lon, search_center_lon + deg_lon)
+    bounds = [lat_bounds, lon_bounds]
     _offset = deg_lat * 0.3
     start_points = [
         np.array([search_center_lat, search_center_lon]),
@@ -98,14 +132,16 @@ def _run_optimizer(
         np.array([search_center_lat + _offset, search_center_lon - _offset]),
         np.array([search_center_lat - _offset, search_center_lon - _offset]),
     ]
-    best_result = None
+    # Run all multistarts and keep every result so we can quantify
+    # disagreement between local minima.
+    results = []
     for x0 in start_points:
         r = minimize(cost, x0, method="L-BFGS-B", bounds=bounds,
                      options={"maxiter": 1000, "ftol": 1e-15, "gtol": 1e-10})
-        if best_result is None or r.fun < best_result.fun:
-            best_result = r
+        results.append(r)
 
-    fix_lat, fix_lon = float(best_result.x[0]), float(best_result.x[1])  # type: ignore[union-attr]
+    best_result = min(results, key=lambda r: r.fun)
+    fix_lat, fix_lon = float(best_result.x[0]), float(best_result.x[1])
     residuals_ns = [
         (measured - _predicted_tdoa_s(
             fix_lat, fix_lon,
@@ -115,7 +151,39 @@ def _run_optimizer(
         for i, j, measured in pairs
     ]
     rms_ns = float(np.sqrt(np.mean(np.array(residuals_ns) ** 2)))
-    return fix_lat, fix_lon, rms_ns
+
+    # Multistart disagreement: maximum pairwise distance between
+    # convergence points whose cost is within 2x of the best.  Convergence
+    # points with cost much higher than best are local minima the
+    # optimizer correctly escaped, so they don't count toward
+    # disagreement.  Within-2x is empirical: tight enough to ignore
+    # obvious losers, loose enough to flag genuine rough-surface cases.
+    best_cost = float(best_result.fun)
+    cost_threshold = 2.0 * best_cost if best_cost > 0 else 1e-30
+    competitive = [
+        (float(r.x[0]), float(r.x[1])) for r in results if r.fun <= cost_threshold
+    ]
+    multistart_disagreement_km = 0.0
+    for i in range(len(competitive)):
+        for j in range(i + 1, len(competitive)):
+            d = haversine_m(*competitive[i], *competitive[j]) / 1000.0
+            if d > multistart_disagreement_km:
+                multistart_disagreement_km = d
+
+    # Distance to the nearest bounds edge: minimum lat/lon offset from
+    # the converged position to any bound, converted to kilometres.
+    lat_to_bound_km = min(
+        abs(fix_lat - lat_bounds[0]),
+        abs(fix_lat - lat_bounds[1]),
+    ) * 111.195
+    lon_to_bound_km = min(
+        abs(fix_lon - lon_bounds[0]),
+        abs(fix_lon - lon_bounds[1]),
+    ) * 111.195 * math.cos(math.radians(fix_lat))
+    boundary_distance_km = min(lat_to_bound_km, lon_to_bound_km)
+
+    return (fix_lat, fix_lon, rms_ns,
+            float(multistart_disagreement_km), float(boundary_distance_km))
 
 
 def _pair_residuals_ns(
@@ -194,6 +262,8 @@ def solve_fix(
     savgol_window_us: float = 360.0,
     tdoa_method: str = "xcorr",
     node_offsets_s: dict[str, float] | None = None,
+    boundary_clamp_km: float = 2.0,
+    multistart_disagreement_km: float = 5.0,
 ) -> FixResult | None:
     """
     Compute a transmitter fix from a list of events from the same transmission.
@@ -213,10 +283,28 @@ def solve_fix(
         Optional per-node bias-calibration table (δ_n in seconds), forwarded
         to ``compute_tdoa_s`` for each pair.  See
         ``TdoaCalibrationConfig.node_offsets_s``.
+    boundary_clamp_km :
+        If the converged fix is within this many kilometres of the search
+        bounds, the result is marked ``suppressed`` with reason
+        ``boundary_clamped``.  Such results are typically the optimizer
+        being trapped at a constraint boundary because the true minimum
+        lies outside the search area or because the cost surface drives
+        L-BFGS-B against the bound.  0 disables.
+    multistart_disagreement_km :
+        If two or more multistart-converged positions land within 2x the
+        best cost AND are separated by more than this many kilometres, the
+        result is marked ``suppressed`` with reason ``multistart_ambiguous``.
+        Such cases indicate a rough cost surface (multiple comparable local
+        minima); the optimizer's choice is noise-dependent and the fix is
+        unreliable.  0 disables.
 
     Returns
     -------
     FixResult or None if no valid TDOA pairs can be formed.
+
+    Suppressed results are returned (``suppressed=True``) so callers can
+    log them; they should NOT be propagated to live-map data.  See
+    ``api.py`` for the post-solve gating.
     """
     # Deduplicate: one event per node (latest received, highest corr_peak)
     best: dict[str, dict[str, Any]] = {}
@@ -273,7 +361,8 @@ def solve_fix(
         )
         return None
 
-    fix_lat, fix_lon, rms_ns = _run_optimizer(
+    (fix_lat, fix_lon, rms_ns, multistart_disagreement_km_value,
+     boundary_distance_km_value) = _run_optimizer(
         pairs, node_events, search_center_lat, search_center_lon, search_radius_km,
     )
 
@@ -298,7 +387,8 @@ def solve_fix(
         clean_pairs = [(i, j, t) for i, j, t in pairs if i != outlier_idx and j != outlier_idx]
         clean_node_idxs = {i for i, j, _ in clean_pairs} | {j for i, j, _ in clean_pairs}
         if len(clean_node_idxs) >= 2 and clean_pairs:
-            fix_lat, fix_lon, rms_ns = _run_optimizer(
+            (fix_lat, fix_lon, rms_ns, multistart_disagreement_km_value,
+             boundary_distance_km_value) = _run_optimizer(
                 clean_pairs, node_events,
                 search_center_lat, search_center_lon, search_radius_km,
             )
@@ -316,6 +406,43 @@ def solve_fix(
     onset_times = sorted(e["onset_time_ns"] for e in node_events)
     median_onset = onset_times[len(onset_times) // 2]
 
+    # Quality / suppression decision.  Multiple criteria can fire at once;
+    # the first matched reason wins (priority: boundary clamp > multistart
+    # ambiguity).  The fix is still returned so callers / tests can inspect
+    # the metrics, but the suppression flag warns ``api.py`` to keep it
+    # off the live map.
+    suppressed = False
+    suppression_reason: str | None = None
+    if (
+        boundary_clamp_km > 0.0
+        and boundary_distance_km_value < boundary_clamp_km
+    ):
+        suppressed = True
+        suppression_reason = "boundary_clamped"
+        logger.warning(
+            "Fix suppressed (boundary_clamped): converged to (%.5f, %.5f) "
+            "only %.2f km from search bounds (threshold %.1f km); "
+            "true minimum likely outside search area or cost surface "
+            "drove L-BFGS-B against the bound.  residual=%.0f ns nodes=%s",
+            fix_lat, fix_lon, boundary_distance_km_value, boundary_clamp_km,
+            rms_ns, [nid for nid in node_ids if nid not in excluded_nodes],
+        )
+    elif (
+        multistart_disagreement_km > 0.0
+        and multistart_disagreement_km_value > multistart_disagreement_km
+    ):
+        suppressed = True
+        suppression_reason = "multistart_ambiguous"
+        logger.warning(
+            "Fix suppressed (multistart_ambiguous): multistart converged "
+            "positions disagree by %.1f km within 2x best cost (threshold "
+            "%.1f km); cost surface has multiple comparable local minima, "
+            "fix is noise-dependent.  best=(%.5f, %.5f) residual=%.0f ns nodes=%s",
+            multistart_disagreement_km_value, multistart_disagreement_km,
+            fix_lat, fix_lon, rms_ns,
+            [nid for nid in node_ids if nid not in excluded_nodes],
+        )
+
     return FixResult(
         latitude_deg=fix_lat,
         longitude_deg=fix_lon,
@@ -326,4 +453,8 @@ def solve_fix(
         onset_time_ns=median_onset,
         channel_hz=node_events[0]["channel_hz"],
         event_type=node_events[0]["event_type"],
+        suppressed=suppressed,
+        suppression_reason=suppression_reason,
+        boundary_distance_km=boundary_distance_km_value,
+        multistart_disagreement_km=multistart_disagreement_km_value,
     )

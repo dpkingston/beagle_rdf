@@ -371,3 +371,155 @@ def test_solve_fix_outlier_node_detected_and_excluded():
     # nodes and should be close to the true target despite node-D's data.
     error_m = haversine_m(result.latitude_deg, result.longitude_deg, TARGET_LAT, TARGET_LON)
     assert error_m < 10_000.0, f"Fix error with corrupt node present: {error_m:.0f} m"
+
+
+# ---------------------------------------------------------------------------
+# Suppression: boundary-clamp + multistart-ambiguity detection
+# ---------------------------------------------------------------------------
+
+def test_fix_metrics_populated_on_clean_fix():
+    """A normal solve_fix produces FixResult with the new quality metrics
+    populated (not None)."""
+    events = make_synthetic_events()
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    assert result is not None
+    assert result.boundary_distance_km is not None
+    assert result.multistart_disagreement_km is not None
+    # Clean 3-node fit, true minimum well inside search area:
+    assert result.boundary_distance_km > 5.0
+    assert result.suppression_reason in (None, "multistart_ambiguous")
+
+
+def test_boundary_clamp_suppression_when_minimum_outside_search():
+    """When the search bounds are tight enough that the true cost minimum
+    lies outside, the optimizer is clamped to the bounds and the result
+    must be flagged ``suppressed`` with reason ``boundary_clamped``."""
+    # Real geometry, real TDOAs.  Force the search radius to be tiny
+    # (1 km) — well smaller than the distance from search center to the
+    # true target, so the optimizer is constrained to the boundary.
+    events = make_synthetic_events()
+    # Search center placed deliberately far from the target.
+    far_search_lat, far_search_lon = 48.5, -123.5
+    result = solve_fix(
+        events,
+        search_center_lat=far_search_lat,
+        search_center_lon=far_search_lon,
+        search_radius_km=1.0,        # Tight bound, forces clamp
+    )
+    assert result is not None
+    assert result.suppressed, "expected suppression when minimum is outside bounds"
+    assert result.suppression_reason == "boundary_clamped"
+    assert result.boundary_distance_km is not None
+    assert result.boundary_distance_km < 2.0
+
+
+def test_boundary_clamp_disabled_when_threshold_zero():
+    """boundary_clamp_km=0 disables the boundary suppression check."""
+    events = make_synthetic_events()
+    far_search_lat, far_search_lon = 48.5, -123.5
+    result = solve_fix(
+        events,
+        search_center_lat=far_search_lat,
+        search_center_lon=far_search_lon,
+        search_radius_km=1.0,
+        boundary_clamp_km=0.0,        # disabled
+    )
+    assert result is not None
+    # Suppression by *boundary_clamped* must NOT fire when threshold=0.
+    # (multistart_ambiguous may still fire; this test asserts only the
+    # specific check is bypassed.)
+    if result.suppressed:
+        assert result.suppression_reason != "boundary_clamped"
+
+
+def test_multistart_ambiguity_suppression_with_two_nodes():
+    """A 2-node configuration produces a hyperbola of equal-cost
+    minimizers — multistart converges to different points along it,
+    which must trigger the multistart-ambiguity suppression."""
+    events = make_synthetic_events()[:2]
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    # 2-node case is structurally degenerate — the cost surface has a
+    # zero-cost manifold (the hyperbola), so different starts converge
+    # to different points along it.  multistart-disagreement should be
+    # large.
+    assert result is not None
+    assert result.multistart_disagreement_km is not None
+    assert result.multistart_disagreement_km > 5.0, (
+        f"2-node hyperbola should produce multistart disagreement > 5 km; "
+        f"got {result.multistart_disagreement_km:.1f}"
+    )
+    assert result.suppressed
+    assert result.suppression_reason == "multistart_ambiguous"
+
+
+def test_multistart_ambiguity_disabled_when_threshold_zero():
+    """multistart_disagreement_km=0 disables the multistart suppression check."""
+    events = make_synthetic_events()[:2]
+    result = solve_fix(
+        events, 47.6, -122.3, search_radius_km=80.0,
+        multistart_disagreement_km=0.0,
+    )
+    assert result is not None
+    if result.suppressed:
+        assert result.suppression_reason != "multistart_ambiguous"
+
+
+def test_clean_4node_fix_not_suppressed():
+    """A normal 4-node fit with a well-placed search area must NOT be
+    flagged as suppressed.  Uses 4 nodes so that even if one is excluded
+    by outlier detection, 3 remain (avoiding the degenerate 2-node
+    hyperbola which would trigger multistart_ambiguous).
+    """
+    four_nodes = [
+        ("node-A", 47.700, -122.400),
+        ("node-B", 47.620, -122.220),
+        ("node-C", 47.540, -122.360),
+        ("node-D", 47.590, -122.290),
+    ]
+    sync_deltas = []
+    for _, nlat, nlon in four_nodes:
+        target_delay_ns = _dist(TARGET_LAT, TARGET_LON, nlat, nlon) / _C_M_S * 1e9
+        sync_delay_ns   = _dist(SYNC_TX_LAT, SYNC_TX_LON, nlat, nlon) / _C_M_S * 1e9
+        sync_deltas.append(int(500_000_000 + target_delay_ns - sync_delay_ns))
+
+    min_delta = min(sync_deltas)
+    events = []
+    for (node_id, nlat, nlon), sync_to_snippet_start_ns in zip(four_nodes, sync_deltas):
+        carrier_delay = round((sync_to_snippet_start_ns - min_delta) * _SNIPPET_RATE_HZ / 1e9)
+        onset_pos = _SNIPPET_BASE + carrier_delay
+        events.append({
+            "event_id":               f"uuid-{node_id}",
+            "node_id":                node_id,
+            "channel_hz":             155_100_000.0,
+            "event_type":             "onset",
+            "sync_tx_id":             "KISW_99.9",
+            "sync_tx_lat":            SYNC_TX_LAT,
+            "sync_tx_lon":            SYNC_TX_LON,
+            "node_lat":               nlat,
+            "node_lon":               nlon,
+            "sync_to_snippet_start_ns":          sync_to_snippet_start_ns,
+            "corr_peak":              0.85,
+            "onset_time_ns":          1_700_000_000_000_000_000,
+            "iq_snippet_b64":         _make_snippet_b64(carrier_delay),
+            "channel_sample_rate_hz": float(_SNIPPET_RATE_HZ),
+            "transition_start":       max(0, onset_pos - 1000),
+            "transition_end":         onset_pos + _RAMP_SAMPLES + 1000,
+        })
+
+    result = solve_fix(
+        events,
+        search_center_lat=TARGET_LAT,
+        search_center_lon=TARGET_LON,
+        search_radius_km=80.0,
+    )
+    assert result is not None
+    assert not result.suppressed, (
+        f"clean 4-node fit should not be suppressed; "
+        f"got reason={result.suppression_reason} "
+        f"boundary_dist={result.boundary_distance_km:.2f} km "
+        f"multistart_disagreement={result.multistart_disagreement_km:.2f} km"
+    )
+    # And the fit's still close to the target.
+    error_m = haversine_m(result.latitude_deg, result.longitude_deg,
+                          TARGET_LAT, TARGET_LON)
+    assert error_m < 20_000, f"4-node clean fit error {error_m:.0f} m"

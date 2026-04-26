@@ -237,6 +237,25 @@ class SolverConfig(BaseModel):
       250000.0 - RSPduo native rate (all nodes downsampled if needed)
       256000.0 - RTL-SDR native rate (RSPduo nodes upsampled if needed)
     """
+    boundary_clamp_km: float = 2.0
+    """
+    Suppress fixes whose converged position lies within this many kilometres
+    of the search-area bounds.  Such fixes are typically the L-BFGS-B
+    optimizer being trapped at the constraint boundary because the true
+    minimum lies outside the search area, OR the cost surface drives
+    iteration against the bound — neither produces a valid transmitter
+    estimate.  Set to 0 to disable.
+    """
+    multistart_disagreement_km: float = 5.0
+    """
+    Suppress fixes whose multistart-converged positions span more than this
+    distance among results within 2x the best cost.  Such fixes have a
+    rough cost surface with multiple comparable local minima; the choice
+    of "best" is noise-dependent and unreliable.  Set to 0 to disable.
+
+    Symptom in production: clusters of fixes piling up at multistart
+    convergence attractors that are not the true transmitter location.
+    """
 
 
 class MapConfig(BaseModel):

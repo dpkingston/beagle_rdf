@@ -91,6 +91,21 @@ solver:
                                   #         Empirically ~17 % better pooled median |err| than
                                   #         "xcorr" on real-corpus data, at 3x the event yield.
                                   # "knee"  (diagnostic): per-node Savgol-smoothed d2 knee.
+  boundary_clamp_km: 2.0          # Suppress fixes whose converged position lies within this
+                                  # many km of the search bounds.  L-BFGS-B clamps to the
+                                  # constraint when the cost minimum is outside the search
+                                  # area (or the surface drives iteration against the bound),
+                                  # producing a non-fix at constant lat or lon.  Symptom on
+                                  # the map: vertical or horizontal lines of fixes at the
+                                  # search-radius edges.  0 disables.
+  multistart_disagreement_km: 5.0 # Suppress fixes whose multistart-converged positions span
+                                  # more than this distance among results within 2x the best
+                                  # cost.  A rough cost surface (calibration residual,
+                                  # 2-node hyperbola, etc.) produces multiple comparable
+                                  # local minima; the optimizer's choice between them is
+                                  # noise-dependent.  Symptom on the map: clusters of fixes
+                                  # at multistart attractors that aren't the true location.
+                                  # 0 disables.
 
 map:
   output_dir: "data/maps"      # Directory for static Folium HTML snapshots.
