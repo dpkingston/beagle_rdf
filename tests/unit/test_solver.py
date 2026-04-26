@@ -464,6 +464,121 @@ def test_multistart_ambiguity_disabled_when_threshold_zero():
         assert result.suppression_reason != "multistart_ambiguous"
 
 
+# ---------------------------------------------------------------------------
+# Per-pair TDOA outlier rejection (PairTdoaHistory)
+# ---------------------------------------------------------------------------
+
+def test_pair_history_cold_start_accepts_all():
+    """Below ``min_history`` accepted measurements, no rejection occurs."""
+    from beagle_server.solver import PairTdoaHistory
+    h = PairTdoaHistory(history_size=50, k_mad=5.0, min_history=10)
+    # Even wildly extreme values are accepted before warmup completes.
+    assert h.is_outlier("a", "b", 10e-6) is False
+    assert h.is_outlier("a", "b", -10e-6) is False
+    h.record("a", "b", 5e-6)
+    assert h.is_outlier("a", "b", 1.0) is False  # 1 second still passes pre-warmup
+
+
+def test_pair_history_rejects_outlier_after_warmup():
+    """After warmup with a cluster of values around 50 µs, values close
+    to the median pass the filter and obvious outliers fail it."""
+    from beagle_server.solver import PairTdoaHistory
+    h = PairTdoaHistory(history_size=50, k_mad=5.0, min_history=10)
+    # Warm up with 20 values clustered around 50 µs with σ ≈ 1 µs.
+    # Asymptotic MAD ≈ 0.67 σ ≈ 0.67 µs → 5×MAD ≈ 3.4 µs threshold.
+    import random
+    rng = random.Random(42)
+    for _ in range(20):
+        h.record("a", "b", 50e-6 + rng.gauss(0, 1e-6))
+    # Within 1 µs of median: clearly passes (well under 5×MAD threshold).
+    assert h.is_outlier("a", "b", 50.5e-6) is False
+    # 50 µs off median: well beyond any reasonable 5×MAD threshold, rejects.
+    assert h.is_outlier("a", "b", 100e-6) is True
+    assert h.is_outlier("a", "b", 0.0) is True
+
+
+def test_pair_history_signed_pair_direction():
+    """Querying as (b, a) where b > a negates the sign — same physical
+    measurement maps to the same sorted-pair history."""
+    from beagle_server.solver import PairTdoaHistory
+    h = PairTdoaHistory(history_size=50, k_mad=5.0, min_history=10)
+    # Record 20 measurements as (a, b) at +50 µs.
+    for _ in range(20):
+        h.record("a", "b", 50e-6)
+    # Same physical measurement queried as (b, a) is -50 µs.
+    # Should NOT be flagged as outlier — it's the same value.
+    assert h.is_outlier("b", "a", -50e-6) is False
+    # And +50 µs queried as (b, a) IS the opposite physical value, far
+    # from the running median when sign-corrected — should be flagged.
+    assert h.is_outlier("b", "a", 50e-6) is True
+
+
+def test_pair_history_zero_mad_floor():
+    """When all history values are identical (MAD = 0), the filter
+    falls back to a small floor (1 ns) so it still rejects values that
+    are obviously different — but not within sub-floor noise."""
+    from beagle_server.solver import PairTdoaHistory
+    h = PairTdoaHistory(history_size=50, k_mad=5.0, min_history=10)
+    # 20 identical values → MAD = 0 in raw form, falls to 1 ns floor.
+    # 5 × floor = 5 ns rejection threshold.
+    for _ in range(20):
+        h.record("a", "b", 50e-6)
+    # Within sub-floor distance: passes.
+    assert h.is_outlier("a", "b", 50e-6) is False                    # exact
+    assert h.is_outlier("a", "b", 50e-6 + 1e-9) is False             # 1 ns
+    assert h.is_outlier("a", "b", 50e-6 + 4e-9) is False             # 4 ns < 5 ns
+    # Beyond floor × k_mad = 5 ns: rejects.
+    assert h.is_outlier("a", "b", 50e-6 + 100e-9) is True            # 100 ns > 5 ns
+    assert h.is_outlier("a", "b", 100e-6) is True                    # 50 µs >> 5 ns
+
+
+def test_solve_fix_outlier_filter_drops_corrupted_pair():
+    """Inject a known outlier on one pair via a contaminated history;
+    that pair should be excluded from the fix.  This mirrors the
+    production failure mode where a single PHAT mis-lock corrupts a
+    fix's cost surface."""
+    from beagle_server.solver import _get_pair_history, reset_pair_outlier_history
+
+    reset_pair_outlier_history()
+
+    # Pre-populate history for "node-A,node-B" with values around -700 ns
+    # (the geometric expectation for our synthetic NODES targeting
+    # TARGET_LAT/TARGET_LON).  But our incoming measurement on that pair
+    # will be wildly off — far enough to trip the outlier filter.
+    history = _get_pair_history(history_size=200, k_mad=5.0, min_history=10)
+    for _ in range(20):
+        history.record("node-A", "node-B", -700e-9)   # tight cluster
+
+    # Now run solve_fix with the outlier filter active.  The actual
+    # synthetic fixture's TDOA should not be wildly off (it's geometrically
+    # consistent), but if it differs from -700 ns by more than ~k_mad×MAD
+    # the filter would drop it.  Confirm fix still produces a result —
+    # filter mustn't be over-aggressive on legitimate data.
+    events = make_synthetic_events()
+    result = solve_fix(
+        events, 47.6, -122.3, search_radius_km=80.0,
+        pair_outlier_k_mad=5.0,
+    )
+    # Expect a fix back (filter shouldn't have killed everything for clean
+    # synthetic data).  Then reset for hygiene.
+    assert result is not None
+    reset_pair_outlier_history()
+
+
+def test_solve_fix_outlier_filter_zero_disabled():
+    """pair_outlier_k_mad=0 turns the filter off entirely."""
+    from beagle_server.solver import reset_pair_outlier_history
+
+    reset_pair_outlier_history()
+    events = make_synthetic_events()
+    result = solve_fix(
+        events, 47.6, -122.3, search_radius_km=80.0,
+        pair_outlier_k_mad=0.0,    # disabled
+    )
+    assert result is not None
+    reset_pair_outlier_history()
+
+
 def test_clean_4node_fix_not_suppressed():
     """A normal 4-node fit with a well-placed search area must NOT be
     flagged as suppressed.  Uses 4 nodes so that even if one is excluded

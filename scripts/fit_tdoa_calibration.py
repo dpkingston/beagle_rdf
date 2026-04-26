@@ -419,18 +419,25 @@ def main(argv: list[str] | None = None) -> int:
 
     print("Per-pair bias summary:", file=sys.stderr)
     print(f"  {'pair':50s} {'N':>4s} {'med|err|':>10s} {'std':>9s} "
-          f"{'bias':>9s}", file=sys.stderr)
+          f"{'bias_median':>13s} {'bias_mean':>11s}", file=sys.stderr)
     bias_per_pair: dict[tuple[str, str], float] = {}
     n_per_pair: dict[tuple[str, str], int] = {}
     for pair in sorted(err_lists):
         vs = err_lists[pair]
-        med = statistics.median([abs(v) for v in vs])
+        abs_med = statistics.median([abs(v) for v in vs])
         std = statistics.stdev(vs) if len(vs) > 1 else 0.0
-        bias = statistics.mean(vs)
-        bias_per_pair[pair] = bias
+        bias_median = statistics.median(vs)   # robust to PHAT mis-locks
+        bias_mean = statistics.mean(vs)       # legacy / for comparison
+        # MEDIAN is the calibration value: heavy-tailed pair distributions
+        # (sync-period mis-disambiguation, occasional PHAT mis-locks)
+        # contaminate the mean but not the median.  Fixes Maple Valley
+        # attractor pattern observed 2026-04-25.
+        bias_per_pair[pair] = bias_median
         n_per_pair[pair] = len(vs)
         print(f"  {pair[0] + ' <-> ' + pair[1]:50s} {len(vs):>4d} "
-              f"{med:>9.0f} {std:>8.0f} {bias:>+8.0f} ns", file=sys.stderr)
+              f"{abs_med:>9.0f} {std:>8.0f} "
+              f"{bias_median:>+12.0f} {bias_mean:>+10.0f} ns",
+              file=sys.stderr)
     if skips:
         print(f"Skips during fit: {skips}", file=sys.stderr)
 

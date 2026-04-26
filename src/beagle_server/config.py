@@ -256,6 +256,32 @@ class SolverConfig(BaseModel):
     Symptom in production: clusters of fixes piling up at multistart
     convergence attractors that are not the true transmitter location.
     """
+    pair_outlier_k_mad: float = 5.0
+    """
+    Drop individual pair-TDOA measurements that deviate from the per-pair
+    running median by more than this many MAD (median absolute deviation).
+    Robust to PHAT mis-locks and sync-period-disambiguation outliers that
+    otherwise corrupt the cost surface for a single-transmission fix.
+    Recommended: 5.0 in production.  0 disables.
+
+    Symptom in production: per-pair plateau-TDOA distributions are heavy-
+    tailed; the bulk-of-measurements clusters within a few µs of the
+    median, but a small fraction lands 50-150 µs off.  When an outlier
+    hits one of a transmission's pairs, the cost minimum drifts to a
+    wrong location and the fix lands at an attractor (e.g. Maple Valley)
+    instead of the true transmitter.
+    """
+    pair_outlier_history: int = 200
+    """
+    Size of the per-pair rolling history used by the outlier filter.
+    Larger smooths more but adapts slower to genuine drift.
+    """
+    pair_outlier_min_history: int = 20
+    """
+    Minimum number of accepted measurements before the outlier filter
+    starts rejecting.  Cold-start gate; everything is accepted while
+    history is below this threshold.
+    """
 
 
 class MapConfig(BaseModel):

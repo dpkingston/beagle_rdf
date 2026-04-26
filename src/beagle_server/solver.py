@@ -18,8 +18,11 @@ signalling the degeneracy.  3+ nodes are needed for a reliable fix.
 
 from __future__ import annotations
 
+import collections
 import logging
 import math
+import statistics
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,6 +34,120 @@ from scipy.optimize import minimize
 from beagle_server.tdoa import compute_tdoa_s, haversine_m
 
 _C_M_S = 299_792_458.0  # m/s
+
+
+# ---------------------------------------------------------------------------
+# Per-pair TDOA outlier rejection
+# ---------------------------------------------------------------------------
+
+class PairTdoaHistory:
+    """Per-pair running history for TDOA outlier rejection.
+
+    Tracks the last ``history_size`` post-calibration TDOA values for each
+    sorted-pair key.  ``is_outlier`` returns True when a candidate value
+    deviates from the running median by more than ``k_mad`` × MAD.
+
+    Why this is here: real-corpus per-pair plateau-TDOA distributions are
+    heavy-tailed (sync-period mis-disambiguation, occasional PHAT
+    mis-locks).  The bulk clusters tightly within a few µs of the median;
+    a small fraction lands 50-150 µs off.  When an outlier hits one of
+    a transmission's pairs, the cost surface is corrupted and the fix
+    drifts to a wrong location (observed: Maple Valley attractor when
+    the n7jmv pairs got hit).  Rejecting the outlying pair-TDOA at the
+    solver level lets the remaining pairs produce a clean fix.
+
+    Cold start: ``min_history`` entries must accumulate before any
+    rejection fires; while warming up everything is accepted.
+
+    Thread-safe: a single lock guards all history access (the server's
+    fix path runs in a thread pool from FastAPI's executor).
+    """
+
+    def __init__(
+        self,
+        history_size: int = 200,
+        k_mad: float = 5.0,
+        min_history: int = 20,
+    ) -> None:
+        self._history_size = int(history_size)
+        self._k_mad = float(k_mad)
+        self._min_history = int(min_history)
+        self._history: dict[tuple[str, str], collections.deque[float]] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _key_and_sign(node_a: str, node_b: str) -> tuple[tuple[str, str], float]:
+        if node_a < node_b:
+            return (node_a, node_b), 1.0
+        return (node_b, node_a), -1.0
+
+    def is_outlier(self, node_a: str, node_b: str, tdoa_s: float) -> bool:
+        """True if ``tdoa_s`` (in seconds, in the (a,b) direction) lies
+        more than ``k_mad`` × MAD from the running median for the sorted
+        pair.  Returns False during cold-start (history < min_history)."""
+        key, sign = self._key_and_sign(node_a, node_b)
+        signed = sign * tdoa_s
+        with self._lock:
+            history = self._history.get(key)
+            if history is None or len(history) < self._min_history:
+                return False
+            med = statistics.median(history)
+            mad = statistics.median(abs(x - med) for x in history)
+        # Guard against zero-MAD (happens early when history is mostly
+        # constant): use a 1 ns floor so we don't divide-by-zero or
+        # reject every measurement that differs at all.
+        if mad < 1e-9:
+            mad = 1e-9
+        return abs(signed - med) > self._k_mad * mad
+
+    def record(self, node_a: str, node_b: str, tdoa_s: float) -> None:
+        """Record an accepted measurement so future calls have history.
+        Stores the value in sorted-pair direction (signed accordingly)."""
+        key, sign = self._key_and_sign(node_a, node_b)
+        with self._lock:
+            history = self._history.setdefault(
+                key, collections.deque(maxlen=self._history_size),
+            )
+            history.append(sign * tdoa_s)
+
+    def reset(self) -> None:
+        """Clear all per-pair history (used by tests)."""
+        with self._lock:
+            self._history.clear()
+
+
+# Module-level singleton.  Created on first use; reset by tests via
+# ``reset_pair_outlier_history``.  Guarded so the singleton is reused
+# across solve_fix calls; per-server state is acceptable because the
+# history is small (history_size × N_pairs).
+_pair_history: PairTdoaHistory | None = None
+_pair_history_lock = threading.Lock()
+
+
+def _get_pair_history(history_size: int, k_mad: float, min_history: int) -> PairTdoaHistory:
+    global _pair_history
+    with _pair_history_lock:
+        if _pair_history is None:
+            _pair_history = PairTdoaHistory(
+                history_size=history_size,
+                k_mad=k_mad,
+                min_history=min_history,
+            )
+        else:
+            # Allow live reconfig: update tunables without dropping history.
+            _pair_history._history_size = int(history_size)
+            _pair_history._k_mad = float(k_mad)
+            _pair_history._min_history = int(min_history)
+    return _pair_history
+
+
+def reset_pair_outlier_history() -> None:
+    """Clear the singleton's history.  Used by tests for isolation."""
+    global _pair_history
+    with _pair_history_lock:
+        if _pair_history is not None:
+            _pair_history.reset()
+        _pair_history = None
 
 
 @dataclass
@@ -265,6 +382,9 @@ def solve_fix(
     pair_offsets_s: dict[str, float] | None = None,
     boundary_clamp_km: float = 2.0,
     multistart_disagreement_km: float = 5.0,
+    pair_outlier_k_mad: float = 0.0,
+    pair_outlier_history: int = 200,
+    pair_outlier_min_history: int = 20,
 ) -> FixResult | None:
     """
     Compute a transmitter fix from a list of events from the same transmission.
@@ -303,6 +423,18 @@ def solve_fix(
         Such cases indicate a rough cost surface (multiple comparable local
         minima); the optimizer's choice is noise-dependent and the fix is
         unreliable.  0 disables.
+    pair_outlier_k_mad :
+        If > 0, drop individual pair-TDOA measurements that deviate from the
+        per-pair running median by more than this many MAD (median absolute
+        deviation).  Robust to PHAT mis-locks / sync-period-disambiguation
+        outliers that show up as a heavy tail on the per-pair distribution.
+        Recommended: 5.0 for production.  0 disables.
+    pair_outlier_history :
+        Size of the per-pair rolling history used for the outlier filter.
+        Larger values smooth more but adapt slower to genuine drift.
+    pair_outlier_min_history :
+        Minimum number of accepted measurements before the outlier filter
+        starts rejecting (cold-start gate).
 
     Returns
     -------
@@ -348,6 +480,12 @@ def solve_fix(
     # Build TDOA pairs from sync_to_snippet_start subtraction + knee offset
     # + path-delay correction.  See compute_tdoa_s for details.
     pairs: list[tuple[int, int, float]] = []
+    pair_history = (
+        _get_pair_history(pair_outlier_history, pair_outlier_k_mad,
+                           pair_outlier_min_history)
+        if pair_outlier_k_mad > 0.0 else None
+    )
+    n_outlier_rejected = 0
     for i in range(len(node_events)):
         for j in range(i + 1, len(node_events)):
             tdoa = compute_tdoa_s(
@@ -359,8 +497,28 @@ def solve_fix(
                 node_offsets_s=node_offsets_s,
                 pair_offsets_s=pair_offsets_s,
             )
-            if tdoa is not None:
-                pairs.append((i, j, tdoa))
+            if tdoa is None:
+                continue
+            # Per-pair outlier filter: heavy-tailed pair-TDOA distributions
+            # produce occasional 50-150 µs outliers (sync-period mis-locks)
+            # that corrupt single-transmission fits.  The running-median
+            # filter rejects measurements outside k_mad × MAD of the
+            # per-pair median, leaving the bulk-of-measurements untouched.
+            node_a = node_events[i]["node_id"]
+            node_b = node_events[j]["node_id"]
+            if pair_history is not None and pair_history.is_outlier(
+                node_a, node_b, tdoa,
+            ):
+                logger.warning(
+                    "Pair-TDOA outlier rejected: %s<->%s tdoa=%+.0f ns "
+                    "(beyond %.1f×MAD of running median)",
+                    node_a, node_b, tdoa * 1e9, pair_outlier_k_mad,
+                )
+                n_outlier_rejected += 1
+                continue
+            if pair_history is not None:
+                pair_history.record(node_a, node_b, tdoa)
+            pairs.append((i, j, tdoa))
 
     if not pairs:
         logger.warning(

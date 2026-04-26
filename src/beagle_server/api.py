@@ -187,6 +187,9 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     pair_offsets_s=pair_offsets_s,
                     boundary_clamp_km=cfg.solver.boundary_clamp_km,
                     multistart_disagreement_km=cfg.solver.multistart_disagreement_km,
+                    pair_outlier_k_mad=cfg.solver.pair_outlier_k_mad,
+                    pair_outlier_history=cfg.solver.pair_outlier_history,
+                    pair_outlier_min_history=cfg.solver.pair_outlier_min_history,
                 ),
             )
 

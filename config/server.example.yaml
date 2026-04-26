@@ -106,6 +106,17 @@ solver:
                                   # noise-dependent.  Symptom on the map: clusters of fixes
                                   # at multistart attractors that aren't the true location.
                                   # 0 disables.
+  pair_outlier_k_mad: 5.0         # Drop individual pair-TDOA measurements that deviate from
+                                  # the per-pair running median by more than this many MAD
+                                  # (median absolute deviation).  Robust to PHAT mis-locks
+                                  # and sync-period-disambiguation outliers that produce
+                                  # heavy tails on the per-pair distribution.  Symptom on
+                                  # the map: individual fixes drift to attractors when one
+                                  # pair's PHAT mis-locked.  0 disables.
+  pair_outlier_history: 200       # Rolling history size for the outlier filter.  Larger
+                                  # smooths more but adapts slower to genuine drift.
+  pair_outlier_min_history: 20    # Cold-start gate before the filter starts rejecting
+                                  # (always accept while history is below this threshold).
 
 map:
   output_dir: "data/maps"      # Directory for static Folium HTML snapshots.

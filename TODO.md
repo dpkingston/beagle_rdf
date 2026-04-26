@@ -16,6 +16,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Server: median calibration + per-pair outlier filter (heavy-tail robustness)](#server-median-calibration--per-pair-outlier-filter-heavy-tail-robustness)
 - [✓ Server: per-pair TDOA bias calibration (target-specific accuracy mode)](#server-per-pair-tdoa-bias-calibration-target-specific-accuracy-mode)
 - [✓ Server: suppress non-fix solver outputs (boundary clamp, multistart ambiguity)](#server-suppress-non-fix-solver-outputs-boundary-clamp-multistart-ambiguity)
 - [✓ Node: emit first plateau as soon as ring clears onset edge](#node-emit-first-plateau-as-soon-as-ring-clears-onset-edge)
@@ -461,6 +462,63 @@ until after the knee-finder / averaging-solver work lands.
 ---
 
 ## Completed
+
+### ✓ Server: median calibration + per-pair outlier filter (heavy-tail robustness)
+
+After the per-pair calibration landed (commit `9136363`), Magnolia
+fixes still clustered at a wrong attractor (Maple Valley, 41 km SE)
+with a 67% suppression rate.  Diagnostic on per-pair plateau-TDOA
+distributions showed they're dramatically heavy-tailed:
+
+  iqr/std for tdoa2↔n7jmv: 0.04 (Gaussian baseline = 1.35)
+  iqr/std for kb7ryy↔n7jmv: 0.20
+
+Most measurements cluster within a few µs of the median, but a small
+fraction lands 50-150 µs off — sync-period mis-disambiguation and
+PHAT mis-locks.  Two consequences:
+  (1) the calibration values fitted with the MEAN are pulled by the
+      tail, leaving a few µs of residual on the bulk;
+  (2) when an outlier hits one pair of an individual fix, the cost
+      surface is corrupted and the fix drifts to a wrong attractor.
+
+Two fixes, both targeting the outlier mechanism:
+
+**Median-based calibration fitter.**  Changed
+``scripts/fit_tdoa_calibration.py`` to use the median per-pair bias
+instead of the mean.  Both per-pair and per-node modes affected.
+The fitter now reports both median and mean side-by-side so the
+operator sees how heavy-tailed each pair is (large divergence =
+outlier-contaminated).  On Magnolia the median values diverged from
+the mean by up to 65 µs on the heaviest-tailed pair.
+
+**Per-pair running-median + MAD outlier rejector.**  New
+``PairTdoaHistory`` class in ``solver.py`` maintains a rolling
+window of recent TDOAs per pair (sorted-key form), computes running
+median + MAD, and rejects measurements outside ``k_mad`` × MAD of
+the median.  ``solve_fix`` consults the filter at pair-build time
+and drops outlying pairs from the cost function before optimisation.
+Drops are logged at WARNING with the offending value and pair.
+
+Singleton lives at module scope in ``solver.py`` (small state,
+shared across all fix calls), with a thread lock for FastAPI's
+executor model.  ``reset_pair_outlier_history()`` for tests.
+
+Three new ``SolverConfig`` knobs: ``pair_outlier_k_mad``
+(default 5.0; 0 disables), ``pair_outlier_history`` (default 200),
+``pair_outlier_min_history`` (default 20, cold-start gate).
+
+Tests: 6 new under ``test_solver.py`` covering cold-start
+acceptance, median+MAD rejection threshold, signed-pair direction,
+zero-MAD floor handling, and integration with ``solve_fix``.
+
+Files: ``scripts/fit_tdoa_calibration.py``,
+``src/beagle_server/solver.py``, ``src/beagle_server/config.py``,
+``src/beagle_server/api.py``, ``tests/unit/test_solver.py``,
+``config/server.example.yaml``.
+
+761 tests pass.
+
+---
 
 ### ✓ Server: per-pair TDOA bias calibration (target-specific accuracy mode)
 
