@@ -286,19 +286,32 @@ class MapConfig(BaseModel):
 
 class TdoaCalibrationConfig(BaseModel):
     """
-    Per-node TDOA bias calibration.
+    Pair / per-node TDOA bias calibration.
 
-    Each node carries an intrinsic timing offset δ_n (seconds) caused by
-    cable delay, processing pipeline offset, crystal-clock idiosyncrasies,
-    and any other constant timing artefact in its receive chain.  Pair TDOA
-    is corrected as:
+    Each node carries an intrinsic timing offset (cable delay, processing
+    pipeline offset, crystal-clock idiosyncrasies) and each pair may carry
+    additional bias from multipath geometry to the calibration target.
+    Two correction models are supported, with per-pair preferred when both
+    are populated:
 
-        calibrated_tdoa(a, b) = compute_tdoa_s(a, b) - (δ_a - δ_b)
+      Per-pair (most accurate, target-specific):
+          calibrated_tdoa(a, b) = compute_tdoa_s(a, b) - pair_offset(a, b)
+        Captures the full observable bias structure for a known-position
+        transmitter, including any multipath-driven pair-specific terms.
+        Stored as ``pair_offsets_s`` keyed by ``"a,b"`` with a < b.
 
-    The offsets are fitted by least-squares against pair biases observed
-    against a known-position transmitter (see ``scripts/fit_tdoa_calibration.py``).
-    Set the reference node to 0 and express the others relative to it; the
-    sign convention is "δ positive = node reports later than truth".
+      Per-node (more general, weaker fit):
+          calibrated_tdoa(a, b) = compute_tdoa_s(a, b) - (δ_a - δ_b)
+        Stored as ``node_offsets_s``.  Uses 1 free parameter per node
+        instead of 1 per pair, so it cannot capture pair-specific biases
+        (multipath, geometry) — those land as residuals.  Generalises
+        across transmitter bearings IF the bias is genuinely per-node
+        (clock/cable, not multipath).
+
+    Both are fitted from observed pair biases against a known-position
+    transmitter (see ``scripts/fit_tdoa_calibration.py``).  Sign
+    convention: bias > 0 means the calibrated TDOA is greater than the
+    geometric-expected TDOA before correction.
 
     The model is plateau-only: per-event-type biases differ by ~7-17 µs
     on real hardware (different code paths in compute_tdoa_s for onset/
@@ -308,14 +321,16 @@ class TdoaCalibrationConfig(BaseModel):
     """
 
     enabled: bool = False
-    """Apply the per-node δ corrections.  Default False so that an
+    """Apply the calibration corrections.  Default False so that an
     unfitted calibration table doesn't silently bias output."""
 
     node_offsets_s: dict[str, float] = Field(default_factory=dict)
     """
     Per-node δ in **seconds**, relative to the chosen reference node.
-    Empty dict (default) means "no calibration data."  Nodes not present
-    are treated as δ = 0 (reference-aligned).
+    Empty dict (default) means "no per-node calibration."  Nodes not
+    present are treated as δ = 0 (reference-aligned).  Used only when
+    ``pair_offsets_s`` is empty — pair calibration is preferred when
+    both are populated.
 
     Example::
 
@@ -325,8 +340,37 @@ class TdoaCalibrationConfig(BaseModel):
           n7jmv-tdoa-qth:  -74.861e-6    # -74.861 µs
     """
 
+    pair_offsets_s: dict[str, float] = Field(default_factory=dict)
+    """
+    Per-pair calibration in **seconds**, keyed by ``"<node_a>,<node_b>"``
+    with the two node IDs in **ascending sort order**.  When non-empty,
+    overrides ``node_offsets_s`` — the per-pair table is more specific.
+
+    The stored value is the empirically-observed bias of
+    ``compute_tdoa_s(a, b) - geometric_expected(a, b)`` (in seconds), so
+    that ``calibrated = measured - pair_offsets_s[sorted(a,b)]``.  When a
+    pair is queried in reverse order (b, a), the caller MUST negate the
+    looked-up value: ``bias(a,b) = -bias(b,a)``.
+
+    Example::
+
+        pair_offsets_s:
+          "dpk-tdoa1,dpk-tdoa2":      9.7136e-05    # +97.136 µs
+          "dpk-tdoa1,kb7ryy":         1.5525e-04    # +155.252 µs
+          "dpk-tdoa1,n7jmv-tdoa-qth": 1.3539e-04    # +135.395 µs
+          "dpk-tdoa2,kb7ryy":         9.7268e-05    # +97.268 µs
+          "dpk-tdoa2,n7jmv-tdoa-qth": 1.1987e-04    # +119.869 µs
+          "kb7ryy,n7jmv-tdoa-qth":    1.69e-07      # +0.169 µs
+    """
+
     reference_node: str = ""
-    """Documentation only: which node has δ = 0 by construction."""
+    """Documentation only: which node has δ = 0 by construction in
+    per-node mode.  Unused for per-pair mode."""
+
+    fit_mode: str = "per_node"
+    """Which calibration mode is in effect.  Documentation only — the
+    code uses pair_offsets_s if populated, else node_offsets_s.  Values:
+    "per_node", "per_pair"."""
 
     fit_transmitter_label: str = ""
     """Documentation: label of the transmitter the calibration was fitted against."""
@@ -335,9 +379,11 @@ class TdoaCalibrationConfig(BaseModel):
     fit_n_pairs: int = 0
     """Number of pair-event observations used in the fit (provenance)."""
     fit_residual_rms_us: float = 0.0
-    """Residual RMS of the per-pair model fit, in µs.  A value > 5-10 µs
-    suggests the per-node δ model is not capturing the true bias structure
-    (e.g. multipath-driven per-pair-per-target effects)."""
+    """Residual RMS of the per-node δ model fit, in µs.  A value > 5-10 µs
+    suggests the per-node model is not capturing the true bias structure
+    (e.g. multipath-driven pair-specific terms) and per-pair mode would
+    track Magnolia much more accurately, at the cost of being target-
+    specific.  Zero when fit_mode is per-pair."""
     fit_date: str = ""
     """ISO date string YYYY-MM-DD."""
 

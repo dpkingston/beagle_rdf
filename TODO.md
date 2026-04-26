@@ -16,6 +16,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Server: per-pair TDOA bias calibration (target-specific accuracy mode)](#server-per-pair-tdoa-bias-calibration-target-specific-accuracy-mode)
 - [✓ Server: suppress non-fix solver outputs (boundary clamp, multistart ambiguity)](#server-suppress-non-fix-solver-outputs-boundary-clamp-multistart-ambiguity)
 - [✓ Node: emit first plateau as soon as ring clears onset edge](#node-emit-first-plateau-as-soon-as-ring-clears-onset-edge)
 - [✓ Node: demote per-plateau diagnostic logs to DEBUG](#node-demote-per-plateau-diagnostic-logs-to-debug)
@@ -460,6 +461,62 @@ until after the knee-finder / averaging-solver work lands.
 ---
 
 ## Completed
+
+### ✓ Server: per-pair TDOA bias calibration (target-specific accuracy mode)
+
+The per-node-δ calibration model (commit `a4eebeb`) leaves a residual
+~19 µs RMS because it cannot represent **pair-specific** biases —
+multipath geometry, mismatched cable/IF group delays per receive
+chain, and other per-(pair, target) effects.  In production this
+manifests as a stable solver attractor at ~30 km from the true
+transmitter location: the calibrated TDOAs are mutually inconsistent
+by ~5–10 µs each pair, the cost surface's true minimum sits 30 km
+off, and all five multistart points converge to it (so multistart-
+ambiguity suppression doesn't catch it).
+
+**Per-pair calibration** replaces (or overrides) per-node-δ with one
+free parameter per pair (6 values for 4 nodes instead of 3).  Stored
+as observed bias `compute_tdoa_s(a,b) - geometric_expected(a,b)` for
+the ascending-sorted pair, applied as a direct subtraction at fix
+time.  Fully captures the observable bias structure for the
+calibration target — residual is per-event noise only (sub-µs),
+which translates to position-fix accuracy in the few-hundred-metres
+range with a handful of plateaus per transmission.
+
+Trade-off: target-specific.  Multipath geometry varies with bearing,
+so values fitted against transmitter T1 may not generalise to T2.
+Recommended workflow:
+  1. Fit per-pair against your primary calibration target.  Use it
+     for testing / accuracy validation.
+  2. Validate by transmitting from a 2nd known location.  If pair
+     biases match within a few µs, multipath is small and a single
+     calibration set generalises.  If they differ significantly,
+     either upgrade to per-(pair, bearing) modelling or accept that
+     calibration is target-specific.
+
+Implementation:
+  - `TdoaCalibrationConfig` gains `pair_offsets_s: dict[str, float]`
+    keyed by `"<a>,<b>"` with ascending sort order, plus a `fit_mode`
+    documentation field.  When non-empty, takes precedence over
+    `node_offsets_s` (pair is strictly more specific).
+  - `compute_tdoa_s` accepts `pair_offsets_s` parameter; looks up the
+    sorted-pair key and negates for reverse queries to preserve
+    antisymmetry.
+  - `solver.solve_fix` and `api.py` thread `pair_offsets_s` through.
+  - `scripts/fit_tdoa_calibration.py --mode per_pair` emits the new
+    YAML format directly from observed pair biases (no LSQ needed —
+    the values ARE the calibration).
+  - 7 new tests covering pair-vs-node priority, antisymmetry, missing-
+    pair fall-through behaviour, end-to-end injected-bias collapse,
+    and YAML round-trip.
+
+Files: `src/beagle_server/config.py`, `src/beagle_server/tdoa.py`,
+`src/beagle_server/solver.py`, `src/beagle_server/api.py`,
+`scripts/fit_tdoa_calibration.py`, `tests/unit/test_tdoa.py`,
+`config/server.example.yaml`,
+`config/tdoa_calibration_per_pair.example.yaml`.
+
+---
 
 ### ✓ Server: suppress non-fix solver outputs (boundary clamp, multistart ambiguity)
 

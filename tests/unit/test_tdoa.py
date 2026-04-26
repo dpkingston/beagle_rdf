@@ -1387,6 +1387,133 @@ def test_calibration_config_default_disabled():
     assert cfg.tdoa_calibration.node_offsets_s == {}
 
 
+def test_pair_calibration_applies_signed_offset():
+    """pair_offsets_s subtracts the looked-up offset from the measured TDOA."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_raw = compute_tdoa_s(ev_a, ev_b)
+    assert t_raw is not None
+    # Pair "a,b" has stored bias +13 µs.  Calibrated should be raw - 13µs.
+    pair_offsets = {"a,b": 13e-6}
+    t_cal = compute_tdoa_s(ev_a, ev_b, pair_offsets_s=pair_offsets)
+    assert t_cal is not None
+    assert t_cal == pytest.approx(t_raw - 13e-6, abs=1e-10)
+
+
+def test_pair_calibration_negates_for_reverse_query():
+    """Querying as (b, a) where b > a must negate the looked-up offset:
+    bias(b,a) = -bias(a,b).  This guarantees antisymmetry of the final
+    calibrated TDOA."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    pair_offsets = {"a,b": 13e-6}
+    t_ab = compute_tdoa_s(ev_a, ev_b, pair_offsets_s=pair_offsets)
+    t_ba = compute_tdoa_s(ev_b, ev_a, pair_offsets_s=pair_offsets)
+    assert t_ab is not None and t_ba is not None
+    # Antisymmetry: pair calibration must preserve compute_tdoa_s(a,b) ==
+    # -compute_tdoa_s(b,a).
+    assert t_ab == pytest.approx(-t_ba, abs=1e-10)
+
+
+def test_pair_calibration_overrides_node_calibration():
+    """When both pair_offsets_s and node_offsets_s are provided, pair takes
+    precedence — it's strictly more specific."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_raw = compute_tdoa_s(ev_a, ev_b)
+    pair = {"a,b": 50e-6}        # would shift by -50 µs
+    node = {"a": 10e-6, "b": 0.0}  # would shift by -10 µs
+    t_cal = compute_tdoa_s(ev_a, ev_b, node_offsets_s=node, pair_offsets_s=pair)
+    assert t_cal is not None and t_raw is not None
+    # pair wins: -50 µs applied, NOT -10 µs.
+    assert t_cal == pytest.approx(t_raw - 50e-6, abs=1e-10)
+
+
+def test_pair_calibration_missing_pair_falls_through_to_node():
+    """When pair_offsets_s is non-empty but doesn't contain the queried
+    pair, we still use the pair table (not fall through to node).  That's
+    the intentional priority behavior — operators see exactly which mode
+    is active and missing entries default to zero correction.
+    """
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_raw = compute_tdoa_s(ev_a, ev_b)
+    # Pair table populated with a DIFFERENT pair; query for (a,b) hits no
+    # entry and gets 0 correction.  node_offsets_s, even though present,
+    # is NOT consulted.
+    pair = {"x,y": 999e-6}
+    node = {"a": 10e-6, "b": 0.0}
+    t_cal = compute_tdoa_s(ev_a, ev_b, node_offsets_s=node, pair_offsets_s=pair)
+    assert t_cal is not None and t_raw is not None
+    # Neither correction applied: pair lookup misses, node ignored because
+    # pair is non-empty.
+    assert t_cal == pytest.approx(t_raw, abs=1e-10)
+
+
+def test_pair_calibration_empty_falls_through_to_node():
+    """Empty pair_offsets_s lets node_offsets_s apply normally."""
+    ev_a = _ev("a", sync_to_snippet_start_ns=5000)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_raw = compute_tdoa_s(ev_a, ev_b)
+    node = {"a": 10e-6, "b": 0.0}
+    t_cal = compute_tdoa_s(ev_a, ev_b, node_offsets_s=node, pair_offsets_s={})
+    assert t_cal is not None and t_raw is not None
+    # Empty pair => node calibration applies, -10 µs.
+    assert t_cal == pytest.approx(t_raw - 10e-6, abs=1e-10)
+
+
+def test_pair_calibration_collapses_injected_bias_exactly():
+    """End-to-end: inject a known bias on node 'a', store the matching
+    pair offset, and confirm the calibrated result is back to truth."""
+    raw_delta_ns = 5000
+    bias_ns = 95_000        # +95 µs of physical bias on node 'a'
+    ev_a_clean = _ev("a", sync_to_snippet_start_ns=raw_delta_ns)
+    ev_b = _ev("b", sync_to_snippet_start_ns=0, node_lat=47.72, node_lon=-122.28)
+    t_truth = compute_tdoa_s(ev_a_clean, ev_b)
+    assert t_truth is not None
+
+    # Inject the bias.
+    ev_a_biased = {**ev_a_clean,
+                   "sync_to_snippet_start_ns": raw_delta_ns + bias_ns}
+    t_biased = compute_tdoa_s(ev_a_biased, ev_b)
+    assert t_biased is not None
+    assert (t_biased - t_truth) == pytest.approx(bias_ns / 1e9, abs=1e-10)
+
+    # Per-pair calibration: store +95 µs on the pair "a,b".
+    pair = {"a,b": bias_ns / 1e9}
+    t_cal = compute_tdoa_s(ev_a_biased, ev_b, pair_offsets_s=pair)
+    assert t_cal is not None
+    assert t_cal == pytest.approx(t_truth, abs=1e-10)
+
+
+def test_pair_calibration_config_loads_from_yaml():
+    """TdoaCalibrationConfig parses a per-pair calibration block."""
+    import yaml
+    from beagle_server.config import ServerFullConfig
+    yaml_text = """
+tdoa_calibration:
+  enabled: true
+  fit_mode: "per_pair"
+  pair_offsets_s:
+    "dpk-tdoa1,dpk-tdoa2": 9.7136e-05
+    "dpk-tdoa1,kb7ryy": 1.5525e-04
+    "kb7ryy,n7jmv-tdoa-qth": 1.69e-07
+  fit_transmitter_label: "Magnolia"
+  fit_transmitter_lat: 47.65133
+  fit_transmitter_lon: -122.3918318
+  fit_n_pairs: 541
+  fit_date: "2026-04-25"
+"""
+    raw = yaml.safe_load(yaml_text)
+    cfg = ServerFullConfig.model_validate(raw)
+    assert cfg.tdoa_calibration.enabled is True
+    assert cfg.tdoa_calibration.fit_mode == "per_pair"
+    assert cfg.tdoa_calibration.pair_offsets_s["dpk-tdoa1,dpk-tdoa2"] == pytest.approx(9.7136e-05)
+    assert cfg.tdoa_calibration.pair_offsets_s["kb7ryy,n7jmv-tdoa-qth"] == pytest.approx(1.69e-07)
+    # Per-node offsets unset in this block.
+    assert cfg.tdoa_calibration.node_offsets_s == {}
+
+
 def test_calibration_collapses_known_bias():
     """End-to-end: simulate a +20 µs per-node bias on node 'a' by adding
     20 µs to its sync_to_snippet_start_ns; calibration table {a: +20µs, b: 0}

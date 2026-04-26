@@ -264,6 +264,7 @@ def emit_yaml(
         "# δ values are in seconds; positive δ means the node reports later than truth.",
         "tdoa_calibration:",
         f"  enabled: {'true' if enable else 'false'}",
+        f"  fit_mode: \"per_node\"",
         f"  reference_node: {reference_node}",
         "  node_offsets_s:",
     ]
@@ -287,6 +288,63 @@ def emit_yaml(
     return "\n".join(lines) + "\n"
 
 
+def emit_yaml_pair(
+    pair_biases_ns: dict[tuple[str, str], float],
+    pair_n: dict[tuple[str, str], int],
+    *,
+    tx_label: str,
+    tx_lat: float,
+    tx_lon: float,
+    n_pairs: int,
+    fit_date: str,
+    enable: bool,
+) -> str:
+    """Emit per-pair calibration YAML.
+
+    The stored value is the *signed* mean bias of compute_tdoa_s(a, b) -
+    geometric_expected(a, b) in seconds, with the pair key in ascending
+    sort order ("a,b" with a < b).  At apply time the server looks up
+    pair_offsets_s[sorted(a,b)] and subtracts it from the measured TDOA
+    (negating when queried in reverse order).  Captures the full
+    observable bias structure (clock + cable + multipath-to-target).
+    """
+    lines = [
+        "# Per-pair TDOA bias calibration.  Fitted by",
+        "# scripts/fit_tdoa_calibration.py against a known-position transmitter.",
+        "# Pair offsets are the empirically-measured biases of",
+        "#   compute_tdoa_s(a,b) - geometric_expected(a,b)",
+        "# in seconds, with the pair key in ascending sort order.  Apply by",
+        "# subtracting from the measured TDOA (negating when queried as (b,a)).",
+        "#",
+        "# Per-pair calibration captures pair-specific multipath that the",
+        "# per-node δ model cannot represent, but is target-specific:  the",
+        "# values fitted against transmitter T1 may not generalise to T2 if",
+        "# multipath geometry differs significantly between bearings.",
+        "tdoa_calibration:",
+        f"  enabled: {'true' if enable else 'false'}",
+        f"  fit_mode: \"per_pair\"",
+        "  pair_offsets_s:",
+    ]
+    for (a, b) in sorted(pair_biases_ns.keys()):
+        # Ensure a < b in stored key (the inputs already come sorted, but
+        # be defensive).
+        key_a, key_b = (a, b) if a < b else (b, a)
+        sign = 1.0 if a < b else -1.0
+        value_s = sign * pair_biases_ns[(a, b)] / 1e9
+        n_obs = pair_n[(a, b)]
+        us = value_s * 1e6
+        lines.append(f'    "{key_a},{key_b}": {value_s:+.6e}    # {us:+.3f} µs (N={n_obs})')
+    lines.extend([
+        f"  fit_transmitter_label: \"{tx_label}\"",
+        f"  fit_transmitter_lat: {tx_lat}",
+        f"  fit_transmitter_lon: {tx_lon}",
+        f"  fit_n_pairs: {n_pairs}",
+        f"  fit_residual_rms_us: 0.0   # per-pair fit; residual is per-event noise only",
+        f"  fit_date: \"{fit_date}\"",
+    ])
+    return "\n".join(lines) + "\n"
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -303,8 +361,18 @@ def main(argv: list[str] | None = None) -> int:
                    help="Ground-truth transmitter latitude (deg).")
     p.add_argument("--tx-lon", required=True, type=float,
                    help="Ground-truth transmitter longitude (deg).")
-    p.add_argument("--reference-node", required=True,
-                   help="Node id to anchor at δ = 0.")
+    p.add_argument("--reference-node", default=None,
+                   help="Node id to anchor at δ = 0 (per-node mode only). "
+                        "Required when --mode=per_node.")
+    p.add_argument("--mode", choices=("per_node", "per_pair"), default="per_node",
+                   help=(
+                       "Calibration model.  "
+                       "per_node: fit one δ per node by least-squares "
+                       "(generalises across transmitters; needs a reference node).  "
+                       "per_pair: store the observed bias per pair directly "
+                       "(maximally accurate against the fit transmitter; may "
+                       "not generalise to other bearings)."
+                   ))
     p.add_argument("--event-type", default="plateau",
                    choices=("plateau", "onset", "offset"),
                    help="Event type to fit against (default: plateau, "
@@ -353,42 +421,72 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {'pair':50s} {'N':>4s} {'med|err|':>10s} {'std':>9s} "
           f"{'bias':>9s}", file=sys.stderr)
     bias_per_pair: dict[tuple[str, str], float] = {}
+    n_per_pair: dict[tuple[str, str], int] = {}
     for pair in sorted(err_lists):
         vs = err_lists[pair]
         med = statistics.median([abs(v) for v in vs])
         std = statistics.stdev(vs) if len(vs) > 1 else 0.0
         bias = statistics.mean(vs)
         bias_per_pair[pair] = bias
+        n_per_pair[pair] = len(vs)
         print(f"  {pair[0] + ' <-> ' + pair[1]:50s} {len(vs):>4d} "
               f"{med:>9.0f} {std:>8.0f} {bias:>+8.0f} ns", file=sys.stderr)
     if skips:
         print(f"Skips during fit: {skips}", file=sys.stderr)
 
-    offsets_s, residual_rms_us = fit_node_offsets(
-        bias_per_pair, reference_node=args.reference_node,
-    )
-    print(f"\nFitted per-node δ (relative to {args.reference_node}):",
-          file=sys.stderr)
-    for n, v in sorted(offsets_s.items(), key=lambda kv: (kv[1], kv[0])):
-        print(f"  {n:25s}  {v * 1e6:+8.3f} µs", file=sys.stderr)
-    print(f"Residual RMS: {residual_rms_us:.3f} µs", file=sys.stderr)
-    if residual_rms_us > 5.0:
-        print("WARNING: residual RMS > 5 µs — per-node δ model may not be "
-              "capturing all bias structure (check for multipath or "
-              "per-pair-per-target effects).", file=sys.stderr)
-
     n_pairs_total = sum(len(v) for v in err_lists.values())
-    yaml_block = emit_yaml(
-        offsets_s,
-        reference_node=args.reference_node,
-        tx_label=args.tx_label,
-        tx_lat=args.tx_lat,
-        tx_lon=args.tx_lon,
-        n_pairs=n_pairs_total,
-        residual_rms_us=residual_rms_us,
-        fit_date=_dt.date.today().isoformat(),
-        enable=args.enable,
-    )
+
+    if args.mode == "per_pair":
+        # Per-pair calibration: store the observed bias per pair directly.
+        # Maximally accurate against the fit transmitter; target-specific.
+        print("\nPer-pair calibration values (signed bias, sorted-key form):",
+              file=sys.stderr)
+        for pair in sorted(bias_per_pair):
+            us = bias_per_pair[pair] / 1e3
+            print(f"  {pair[0] + ',' + pair[1]:50s}  {us:+8.3f} µs  "
+                  f"(N={n_per_pair[pair]})", file=sys.stderr)
+        yaml_block = emit_yaml_pair(
+            bias_per_pair,
+            n_per_pair,
+            tx_label=args.tx_label,
+            tx_lat=args.tx_lat,
+            tx_lon=args.tx_lon,
+            n_pairs=n_pairs_total,
+            fit_date=_dt.date.today().isoformat(),
+            enable=args.enable,
+        )
+    else:
+        # Per-node δ via least-squares.  Generalises across transmitters
+        # if the bias is genuinely per-node (clock/cable, not multipath).
+        if args.reference_node is None:
+            print("ERROR: --reference-node is required when --mode=per_node.",
+                  file=sys.stderr)
+            return 2
+        offsets_s, residual_rms_us = fit_node_offsets(
+            bias_per_pair, reference_node=args.reference_node,
+        )
+        print(f"\nFitted per-node δ (relative to {args.reference_node}):",
+              file=sys.stderr)
+        for n, v in sorted(offsets_s.items(), key=lambda kv: (kv[1], kv[0])):
+            print(f"  {n:25s}  {v * 1e6:+8.3f} µs", file=sys.stderr)
+        print(f"Residual RMS: {residual_rms_us:.3f} µs", file=sys.stderr)
+        if residual_rms_us > 5.0:
+            print("WARNING: residual RMS > 5 µs — per-node δ model may not be "
+                  "capturing all bias structure.  Consider --mode=per_pair "
+                  "for target-specific accuracy at the cost of generalisation.",
+                  file=sys.stderr)
+
+        yaml_block = emit_yaml(
+            offsets_s,
+            reference_node=args.reference_node,
+            tx_label=args.tx_label,
+            tx_lat=args.tx_lat,
+            tx_lon=args.tx_lon,
+            n_pairs=n_pairs_total,
+            residual_rms_us=residual_rms_us,
+            fit_date=_dt.date.today().isoformat(),
+            enable=args.enable,
+        )
 
     if args.output is None:
         print(yaml_block)

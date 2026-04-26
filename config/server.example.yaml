@@ -140,16 +140,34 @@ map:
 # silently bias output.  Set enabled: true once the table has been validated.
 tdoa_calibration:
   enabled: false
-  reference_node: ""           # Node id whose δ is fixed at 0 by construction.
+  fit_mode: "per_node"         # "per_node" or "per_pair".  Documentation only;
+                               # the code uses pair_offsets_s when populated,
+                               # else node_offsets_s.
+  reference_node: ""           # Node id whose δ is fixed at 0 by construction
+                               # in per-node mode.  Unused by per-pair.
+  # Per-node δ calibration (3 free params for 4 nodes).  Generalises across
+  # transmitter bearings IF bias is genuinely per-node (clock/cable, not
+  # multipath).  Use this when calibration must travel between targets.
   node_offsets_s: {}           # {node_id: δ_seconds}.  Empty = no calibration.
                                #   dpk-tdoa1: 0.0
                                #   dpk-tdoa2: 7.918e-6
                                #   n7jmv-tdoa-qth: -74.863e-6
+  # Per-pair calibration (1 param per pair, 6 for 4 nodes).  Stores the
+  # observed bias per pair directly — captures pair-specific multipath that
+  # the per-node δ model cannot represent.  TARGET-SPECIFIC: values fitted
+  # against transmitter T1 may not generalise to T2 if the bearing differs
+  # significantly.  Use when you need maximum accuracy against ONE known
+  # transmitter (e.g. testing / validation).  When non-empty this OVERRIDES
+  # node_offsets_s.  Key format: "<a>,<b>" with a < b in alphabetical order.
+  pair_offsets_s: {}           # Empty = no per-pair calibration.
+                               #   "dpk-tdoa1,dpk-tdoa2": 9.66e-5    # +96.6 µs
+                               #   "dpk-tdoa1,kb7ryy": 1.508e-4
+                               #   ...
   fit_transmitter_label: ""    # Provenance: human label of fit source.
   fit_transmitter_lat: 0.0     # Provenance.
   fit_transmitter_lon: 0.0     # Provenance.
   fit_n_pairs: 0               # Provenance: number of pair-events used.
-  fit_residual_rms_us: 0.0     # Provenance: LSQ residual RMS.  > 5 µs suggests
-                               # the per-node-δ model isn't capturing all bias
-                               # structure (multipath, per-pair-per-target).
+  fit_residual_rms_us: 0.0     # Provenance: per-node LSQ residual RMS (per-pair
+                               # is exact by construction).  > 5 µs in per-node
+                               # mode suggests structure the model can't capture.
   fit_date: ""                 # Provenance: YYYY-MM-DD.

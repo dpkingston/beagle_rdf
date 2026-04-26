@@ -1,0 +1,27 @@
+# Per-pair TDOA bias calibration.  Fitted by
+# scripts/fit_tdoa_calibration.py against a known-position transmitter.
+# Pair offsets are the empirically-measured biases of
+#   compute_tdoa_s(a,b) - geometric_expected(a,b)
+# in seconds, with the pair key in ascending sort order.  Apply by
+# subtracting from the measured TDOA (negating when queried as (b,a)).
+#
+# Per-pair calibration captures pair-specific multipath that the
+# per-node δ model cannot represent, but is target-specific:  the
+# values fitted against transmitter T1 may not generalise to T2 if
+# multipath geometry differs significantly between bearings.
+tdoa_calibration:
+  enabled: true
+  fit_mode: "per_pair"
+  pair_offsets_s:
+    "dpk-tdoa1,dpk-tdoa2": +9.658605e-05    # +96.586 µs (N=425)
+    "dpk-tdoa1,kb7ryy": +1.507713e-04    # +150.771 µs (N=72)
+    "dpk-tdoa1,n7jmv-tdoa-qth": +6.298203e-05    # +62.982 µs (N=19)
+    "dpk-tdoa2,kb7ryy": +8.697724e-05    # +86.977 µs (N=155)
+    "dpk-tdoa2,n7jmv-tdoa-qth": +1.143437e-04    # +114.344 µs (N=112)
+    "kb7ryy,n7jmv-tdoa-qth": +1.113282e-05    # +11.133 µs (N=170)
+  fit_transmitter_label: "Magnolia"
+  fit_transmitter_lat: 47.65133
+  fit_transmitter_lon: -122.3918318
+  fit_n_pairs: 953
+  fit_residual_rms_us: 0.0   # per-pair fit; residual is per-event noise only
+  fit_date: "2026-04-25"

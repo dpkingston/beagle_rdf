@@ -262,6 +262,7 @@ def solve_fix(
     savgol_window_us: float = 360.0,
     tdoa_method: str = "xcorr",
     node_offsets_s: dict[str, float] | None = None,
+    pair_offsets_s: dict[str, float] | None = None,
     boundary_clamp_km: float = 2.0,
     multistart_disagreement_km: float = 5.0,
 ) -> FixResult | None:
@@ -283,6 +284,11 @@ def solve_fix(
         Optional per-node bias-calibration table (δ_n in seconds), forwarded
         to ``compute_tdoa_s`` for each pair.  See
         ``TdoaCalibrationConfig.node_offsets_s``.
+    pair_offsets_s :
+        Optional per-pair bias-calibration table (more specific than
+        per-node).  When non-empty, takes precedence over
+        ``node_offsets_s``.  Keys are ``"<a>,<b>"`` with ascending sort
+        order.  See ``TdoaCalibrationConfig.pair_offsets_s``.
     boundary_clamp_km :
         If the converged fix is within this many kilometres of the search
         bounds, the result is marked ``suppressed`` with reason
@@ -351,6 +357,7 @@ def solve_fix(
                 savgol_window_us=savgol_window_us,
                 tdoa_method=tdoa_method,
                 node_offsets_s=node_offsets_s,
+                pair_offsets_s=pair_offsets_s,
             )
             if tdoa is not None:
                 pairs.append((i, j, tdoa))

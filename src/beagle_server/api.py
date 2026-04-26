@@ -157,13 +157,17 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 channel_hz / 1e6, len(events), node_ids, event_ids, onset_ns,
             )
 
-            # Per-node δ calibration: applied only if explicitly enabled in
-            # config.  Disabled (None) keeps the historic behaviour and
-            # avoids silently biasing results when an unfitted table is
-            # present.
+            # Calibration: applied only when enabled.  Pair calibration
+            # (per-pair offsets) takes precedence over per-node δ when
+            # both are populated — pair is more specific and captures
+            # multipath / pair-only biases that per-node cannot represent.
             calib = cfg.tdoa_calibration
             node_offsets_s = (
                 dict(calib.node_offsets_s) if (calib.enabled and calib.node_offsets_s)
+                else None
+            )
+            pair_offsets_s = (
+                dict(calib.pair_offsets_s) if (calib.enabled and calib.pair_offsets_s)
                 else None
             )
 
@@ -180,6 +184,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     savgol_window_us=cfg.solver.savgol_window_us,
                     tdoa_method=cfg.solver.tdoa_method,
                     node_offsets_s=node_offsets_s,
+                    pair_offsets_s=pair_offsets_s,
                     boundary_clamp_km=cfg.solver.boundary_clamp_km,
                     multistart_disagreement_km=cfg.solver.multistart_disagreement_km,
                 ),

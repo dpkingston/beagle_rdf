@@ -874,6 +874,7 @@ def compute_tdoa_s(
     savgol_window_us: float = 360.0,
     tdoa_method: str = "xcorr",
     node_offsets_s: dict[str, float] | None = None,
+    pair_offsets_s: dict[str, float] | None = None,
 ) -> float | None:
     """
     Compute the corrected TDOA between two events in **seconds**.
@@ -942,11 +943,11 @@ def compute_tdoa_s(
         envelope xcorr at 3× yield, and reaches best-pair median |err| of
         47 µs with 17 µs std).
     node_offsets_s : dict[node_id, seconds] or None
-        Per-node bias calibration (δ_n).  When provided, the result is
-        adjusted as ``tdoa -= (δ_a - δ_b)`` to remove constant per-node
-        clock/cable/processing offsets, where δ_a is ``node_offsets_s.get(
-        event_a["node_id"], 0.0)``.  Missing nodes default to δ = 0 (no
-        correction).  None (default) skips calibration entirely.
+        Per-node bias calibration (δ_n).  When provided AND
+        ``pair_offsets_s`` is None/empty, the result is adjusted as
+        ``tdoa -= (δ_a - δ_b)`` to remove constant per-node clock/cable/
+        processing offsets.  Missing nodes default to δ = 0 (no
+        correction).  None (default) skips per-node calibration.
 
         Calibration is applied AFTER sync disambiguation and BEFORE the
         geometric-plausibility check, so a calibrated TDOA outside the
@@ -954,6 +955,16 @@ def compute_tdoa_s(
 
         See ``TdoaCalibrationConfig`` for the fitted offsets table and
         ``scripts/fit_tdoa_calibration.py`` for the fitting procedure.
+    pair_offsets_s : dict[str, seconds] or None
+        Per-pair bias calibration, keyed by ``"<a>,<b>"`` with the two
+        node ids in ascending sort order.  When provided (non-empty),
+        OVERRIDES ``node_offsets_s``: pair calibration is more specific
+        and captures multipath / pair-only biases that per-node-δ cannot
+        represent.  Stored sign convention is the empirically-observed
+        ``compute_tdoa_s(a,b) - geometric_expected(a,b)`` for the
+        ascending-sorted pair, so when querying as (b, a) where b > a
+        the looked-up value is negated.  Missing pairs default to 0 (no
+        correction).
 
     Returns
     -------
@@ -1177,20 +1188,42 @@ def compute_tdoa_s(
 
     tdoa_ns = combined_ns
 
-    # Per-node bias calibration (δ_a - δ_b).  Removes constant per-node
-    # clock/cable/processing offsets fitted against a known-position
-    # transmitter.  Applied after disambiguation (so the round() picks the
-    # correct sync bit boundary on the raw measurement, before bias is
-    # removed) and before the plausibility check (so a calibrated value
-    # outside the baseline budget is still rejected).
+    # Bias calibration.  Per-pair preferred over per-node when both
+    # populated — it captures the full observable bias structure
+    # (including pair-specific multipath) for a known-position target.
+    # Per-node falls back when only it's configured.  Applied AFTER
+    # disambiguation (so the round() picks the correct sync bit boundary
+    # on the raw measurement, before bias is removed) and BEFORE the
+    # plausibility check (so a calibrated value outside the baseline
+    # budget is still rejected).
     calibration_ns = 0.0
-    if node_offsets_s:
+    if pair_offsets_s:
+        # Pair-key is the two node ids in ascending sort order; if our
+        # query is in reverse order, negate the looked-up value.
+        if node_a < node_b:
+            key = f"{node_a},{node_b}"
+            sign = 1.0
+        else:
+            key = f"{node_b},{node_a}"
+            sign = -1.0
+        pair_offset_s = pair_offsets_s.get(key, 0.0)
+        calibration_ns = sign * float(pair_offset_s) * 1e9
+        if calibration_ns != 0.0:
+            logger.debug(
+                "TDOA calibration %s<->%s (per-pair): pair_offset=%+.3f µs "
+                "(stored %s = %+.3f µs), applied=%+.3f µs",
+                node_a, node_b,
+                sign * pair_offset_s * 1e6, key, pair_offset_s * 1e6,
+                calibration_ns / 1e3,
+            )
+            tdoa_ns -= calibration_ns
+    elif node_offsets_s:
         delta_a = float(node_offsets_s.get(node_a, 0.0))
         delta_b = float(node_offsets_s.get(node_b, 0.0))
         calibration_ns = (delta_a - delta_b) * 1e9
         if calibration_ns != 0.0:
             logger.debug(
-                "TDOA calibration %s<->%s: δ_a=%+.3f µs, δ_b=%+.3f µs, "
+                "TDOA calibration %s<->%s (per-node): δ_a=%+.3f µs, δ_b=%+.3f µs, "
                 "applied=%+.3f µs",
                 node_a, node_b,
                 delta_a * 1e6, delta_b * 1e6, calibration_ns / 1e3,
