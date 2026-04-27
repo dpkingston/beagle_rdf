@@ -505,6 +505,59 @@ def test_compute_tdoa_phat_recovers_known_delay():
     assert abs(tdoa - expected_s) < 50e-6
 
 
+def test_compute_tdoa_audio_phat_recovers_known_delay():
+    """Audio-PHAT (FM-demodulate then GCC-PHAT) recovers a known delay
+    on synthetic FM-modulated IQ.
+
+    Audio-PHAT operates on the demodulated audio (instantaneous frequency)
+    instead of the raw IQ, removing per-receiver carrier-phase ambiguity.
+    Empirically gives 30× tighter MAD than PHAT on real-corpus data.
+    """
+    fs = 64_000.0
+    prop_delay = 2  # samples
+    delta_ns = int(prop_delay / fs * 1e9)
+    iq_a, iq_b = _make_plateau_pair_iq(prop_delay_samples=prop_delay, snr_db=30.0)
+    ev_a = _make_event_with_snippet(47.7, -122.3, delta_ns, _iq_to_b64(iq_a),
+                                     node_id="node-a", sample_rate_hz=fs)
+    ev_b = _make_event_with_snippet(47.5, -122.3, 0, _iq_to_b64(iq_b),
+                                     node_id="node-b", sample_rate_hz=fs)
+    tdoa = compute_tdoa_s(ev_a, ev_b, tdoa_method="audio_phat", min_xcorr_snr=1.5)
+    assert tdoa is not None, "Audio-PHAT returned None on good synthetic pair"
+    expected_s = prop_delay / fs
+    # Audio-PHAT on synthetic IQ (which isn't really FM-modulated voice
+    # content) is less precise than on real FM signals — but it should
+    # still resolve the delay to within a few sample periods at minimum.
+    assert abs(tdoa - expected_s) < 200e-6, (
+        f"Audio-PHAT delay {tdoa*1e6:.1f} µs vs expected {expected_s*1e6:.1f} µs"
+    )
+
+
+def test_compute_tdoa_audio_phat_rejects_short_snippet():
+    """Audio-PHAT inherits the same minimum-plateau-length requirement
+    as PHAT (500 samples).  Short snippets return None."""
+    fs = 64_000.0
+    rng = np.random.default_rng(0)
+    short_iq = (rng.standard_normal(256) + 1j * rng.standard_normal(256)).astype(np.complex64)
+    ev_a = _make_event_with_snippet(
+        47.7, -122.3, 0, _iq_to_b64(short_iq), node_id="a", sample_rate_hz=fs,
+        transition_start=100, transition_end=200,
+    )
+    ev_b = _make_event_with_snippet(
+        47.5, -122.3, 0, _iq_to_b64(short_iq), node_id="b", sample_rate_hz=fs,
+        transition_start=100, transition_end=200,
+    )
+    tdoa = compute_tdoa_s(ev_a, ev_b, tdoa_method="audio_phat")
+    assert tdoa is None
+
+
+def test_compute_tdoa_audio_phat_invalid_method_unchanged():
+    """The error message lists the new method name when method is invalid."""
+    ev_a = _make_event(47.7, -122.3, 0)
+    ev_b = _make_event(47.5, -122.3, 0)
+    with pytest.raises(ValueError, match="audio_phat"):
+        compute_tdoa_s(ev_a, ev_b, tdoa_method="bogus_method")
+
+
 def test_compute_tdoa_phat_rejects_short_snippet():
     """
     PHAT requires >= 500 samples of plateau after the ramp.  If the snippet

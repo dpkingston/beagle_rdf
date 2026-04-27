@@ -16,6 +16,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Server: Audio-PHAT TDOA method (FM-demodulate + GCC-PHAT)](#server-audio-phat-tdoa-method-fm-demodulate--gcc-phat)
 - [✓ Node: target_channels hot-reload now actually retunes the SDR](#node-target_channels-hot-reload-now-actually-retunes-the-sdr)
 - [✓ Server: median calibration + per-pair outlier filter (heavy-tail robustness)](#server-median-calibration--per-pair-outlier-filter-heavy-tail-robustness)
 - [✓ Server: per-pair TDOA bias calibration (target-specific accuracy mode)](#server-per-pair-tdoa-bias-calibration-target-specific-accuracy-mode)
@@ -463,6 +464,55 @@ until after the knee-finder / averaging-solver work lands.
 ---
 
 ## Completed
+
+### ✓ Server: Audio-PHAT TDOA method (FM-demodulate + GCC-PHAT)
+
+After per-pair calibration (commit `9136363`) was fitted on Magnolia,
+testing on Capitol Park 2 (442.875 MHz, 6.5 km away) revealed pair-bias
+drifts of 35–149 µs that the calibration did not capture.  600 kHz
+frequency delta is too small for receiver group-delay dependence; the
+nodes are mostly LOS so multipath was hypothesised but not confirmed.
+
+Overnight 2026-04-26 evidence-based research (see
+`/Users/dpk/tmp/claude/RESEARCH_BRIEF.md`) tested five hypotheses
+against the real Magnolia and Capitol Park corpora:
+  - H1 (SNR-dependent PHAT): REJECTED, r² < 0.05
+  - H2 (PHAT mode-locking): PARTIAL — bulk is tight, occasional
+    antipodal locks (caught by outlier filter)
+  - H3 (hardware mismatch): REJECTED, same-hw drift ≈ cross-hw drift
+  - H4/H5 (sync-anchor shift): PARTIAL — explains roughly half of drift
+
+And benchmarked five detection methods.  **Audio-PHAT** —
+FM-demodulate each snippet, then GCC-PHAT on the audio — emerged as
+the clear winner:
+  - 30× tighter MAD on Magnolia (174-387 ns vs 5,500-5,700 ns for IQ-PHAT)
+  - 8× tighter MAD on Capitol Park
+  - Per-target bias drift unchanged (drift is system-level, not method)
+
+**Mechanism.**  FM demodulation extracts the instantaneous frequency,
+which is the audio that was modulated onto the FM carrier by the
+transmitter.  This audio is identical at all receivers (modulo
+propagation delay and noise) — same RF signal.  Per-receiver carrier-
+phase ambiguity (LO drift, multipath phase rotation, AGC variation)
+is cancelled in the demod step.  PHAT magnitude-normalisation then
+handles audio-content variation across transmissions.
+
+**What this method does NOT solve:** the per-target bias drift
+itself — that's a system-state property whose cause requires more
+investigation (likely SyncCalibrator state evolution at restart).
+Audio-PHAT improves per-event PRECISION; the calibration framework
+is still needed for absolute accuracy on a known target.
+
+Files: `src/beagle_server/tdoa.py` (new `cross_correlate_audio_phat`
+function and `tdoa_method="audio_phat"` branch in `compute_tdoa_s`),
+`tests/unit/test_tdoa.py` (3 new tests), `config/server.example.yaml`
+(documents the new method).  766 tests pass.
+
+To deploy: change `tdoa_method: phat` to `tdoa_method: audio_phat` in
+`/etc/beagle/server.yaml`, restart the server.  Calibration will need
+re-fitting under the new method (different residual biases).
+
+---
 
 ### ✓ Node: target_channels hot-reload now actually retunes the SDR
 
