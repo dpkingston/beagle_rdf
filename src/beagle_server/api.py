@@ -190,6 +190,8 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     pair_outlier_k_mad=cfg.solver.pair_outlier_k_mad,
                     pair_outlier_history=cfg.solver.pair_outlier_history,
                     pair_outlier_min_history=cfg.solver.pair_outlier_min_history,
+                    seed_stuck_distance_m=cfg.solver.seed_stuck_distance_m,
+                    seed_stuck_residual_ns=cfg.solver.seed_stuck_residual_ns,
                 ),
             )
 

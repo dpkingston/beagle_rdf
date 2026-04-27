@@ -188,6 +188,12 @@ class FixResult:
     rough cost surface produces multiple comparable local minima; large
     disagreement means the optimizer's choice between them is
     noise-dependent and the fix is unreliable."""
+    seed_distance_m: float | None = None
+    """Smallest great-circle distance (m) between the converged best
+    position and any of the multistart seed points.  Tiny values indicate
+    L-BFGS-B terminated at iteration 0 without taking a meaningful step
+    (typically because the cost magnitude was too small for gtol/ftol to
+    register a finite-difference gradient).  See seed_stuck suppression."""
 
 
 def _predicted_tdoa_s(
@@ -206,12 +212,12 @@ def _run_optimizer(
     search_center_lat: float,
     search_center_lon: float,
     search_radius_km: float,
-) -> tuple[float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float]:
     """
     Run the L-BFGS-B multi-start optimizer for the given TDOA pairs.
 
     Returns (fix_lat, fix_lon, rms_residual_ns, multistart_disagreement_km,
-    boundary_distance_km).
+    boundary_distance_km, seed_distance_m).
 
     multistart_disagreement_km is the maximum great-circle distance between
     any two of the multi-start converged positions whose cost values are
@@ -223,8 +229,34 @@ def _run_optimizer(
     converged best position to the search-area bounds.  When small, the
     optimizer was clamped to the constraint boundary rather than finding
     a true interior minimum.
+
+    seed_distance_m is the smallest great-circle distance (m) between the
+    converged best position and any of the 5 multistart seed points.
+    Small values indicate the optimizer terminated at iteration 0 without
+    moving from a seed -- typically because the cost magnitude was too
+    small for L-BFGS-B's gtol/ftol thresholds to register a meaningful
+    gradient (verified failure mode for 2026-04-27 cluster-#1 fixes).
+    Used by ``solve_fix`` for the ``seed_stuck`` suppression criterion.
     """
     def cost(xy: np.ndarray) -> float:
+        # Squared residual is summed in nanoseconds^2, NOT seconds^2.  The
+        # solution is identical (linear scaling), but the magnitudes matter
+        # for L-BFGS-B's termination criteria:
+        #
+        #   cost in seconds^2  -> typical magnitudes ~1e-10 (residual a few µs)
+        #   cost in nanoseconds^2 -> typical magnitudes ~1e+8
+        #
+        # With ``gtol=1e-10`` and ``ftol=1e-15`` the seconds^2 formulation
+        # was hitting both thresholds at the multistart seed even when the
+        # seed was kilometres from the true minimum, because finite-
+        # difference gradients of a ~1e-10 cost are at or below 1e-10
+        # numerically.  The optimizer then terminated at iteration 0 and
+        # returned the seed coordinates as the "minimum".  Verified on the
+        # 2026-04-27 Magnolia corpus: cost(seed)/cost(true_min) ratio of
+        # ~12,000x for cluster-#1 fixes, with all 13 fixes pinned to the
+        # exact seed coords to 7 decimal places.  Rescaling lifts the
+        # cost-magnitude floor above the gtol threshold and lets the
+        # optimizer iterate normally.
         lat, lon = float(xy[0]), float(xy[1])
         total = 0.0
         for i, j, measured in pairs:
@@ -233,7 +265,7 @@ def _run_optimizer(
                 node_events[i]["node_lat"], node_events[i]["node_lon"],
                 node_events[j]["node_lat"], node_events[j]["node_lon"],
             )
-            total += (measured - pred) ** 2
+            total += ((measured - pred) * 1e9) ** 2
         return total
 
     deg_lat = search_radius_km / 111.0
@@ -251,10 +283,21 @@ def _run_optimizer(
     ]
     # Run all multistarts and keep every result so we can quantify
     # disagreement between local minima.
+    #
+    # Tolerances:
+    # - ``ftol=1e-9`` and ``gtol=1e-5`` are scipy's L-BFGS-B defaults; tight
+    #   enough that converged positions land within sub-metre of the true
+    #   minimum at our cost magnitudes (~1e8 ns²) but not so tight that the
+    #   optimizer spins on floating-point noise.  Pre-rescale this code used
+    #   ``ftol=1e-15, gtol=1e-10``, which was unreachable at any cost scale
+    #   and forced the optimizer to run to maxiter every call (700+
+    #   iterations × 5 multistarts = ~750 ms per fix).  After rescale +
+    #   default tolerances: ~15 ms per fix in tests.
+    # - ``maxiter=200`` is a safety cap; clean fits converge in ~30 iters.
     results = []
     for x0 in start_points:
         r = minimize(cost, x0, method="L-BFGS-B", bounds=bounds,
-                     options={"maxiter": 1000, "ftol": 1e-15, "gtol": 1e-10})
+                     options={"maxiter": 200, "ftol": 1e-9, "gtol": 1e-5})
         results.append(r)
 
     best_result = min(results, key=lambda r: r.fun)
@@ -299,8 +342,18 @@ def _run_optimizer(
     ) * 111.195 * math.cos(math.radians(fix_lat))
     boundary_distance_km = min(lat_to_bound_km, lon_to_bound_km)
 
+    # Smallest distance from the converged position to any seed.  Tiny
+    # values indicate L-BFGS-B terminated at iteration 0 -- it never
+    # moved from the start point.  See seed_stuck suppression in
+    # ``solve_fix``.
+    seed_distance_m = min(
+        haversine_m(fix_lat, fix_lon, float(s[0]), float(s[1]))
+        for s in start_points
+    )
+
     return (fix_lat, fix_lon, rms_ns,
-            float(multistart_disagreement_km), float(boundary_distance_km))
+            float(multistart_disagreement_km), float(boundary_distance_km),
+            float(seed_distance_m))
 
 
 def _pair_residuals_ns(
@@ -346,7 +399,17 @@ def _identify_outlier_node(
     node_ids = [e["node_id"] for e in node_events]
     pair_resids = _pair_residuals_ns(node_events, pairs, fix_lat, fix_lon)
     overall_rms = float(np.sqrt(np.mean(np.array(pair_resids) ** 2)))
-    if overall_rms == 0.0:
+    # Tolerance gate: an essentially-perfect fit (residuals all sub-nanosecond
+    # numerical noise) has no meaningful outlier to find.  Pre-rescale this
+    # early-return only fired on bit-exact zero; the seconds^2 cost surface's
+    # numerical sloppiness kept residuals at tens of ns where the proportional
+    # check below behaved well.  After the ns^2 rescale (commit landing this
+    # comment), the optimizer converges so cleanly that residuals can drop
+    # to ~1e-2 ns with one pair at ~1e-7 ns -- a 1e5 ratio that the
+    # proportional check then mis-reads as an outlier.  1 ns is well below
+    # any realistic production residual (clean 4-node Audio-PHAT runs at
+    # ~tens of ns; calibration drift at hundreds-thousands).
+    if overall_rms < 1.0:
         return None
 
     best_nid: str | None = None
@@ -385,6 +448,8 @@ def solve_fix(
     pair_outlier_k_mad: float = 0.0,
     pair_outlier_history: int = 200,
     pair_outlier_min_history: int = 20,
+    seed_stuck_distance_m: float = 50.0,
+    seed_stuck_residual_ns: float = 500.0,
 ) -> FixResult | None:
     """
     Compute a transmitter fix from a list of events from the same transmission.
@@ -435,6 +500,26 @@ def solve_fix(
     pair_outlier_min_history :
         Minimum number of accepted measurements before the outlier filter
         starts rejecting (cold-start gate).
+    seed_stuck_distance_m :
+        If the converged position is within this many metres of any
+        multistart seed AND the residual exceeds ``seed_stuck_residual_ns``,
+        the result is marked ``suppressed`` with reason ``seed_stuck``.
+        Catches the L-BFGS-B-terminates-at-iteration-0 failure mode
+        observed on the 2026-04-27 Magnolia corpus, where 13 fixes pinned
+        to the exact ``search_center`` coordinates with 7 µs residuals
+        because the cost magnitude (in seconds^2) was below the
+        optimizer's gtol threshold.  The cost rescaling to ns^2 (in
+        ``_run_optimizer``) makes the failure mode unlikely, but this
+        suppressor is defence-in-depth -- a fix landing exactly on a
+        seed with non-zero residual is always suspect.  0 disables.
+    seed_stuck_residual_ns :
+        Residual threshold in ns for the seed-stuck suppression.  A
+        legitimate fix at a coincidental near-seed position will have
+        residual close to 0; a stuck-seed fix carries the cost-at-seed
+        as residual and is well above zero.  500 ns is comfortably above
+        the realistic best-case residual (~tens of ns for clean 4-node
+        Audio-PHAT) and well below stuck-seed residuals (~thousands of
+        ns).  0 disables.
 
     Returns
     -------
@@ -527,7 +612,7 @@ def solve_fix(
         return None
 
     (fix_lat, fix_lon, rms_ns, multistart_disagreement_km_value,
-     boundary_distance_km_value) = _run_optimizer(
+     boundary_distance_km_value, seed_distance_m_value) = _run_optimizer(
         pairs, node_events, search_center_lat, search_center_lon, search_radius_km,
     )
 
@@ -553,7 +638,7 @@ def solve_fix(
         clean_node_idxs = {i for i, j, _ in clean_pairs} | {j for i, j, _ in clean_pairs}
         if len(clean_node_idxs) >= 2 and clean_pairs:
             (fix_lat, fix_lon, rms_ns, multistart_disagreement_km_value,
-             boundary_distance_km_value) = _run_optimizer(
+             boundary_distance_km_value, seed_distance_m_value) = _run_optimizer(
                 clean_pairs, node_events,
                 search_center_lat, search_center_lon, search_radius_km,
             )
@@ -607,6 +692,24 @@ def solve_fix(
             fix_lat, fix_lon, rms_ns,
             [nid for nid in node_ids if nid not in excluded_nodes],
         )
+    elif (
+        seed_stuck_distance_m > 0.0
+        and seed_stuck_residual_ns > 0.0
+        and seed_distance_m_value < seed_stuck_distance_m
+        and rms_ns > seed_stuck_residual_ns
+    ):
+        suppressed = True
+        suppression_reason = "seed_stuck"
+        logger.warning(
+            "Fix suppressed (seed_stuck): converged %.0f m from a multistart "
+            "seed (threshold %.0f m) with residual %.0f ns (threshold %.0f "
+            "ns); L-BFGS-B almost certainly terminated at iteration 0 "
+            "without finding a true minimum.  best=(%.5f, %.5f) nodes=%s",
+            seed_distance_m_value, seed_stuck_distance_m,
+            rms_ns, seed_stuck_residual_ns,
+            fix_lat, fix_lon,
+            [nid for nid in node_ids if nid not in excluded_nodes],
+        )
 
     return FixResult(
         latitude_deg=fix_lat,
@@ -622,4 +725,5 @@ def solve_fix(
         suppression_reason=suppression_reason,
         boundary_distance_km=boundary_distance_km_value,
         multistart_disagreement_km=multistart_disagreement_km_value,
+        seed_distance_m=seed_distance_m_value,
     )

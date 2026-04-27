@@ -432,24 +432,45 @@ def test_boundary_clamp_disabled_when_threshold_zero():
         assert result.suppression_reason != "boundary_clamped"
 
 
-def test_multistart_ambiguity_suppression_with_two_nodes():
-    """A 2-node configuration produces a hyperbola of equal-cost
-    minimizers — multistart converges to different points along it,
-    which must trigger the multistart-ambiguity suppression."""
+def test_two_node_fix_converges_to_hyperbola_after_ns2_rescale():
+    """A 2-node configuration is structurally degenerate (a hyperbola of
+    zero-cost minimizers), but with the cost rescaled to nanoseconds^2
+    the optimizer cleanly converges all multistarts to a single point on
+    the hyperbola -- the projection of the seeds onto the curve under the
+    bounds constraints.
+
+    Pre-rescale, this test exercised the multistart-ambiguity
+    suppression by relying on the optimizer's numerical sloppiness in
+    seconds^2 cost: different multistarts converged to slightly
+    different points along the hyperbola, triggering the > 5 km
+    disagreement guard.  That was an accidental side-channel detector
+    for "2-node degenerate", not a feature.
+
+    The user explicitly enables ``min_nodes: 2`` for LOP fixes (see
+    server.example.yaml), so 2-node fixes SHOULD pass through with a
+    small residual rather than being suppressed.  This test pins that
+    contract.
+    """
     events = make_synthetic_events()[:2]
     result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
-    # 2-node case is structurally degenerate — the cost surface has a
-    # zero-cost manifold (the hyperbola), so different starts converge
-    # to different points along it.  multistart-disagreement should be
-    # large.
     assert result is not None
-    assert result.multistart_disagreement_km is not None
-    assert result.multistart_disagreement_km > 5.0, (
-        f"2-node hyperbola should produce multistart disagreement > 5 km; "
-        f"got {result.multistart_disagreement_km:.1f}"
+    assert result.node_count == 2
+    # Optimizer converges to a real point on the hyperbola; residual is
+    # essentially zero (the cost surface is a zero-cost manifold).
+    assert result.residual_ns < 1.0, (
+        f"2-node fit should land on the hyperbola with sub-ns residual; "
+        f"got {result.residual_ns:.2f} ns"
     )
-    assert result.suppressed
-    assert result.suppression_reason == "multistart_ambiguous"
+    # Not suppressed by multistart-ambiguity: the rescaled cost is
+    # numerically well-behaved enough that all 5 starts converge
+    # consistently.  (Suppression by other criteria, e.g. seed_stuck if
+    # the hyperbola passes near a seed, is allowed and tested separately.)
+    if result.suppressed:
+        assert result.suppression_reason != "multistart_ambiguous", (
+            f"2-node fix should not trigger multistart_ambiguous after "
+            f"the ns^2 rescale; got reason={result.suppression_reason}, "
+            f"disagreement={result.multistart_disagreement_km}"
+        )
 
 
 def test_multistart_ambiguity_disabled_when_threshold_zero():
@@ -462,6 +483,185 @@ def test_multistart_ambiguity_disabled_when_threshold_zero():
     assert result is not None
     if result.suppressed:
         assert result.suppression_reason != "multistart_ambiguous"
+
+
+# ---------------------------------------------------------------------------
+# ns^2 cost rescale + seed_stuck suppression (2026-04-27 cluster-#1 regression)
+# ---------------------------------------------------------------------------
+#
+# Cluster #1 root cause: ``_run_optimizer.cost`` summed (measured-pred)^2 in
+# SECONDS^2, producing magnitudes ~1e-10 for clean fits.  L-BFGS-B with
+# ``gtol=1e-10`` and ``ftol=1e-15`` interpreted the resulting tiny finite-
+# difference gradients as "already converged" at the very first iteration
+# and returned the seed coordinates unchanged.  Verified against the live
+# 08:54-08:56 corpus: 13 fixes pinned to (47.6150000, -122.3470000) -- the
+# exact ``search_center`` -- with 7 µs RMS residuals while a hand-rolled
+# grid search found cost ~12,000x lower 4 km away.
+#
+# Fix: cost in nanoseconds^2 (×1e18) so gtol/ftol thresholds are
+# numerically meaningful at our measurement scale.  Defence-in-depth:
+# ``seed_stuck`` suppression rejects any fix that converges within
+# ``seed_stuck_distance_m`` of a multistart seed AND has a residual above
+# ``seed_stuck_residual_ns``.
+
+def test_run_optimizer_emits_seed_distance_metric():
+    """``_run_optimizer`` returns a sixth value: smallest distance from the
+    converged best to any multistart seed.  Used by the seed_stuck check."""
+    from beagle_server.solver import _run_optimizer
+    events = make_synthetic_events()
+    # Build a 3-node pair list directly, bypassing compute_tdoa_s.
+    pairs: list[tuple[int, int, float]] = []
+    for i in range(3):
+        for j in range(i + 1, 3):
+            t_i = (_dist(TARGET_LAT, TARGET_LON, events[i]["node_lat"],
+                         events[i]["node_lon"]) / _C_M_S)
+            t_j = (_dist(TARGET_LAT, TARGET_LON, events[j]["node_lat"],
+                         events[j]["node_lon"]) / _C_M_S)
+            pairs.append((i, j, t_i - t_j))
+    out = _run_optimizer(pairs, events, TARGET_LAT, TARGET_LON, 50.0)
+    # Tuple of (lat, lon, rms_ns, multistart_disagreement_km,
+    # boundary_distance_km, seed_distance_m)
+    assert len(out) == 6
+    seed_distance_m = out[5]
+    assert seed_distance_m >= 0.0
+    # With seeds centered ON the target, the converged fix should be
+    # within metres of the seed (the synthetic geometry is exact).
+    assert seed_distance_m < 1000.0
+
+
+def test_solve_fix_populates_seed_distance_m_field():
+    """FixResult.seed_distance_m is populated on every return path."""
+    events = make_synthetic_events()
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    assert result is not None
+    assert result.seed_distance_m is not None
+    assert result.seed_distance_m >= 0.0
+
+
+def test_ns2_cost_rescale_optimizer_moves_off_seed():
+    """The ns^2 rescale must let L-BFGS-B move off the search-center
+    seed when the true minimum is several km away.
+
+    Pre-rescale failure mode: with cost ~1e-10 s^2 the optimizer
+    terminated at iteration 0 and returned (search_center, search_center)
+    as the "minimum"; verified on the 2026-04-27 cluster-#1 corpus where
+    13 fixes pinned to (47.6150000, -122.3470000) to 7 decimal places.
+
+    Reuses the same parameters as ``test_solve_fix_three_nodes_accuracy``
+    (target ~6.7 km from the seed).  The contract pinned here is "the
+    optimizer moves at least 1 km off the seed" -- a much weaker
+    assertion than absolute fix accuracy, deliberately so: the synthetic
+    fixture uses simplified IQ snippets that do not give pipeline-grade
+    sub-km accuracy (see the xfail note on
+    ``test_solve_fix_three_nodes_accuracy``).  But it cleanly catches
+    the iteration-0 termination mode if the rescale ever regresses.
+    """
+    events = make_synthetic_events()
+    SEARCH_LAT = 47.6
+    SEARCH_LON = -122.3
+    result = solve_fix(
+        events, SEARCH_LAT, SEARCH_LON, search_radius_km=80.0,
+    )
+    assert result is not None
+
+    # Distance from converged fix to the seed.  Pre-rescale: < 50 m
+    # (optimizer never moved).  Post-rescale: ~5+ km (real movement
+    # toward the synthetic target).
+    seed_dist_m = haversine_m(
+        result.latitude_deg, result.longitude_deg,
+        SEARCH_LAT, SEARCH_LON,
+    )
+    assert seed_dist_m > 1000.0, (
+        f"Fix landed only {seed_dist_m:.0f} m from the seed -- L-BFGS-B "
+        f"likely terminated at iteration 0 (cost rescale not in effect)."
+    )
+
+    # And FixResult.seed_distance_m must report this consistently.
+    assert result.seed_distance_m is not None
+    assert result.seed_distance_m > 1000.0
+
+
+def test_seed_stuck_suppression_fires_for_stuck_optimizer(monkeypatch):
+    """When ``_run_optimizer`` reports tiny seed_distance and large rms_ns,
+    ``solve_fix`` must mark the fix suppressed with reason ``seed_stuck``.
+
+    Mocks ``_run_optimizer`` to return a known stuck-at-seed result so the
+    suppression logic is exercised without depending on a buggy optimizer.
+    """
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        # 2 m from the seed (well below default 50 m threshold), 6,500 ns
+        # residual (well above default 500 ns threshold) -- mirrors the
+        # 2026-04-27 cluster-#1 production observation.
+        return slat, slon, 6500.0, 0.0, 50.0, 2.0
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    assert result is not None
+    assert result.suppressed
+    assert result.suppression_reason == "seed_stuck"
+    assert result.seed_distance_m == pytest.approx(2.0)
+    assert result.residual_ns == pytest.approx(6500.0)
+
+
+def test_seed_stuck_suppression_does_not_fire_for_clean_fix_near_seed(monkeypatch):
+    """A legitimate clean fix that happens to be near a seed (e.g.
+    transmitter actually at the search centre) must NOT trigger
+    seed_stuck.  The residual gate prevents false positives.
+    """
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        # 5 m from seed, but residual is 12 ns (clean fit) -- no suppression.
+        return slat, slon, 12.0, 0.0, 50.0, 5.0
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    assert result is not None
+    assert not (result.suppressed and result.suppression_reason == "seed_stuck"), (
+        f"Clean low-residual fix near seed should not trigger seed_stuck; "
+        f"got suppressed={result.suppressed} reason={result.suppression_reason}"
+    )
+
+
+def test_seed_stuck_disabled_when_distance_zero(monkeypatch):
+    """seed_stuck_distance_m=0 disables the seed_stuck suppression check."""
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        # Would trigger seed_stuck under default thresholds (2 m, 6500 ns).
+        return slat, slon, 6500.0, 0.0, 50.0, 2.0
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(
+        events, 47.6, -122.3, search_radius_km=80.0,
+        seed_stuck_distance_m=0.0,
+    )
+    assert result is not None
+    if result.suppressed:
+        assert result.suppression_reason != "seed_stuck"
+
+
+def test_seed_stuck_disabled_when_residual_threshold_zero(monkeypatch):
+    """seed_stuck_residual_ns=0 disables the seed_stuck suppression check."""
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        return slat, slon, 6500.0, 0.0, 50.0, 2.0
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(
+        events, 47.6, -122.3, search_radius_km=80.0,
+        seed_stuck_residual_ns=0.0,
+    )
+    assert result is not None
+    if result.suppressed:
+        assert result.suppression_reason != "seed_stuck"
 
 
 # ---------------------------------------------------------------------------

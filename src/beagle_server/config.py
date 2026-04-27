@@ -282,6 +282,31 @@ class SolverConfig(BaseModel):
     starts rejecting.  Cold-start gate; everything is accepted while
     history is below this threshold.
     """
+    seed_stuck_distance_m: float = 50.0
+    """
+    Suppress fixes whose converged position lies within this many metres of
+    any multistart seed AND whose residual exceeds ``seed_stuck_residual_ns``.
+    Catches the L-BFGS-B-terminates-at-iteration-0 failure mode where the
+    optimizer reports the seed coordinates as a "minimum" because the
+    cost-magnitude was below its gradient/ftol thresholds.
+
+    Cluster-#1 manifestation (2026-04-27 Magnolia corpus): 13 fixes pinned
+    to the exact ``search_center`` to 7 decimal places with residuals of
+    7 µs RMS, while a grid search found cost ~12,000x lower 4 km from the
+    seed.  The ns^2 cost rescale in ``_run_optimizer`` should make this
+    failure mode unlikely, but this knob is defence-in-depth.
+
+    A real fix that happens to converge near the search center is allowed
+    by the residual gate -- legitimate fixes have residual ~tens of ns
+    (clean Audio-PHAT 4-node), well below the default 500 ns threshold.
+
+    Set to 0 to disable.
+    """
+    seed_stuck_residual_ns: float = 500.0
+    """
+    Residual threshold (ns) for the seed-stuck suppression.  See
+    ``seed_stuck_distance_m``.  Set to 0 to disable.
+    """
 
 
 class MapConfig(BaseModel):

@@ -15,6 +15,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Solver: ns² cost rescale + seed_stuck suppression (cluster-#1 hallucination fix)](#solver-ns-cost-rescale--seed_stuck-suppression-cluster-1-hallucination-fix)
 - [✓ Remote node restart trigger (admin button + uptime confirmation)](#remote-node-restart-trigger-admin-button--uptime-confirmation)
 - [✓ Server: Audio-PHAT TDOA method (FM-demodulate + GCC-PHAT)](#server-audio-phat-tdoa-method-fm-demodulate--gcc-phat)
 - [✓ Node: target_channels hot-reload now actually retunes the SDR](#node-target_channels-hot-reload-now-actually-retunes-the-sdr)
@@ -62,6 +63,98 @@
 - [✓ Web Page Control - Dynamic Aging Window](#web-page-control-dynamic-aging-window)
 - [✓ Map Control Panel](#map-control-panel)
 - [✓ Fix Layer Ordering + Hyperbola Generator](#fix-layer-ordering-hyperbola-generator)
+
+---
+
+### ✓ Solver: ns² cost rescale + seed_stuck suppression (cluster-#1 hallucination fix)
+
+**Completed 2026-04-27** in response to a verified hallucination on the
+day's Magnolia corpus: 13 fixes pinned to (47.6150000, -122.3470000) --
+the exact ``search_center`` -- to 7 decimal places, with 7 µs RMS
+residuals.  A hand-rolled grid-cost evaluation found the true minimum
+~4 km off-seed at 11,996x lower cost.
+
+Root cause: ``_run_optimizer.cost`` in ``solver.py`` summed
+``(measured-pred)**2`` in **seconds²**.  For typical TDOA residuals at
+the µs scale, cost magnitudes were ~1e-10.  L-BFGS-B with
+``gtol=1e-10, ftol=1e-15`` interpreted the resulting tiny finite-
+difference gradients as "already converged" at iteration 0, returning
+the seed coordinates unchanged.  All 5 multistart seeds suffered the
+same fate, so the multistart-disagreement guard didn't catch it
+either.
+
+Fix:
+
+1. **Cost rescaled to ns²** (``solver.py`` line ~227): multiply each
+   squared residual by 1e18.  Mathematically identical solution; ftol/
+   gtol thresholds become numerically meaningful at our scale.
+
+2. **L-BFGS-B tolerances relaxed to scipy defaults** (``ftol=1e-9,
+   gtol=1e-5, maxiter=200``).  The original ``ftol=1e-15`` was below
+   double-precision floor at any cost scale and forced the optimizer
+   to spin to maxiter=1000 every call (~750 ms per fix; tests timed
+   out their 200 ms sleep).  After tuning: ~15 ms per fix.
+
+3. **``seed_distance_m`` returned by ``_run_optimizer``**: smallest
+   great-circle distance from the converged best to any of the 5
+   multistart seeds.  Surfaced on ``FixResult.seed_distance_m`` for
+   diagnostics.
+
+4. **``seed_stuck`` suppression** (defence-in-depth): if the converged
+   position is within ``seed_stuck_distance_m`` (default 50 m) of any
+   seed AND the residual exceeds ``seed_stuck_residual_ns`` (default
+   500 ns), the fix is marked suppressed with reason ``seed_stuck``.
+   Catches any future regression of the iteration-0 termination mode.
+   Both knobs threaded through ``SolverConfig`` and the
+   ``/api/v1/events`` solver call site.
+
+5. **Outlier-detection tolerance gate** (``_identify_outlier_node``):
+   pre-rescale this function early-returned only on bit-exact
+   ``overall_rms == 0.0``; the seconds² cost surface's numerical
+   sloppiness kept residuals at tens of ns where the proportional
+   check below behaved well.  After the rescale the optimizer
+   converges so cleanly that residuals can drop to ~1e-2 ns with one
+   pair at ~1e-7 ns, which the proportional check mis-read as an
+   outlier.  Threshold lifted to ``< 1.0 ns`` (well below realistic
+   production residuals).
+
+Tests: 7 new in ``tests/unit/test_solver.py`` covering the rescale's
+required behaviour (optimizer moves > 1 km off the seed for synthetic
+3-node fits), the new metric (``FixResult.seed_distance_m`` populated),
+and the suppression logic via ``monkeypatch`` (fires when distance < 50
+m AND residual > 500 ns; suppressed when either knob is 0; not fired
+for low-residual fixes near the seed).  The existing
+``test_multistart_ambiguity_suppression_with_two_nodes`` was rewritten
+to ``test_two_node_fix_converges_to_hyperbola_after_ns2_rescale`` --
+its previous behaviour was a numerical accident (relying on optimizer
+sloppiness in seconds² cost to manufacture multistart disagreement);
+post-rescale 2-node LOP fixes correctly converge to a single point on
+the hyperbola.
+
+Also pulled the cluster-#1 event group from production and ran a
+verification script (``~/tmp/claude/verify_cluster1_seed_stuck.py``)
+that recomputes pair TDOAs with the live tdoa_method (audio_phat) and
+evaluates the cost surface on a 0.1° grid.  Findings:
+
+- Cluster #1: cost(seed) = 6,730 ns RMS; grid_min = 61 ns RMS at
+  4.3 km offset.  Verdict: hallucination.
+- Cluster #2 (47.568, -122.314): cost(production-fix-pos) = 513 ns RMS,
+  grid_min = 179 ns RMS at 5.4 km offset.  Also hallucination, just less
+  visible because the production solver's reported residual (16 ns) is
+  inconsistent with the recomputed cost at the fix position.
+- Both clusters built from a SINGLE valid pair (kb7ryy↔dpk-tdoaX)
+  because Audio-PHAT returned ±392-414 µs values for the other two
+  pairs in each event group -- well outside the ±167 µs (50 km)
+  geometric plausibility gate.  ``node_count: 3`` in the fixes table
+  counts unique nodes contributing events, NOT valid pairs surviving
+  the gate.
+
+The Audio-PHAT disambiguation issue (modulo-T_sync wrong-copy
+selection for ~67% of pair-event combinations) is the next item to
+investigate -- not in this commit.  See "What's next" notes in the
+session log.
+
+808 tests pass (was 801; +7).
 
 ---
 
