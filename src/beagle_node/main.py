@@ -593,6 +593,15 @@ def run(args: argparse.Namespace | None = None) -> int:
         longitude_deg=sync_station.longitude_deg,
     )
 
+    # Initial target — captured for startup-time validation and logging only.
+    # The on_measurement closure below MUST NOT read from this local; it has
+    # to look up the current primary channel from ``config.target_channels``
+    # on every event so that hot-reload retunes (which rebind
+    # ``config.target_channels`` to a fresh list of TargetChannel objects)
+    # are reflected in the channel_frequency_hz field of emitted events.
+    # Reading the closure-captured ``target_ch`` instead would silently stamp
+    # events with the pre-retune frequency, splitting them from the post-
+    # retune events of co-tuned peer nodes in the server's pairing logic.
     target_ch = config.target_channels[0] if config.target_channels else None
 
     # Per-mode pipeline offset (subtracted from every sync_to_snippet_start_ns).
@@ -630,7 +639,16 @@ def run(args: argparse.Namespace | None = None) -> int:
     _buf_ref_sample: int = 0
 
     def on_measurement(m) -> None:
-        if target_ch is None:
+        # Read the current primary target live from ``config`` rather than
+        # from the closure-captured ``target_ch``: hot-reload retunes rebind
+        # ``config.target_channels`` to a fresh list of TargetChannel objects
+        # (see _on_config_update above), and any post-retune events must be
+        # stamped with the NEW frequency_hz so that the server can group
+        # them with co-tuned peer nodes.
+        current_target = (
+            config.target_channels[0] if config.target_channels else None
+        )
+        if current_target is None:
             return
         if buf_wall_ns is not None:
             # Compute precise within-buffer onset position.
@@ -659,7 +677,7 @@ def run(args: argparse.Namespace | None = None) -> int:
         event = CarrierEvent(
             node_id=config.node_id,
             node_location=node_loc,
-            channel_frequency_hz=target_ch.frequency_hz,
+            channel_frequency_hz=current_target.frequency_hz,
             sync_to_snippet_start_ns=corrected_delta,
             sync_transmitter=sync_tx,
             sdr_mode=config.sdr_mode,

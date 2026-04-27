@@ -567,6 +567,48 @@ Tests: 2 new under ``test_sdr_base.py``:
 
 763 tests pass.
 
+#### Follow-up: stale closure capture stamping events with pre-retune freq
+
+Reported (2026-04-26 evening): after a hot-retune from Capitol Park 2
+(442.875 MHz) to Magnolia (443.475 MHz), three of four nodes continued
+emitting events with ``channel_frequency_hz=442875000`` even though the
+SDR tuner was correctly on 443.475 (confirmed by ``discontinuities=1``
+in the health endpoint and by all four nodes catching the same physical
+keyups in lockstep).
+
+The server's pairing logic groups events by
+``(channel_hz, event_type, sync_tx_id, time-bucket)``, so events with
+the stale stamp could not group with the freshly-stamped n7jmv events.
+Result: 4-node fixes became 3-node fixes from a degenerate sub-trio,
+and n7jmv's data was wasted.
+
+Root cause: ``main.py`` line 596 captured
+``target_ch = config.target_channels[0]`` once at startup.  The
+``on_measurement`` closure read ``target_ch.frequency_hz`` for the
+event stamp.  When the hot-reload retune rebound ``config.target_channels``
+to a fresh list (line 393), the closure-captured ``target_ch`` still
+pointed at the *old* TargetChannel object.
+
+Fix: read ``config.target_channels[0]`` live inside ``on_measurement``
+each call.  Renamed the in-closure local to ``current_target`` to make
+the live-read intent obvious; the original ``target_ch`` is preserved
+at run() scope for startup-time validation/logging only, with comments
+explaining why the closure must not read it.
+
+Tests: 3 new in ``tests/unit/test_main_hot_reload.py`` -- source-level
+regression assertions that lock in the contract:
+  - ``on_measurement`` body must NOT contain ``target_ch.frequency_hz``
+  - ``on_measurement`` body MUST reference ``config.target_channels``
+  - the rationale comment must remain near ``target_ch`` so future
+    refactors don't silently drop the live-read invariant
+
+A behavioural integration test of the full retune-then-emit path would
+be more valuable but requires extracting ``on_measurement`` from the
+800-line ``run()`` body.  Deferred; the source-level tests catch the
+specific regression pattern.
+
+769 tests pass.
+
 ---
 
 ### ✓ Server: median calibration + per-pair outlier filter (heavy-tail robustness)
