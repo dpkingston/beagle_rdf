@@ -193,6 +193,15 @@ async def open_registry_db(path: str) -> aiosqlite.Connection:
         await db.execute("ALTER TABLE nodes ADD COLUMN location_lat REAL")
     if "location_lon" not in cols:
         await db.execute("ALTER TABLE nodes ADD COLUMN location_lon REAL")
+    # Remote-restart trigger: a per-node flag the admin sets via
+    # POST /api/v1/nodes/{id}/restart.  The next config poll from that node
+    # returns ``restart_requested: true`` in the response and atomically
+    # clears the flag so the node restarts exactly once per request.
+    # See the "Remote node restart trigger" section in TODO.md.
+    if "restart_requested" not in cols:
+        await db.execute(
+            "ALTER TABLE nodes ADD COLUMN restart_requested INTEGER NOT NULL DEFAULT 0"
+        )
     # Idempotent migration: add TOTP columns to users if missing.
     async with db.execute("PRAGMA table_info(users)") as cur:
         user_cols = {row[1] for row in await cur.fetchall()}
@@ -601,6 +610,71 @@ async def update_node_enabled(
     )
     await db.commit()
     return (cur.rowcount or 0) > 0
+
+
+async def request_node_restart(
+    db: aiosqlite.Connection,
+    node_id: str,
+) -> bool:
+    """Set the per-node ``restart_requested`` flag.
+
+    The next config poll from this node returns ``restart_requested: true``
+    in its response and atomically clears the flag (see
+    ``consume_restart_flag``).  The node's poll handler responds by exiting
+    with code 75; systemd's ``Restart=on-failure`` brings the service back
+    up on the latest deployed code with the latest config.
+
+    Returns True if the node existed (flag was set), False otherwise.
+
+    Idempotent: setting the flag while it's already set is a no-op.  We
+    deliberately do NOT bump ``config_version`` here -- the long-poll
+    handler in api.py wakes immediately on the flag transition by checking
+    ``restart_requested`` alongside the version comparison, so there is no
+    need to spoof a config change to break the wait.
+    """
+    cur = await db.execute(
+        "UPDATE nodes SET restart_requested = 1 WHERE node_id = ?",
+        (node_id,),
+    )
+    await db.commit()
+    return (cur.rowcount or 0) > 0
+
+
+async def consume_restart_flag(
+    db: aiosqlite.Connection,
+    node_id: str,
+) -> bool:
+    """Atomically read and clear the node's ``restart_requested`` flag.
+
+    Returns True if the flag was set (and is now cleared), False if it
+    was already clear or the node doesn't exist.
+
+    This is called by the config long-poll handler exactly once per
+    response, so a single ``request_node_restart`` produces exactly one
+    delivered restart instruction.  If the response is lost in transit
+    (network drop between server and node), the restart is effectively
+    cancelled -- the operator must re-issue.  We accept this simple
+    failure mode for now; an ACK-on-next-poll round-trip would be more
+    robust but adds protocol state we don't need yet.
+    """
+    # Read-modify-write in a single transaction: aiosqlite serialises
+    # writes to the same connection, and the long-poll handler is the
+    # sole writer of restart_requested in the response path, so two
+    # concurrent polls for the same node cannot both observe the flag
+    # set.  (Two polls from the same node should not happen anyway --
+    # the node has one poll thread.)
+    async with db.execute(
+        "SELECT restart_requested FROM nodes WHERE node_id = ?", (node_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None or not row[0]:
+        return False
+    await db.execute(
+        "UPDATE nodes SET restart_requested = 0 WHERE node_id = ?",
+        (node_id,),
+    )
+    await db.commit()
+    return True
 
 
 async def update_node_config(

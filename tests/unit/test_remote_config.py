@@ -450,7 +450,7 @@ def test_fetch_poll_post_empty_heartbeat_when_none_set(httpx_mock) -> None:
 def test_fetch_poll_304_returns_none(httpx_mock) -> None:
     """304 Not Modified is the normal long-poll timeout response."""
     httpx_mock.add_response(status_code=304)
-    assert _make_fetcher()._fetch_poll(wait_s=10) is None
+    assert _make_fetcher()._fetch_poll(wait_s=10) == (None, False)
 
 
 def test_fetch_poll_200_unchanged_version_returns_none(httpx_mock) -> None:
@@ -458,7 +458,7 @@ def test_fetch_poll_200_unchanged_version_returns_none(httpx_mock) -> None:
     httpx_mock.add_response(json=_server_payload(version=0), status_code=200)
     fetcher = _make_fetcher()
     assert fetcher._current_version == 0
-    assert fetcher._fetch_poll(wait_s=10) is None
+    assert fetcher._fetch_poll(wait_s=10) == (None, False)
 
 
 def test_fetch_poll_500_raises_transient(httpx_mock) -> None:
@@ -509,6 +509,8 @@ def _drive_poll_loop(
     fetcher: RemoteConfigFetcher,
     poll_outcomes: list,
     max_iterations: int = 20,
+    on_restart=None,
+    on_update=None,
 ):
     """Run _poll_loop in the foreground with mocked _fetch_poll, capturing
     the sequence of stop_event.wait() calls so the test can inspect the
@@ -516,8 +518,9 @@ def _drive_poll_loop(
 
     poll_outcomes : list of values to return from successive _fetch_poll
         calls.  Each entry is either:
-          - a NodeConfig (treated as "new config arrived")
-          - None         (treated as "304 / no change")
+          - a NodeConfig         ("new config arrived" -> wrapped as (cfg, False))
+          - None                 ("304 / no change" -> wrapped as (None, False))
+          - a 2-tuple (cfg|None, restart_bool)   passed through verbatim
           - an Exception instance (raised by _fetch_poll)
         The loop terminates after the list is exhausted (the test makes the
         next call set the stop event).
@@ -532,11 +535,14 @@ def _drive_poll_loop(
         iteration["n"] += 1
         if i >= len(poll_outcomes):
             fetcher._stop_event.set()
-            return None
+            return None, False
         outcome = poll_outcomes[i]
         if isinstance(outcome, Exception):
             raise outcome
-        return outcome
+        if isinstance(outcome, tuple):
+            return outcome
+        # Bare NodeConfig or None -> wrap with restart=False
+        return outcome, False
 
     def _fake_wait(timeout):
         waits.append(timeout)
@@ -561,7 +567,8 @@ def _drive_poll_loop(
             return r
 
         fetcher._stop_event.wait = _capped_wait  # type: ignore[assignment]
-        fetcher._poll_loop(on_update=lambda c: None)
+        _on_update = on_update if on_update is not None else (lambda c: None)
+        fetcher._poll_loop(on_update=_on_update, on_restart=on_restart)
     finally:
         remote_module.random.uniform = real_uniform
 
@@ -645,3 +652,196 @@ def test_poll_loop_backs_off_on_transport_error() -> None:
     assert backoff_waits[0] == pytest.approx(1.0, abs=0.01)
     assert backoff_waits[1] == pytest.approx(2.0, abs=0.01)
     assert backoff_waits[2] == pytest.approx(4.0, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Restart-trigger flag delivery (server -> node)
+# ---------------------------------------------------------------------------
+
+def _server_payload_with_restart(
+    version: int = 1, restart_requested: bool = False,
+) -> dict:
+    """A 200 response that may include the restart_requested flag."""
+    return {
+        "status": "ok",
+        "node_id": _NODE_ID,
+        "config_version": version,
+        "config": _NODE_CONFIG_DICT,
+        "restart_requested": restart_requested,
+    }
+
+
+def test_fetch_poll_passes_restart_flag_through(httpx_mock) -> None:
+    """``restart_requested: true`` in the response surfaces in the tuple."""
+    httpx_mock.add_response(
+        json=_server_payload_with_restart(version=2, restart_requested=True),
+        status_code=200,
+    )
+    fetcher = _make_fetcher()
+    cfg, restart = fetcher._fetch_poll(wait_s=10)
+    assert isinstance(cfg, NodeConfig)
+    assert restart is True
+
+
+def test_fetch_poll_restart_flag_default_false(httpx_mock) -> None:
+    """Server responses without the field default to restart=False (no harm)."""
+    httpx_mock.add_response(json=_server_payload(version=2), status_code=200)
+    fetcher = _make_fetcher()
+    cfg, restart = fetcher._fetch_poll(wait_s=10)
+    assert isinstance(cfg, NodeConfig)
+    assert restart is False
+
+
+def test_fetch_poll_restart_without_config_change(httpx_mock) -> None:
+    """Restart can be delivered alongside an unchanged config_version."""
+    httpx_mock.add_response(
+        json=_server_payload_with_restart(version=0, restart_requested=True),
+        status_code=200,
+    )
+    fetcher = _make_fetcher()
+    assert fetcher._current_version == 0
+    cfg, restart = fetcher._fetch_poll(wait_s=10)
+    assert cfg is None  # version didn't advance
+    assert restart is True  # but restart still flagged
+
+
+def test_fetch_poll_restart_false_on_304(httpx_mock) -> None:
+    """A 304 carries no body, so restart is implicitly False."""
+    httpx_mock.add_response(status_code=304)
+    cfg, restart = _make_fetcher()._fetch_poll(wait_s=10)
+    assert cfg is None and restart is False
+
+
+def test_poll_loop_invokes_on_restart_callback() -> None:
+    """When _fetch_poll returns ``(_, True)`` the loop fires on_restart."""
+    fetcher = _make_fetcher()
+    restart_calls = []
+    outcomes = [
+        None,                 # one normal poll
+        (None, True),         # restart-only response
+    ]
+    _drive_poll_loop(
+        fetcher, outcomes,
+        on_restart=lambda: restart_calls.append("fired"),
+    )
+    assert restart_calls == ["fired"], restart_calls
+
+
+def test_poll_loop_dispatches_update_before_restart_in_combined_response() -> None:
+    """A poll that delivers BOTH a config update AND a restart flag must
+    apply the config first, then trigger restart -- so a "switch frequency
+    and restart" gesture can ship the new config alongside the restart
+    instruction in one round trip."""
+    fetcher = _make_fetcher()
+    cfg_for_loop = NodeConfig.model_validate(
+        {**_NODE_CONFIG_DICT, "node_id": _NODE_ID}
+    )
+    sequence: list[str] = []
+    outcomes = [
+        (cfg_for_loop, True),   # combined: config update + restart
+    ]
+    _drive_poll_loop(
+        fetcher, outcomes,
+        on_update=lambda c: sequence.append("update"),
+        on_restart=lambda: sequence.append("restart"),
+    )
+    assert sequence == ["update", "restart"]
+
+
+def test_poll_loop_no_restart_callback_logs_error_does_not_crash(caplog) -> None:
+    """If the server requests a restart but no callback was registered, the
+    loop must log a clear ERROR and continue polling rather than crashing."""
+    import logging as _logging
+
+    fetcher = _make_fetcher()
+    outcomes = [
+        (None, True),         # restart with no callback
+        None,                 # subsequent normal poll proves loop survives
+    ]
+    with caplog.at_level(_logging.ERROR, logger="beagle_node.config.remote"):
+        _drive_poll_loop(fetcher, outcomes, on_restart=None)
+    assert any(
+        "no on_restart callback" in rec.message
+        for rec in caplog.records
+    ), [r.message for r in caplog.records]
+
+
+def test_poll_loop_swallows_on_restart_exception_and_continues(caplog) -> None:
+    """If the restart callback itself raises, the loop logs and continues
+    polling.  (In production on_restart is os._exit(75) which never returns,
+    but defensive logging matters for tests / future callbacks.)"""
+    import logging as _logging
+
+    fetcher = _make_fetcher()
+
+    def _raising_restart() -> None:
+        raise RuntimeError("simulated boom")
+
+    outcomes = [(None, True), None]
+    with caplog.at_level(_logging.ERROR, logger="beagle_node.config.remote"):
+        _drive_poll_loop(fetcher, outcomes, on_restart=_raising_restart)
+    assert any(
+        "on_restart callback raised" in rec.message
+        for rec in caplog.records
+    ), [r.message for r in caplog.records]
+
+
+# ---------------------------------------------------------------------------
+# Uptime provider hook (heartbeat enrichment)
+# ---------------------------------------------------------------------------
+
+def test_get_heartbeat_data_no_provider_yields_no_uptime() -> None:
+    """Without a registered uptime_provider, ``uptime_s`` is absent.
+
+    Older bootstrap-mode nodes that don't register the provider must
+    continue to work; the server tolerates missing uptime_s.
+    """
+    fetcher = _make_fetcher()
+    fetcher.set_heartbeat_data({"sdr_mode": "freq_hop"})
+    data = fetcher._get_heartbeat_data()
+    assert "uptime_s" not in data
+    assert data == {"sdr_mode": "freq_hop"}
+
+
+def test_get_heartbeat_data_includes_uptime_from_provider() -> None:
+    """A registered provider stamps ``uptime_s`` (rounded to 1 decimal)."""
+    fetcher = _make_fetcher()
+    fetcher.set_heartbeat_data({"sdr_mode": "freq_hop"})
+    fetcher.set_uptime_provider(lambda: 42.789)
+    data = fetcher._get_heartbeat_data()
+    assert data["uptime_s"] == 42.8
+    assert data["sdr_mode"] == "freq_hop"
+
+
+def test_get_heartbeat_data_uptime_provider_can_be_unset() -> None:
+    """Passing None to set_uptime_provider clears it (regression-proof in
+    case a future deploy needs to disable the field)."""
+    fetcher = _make_fetcher()
+    fetcher.set_uptime_provider(lambda: 10.0)
+    fetcher.set_heartbeat_data({})
+    assert fetcher._get_heartbeat_data().get("uptime_s") == 10.0
+    fetcher.set_uptime_provider(None)
+    assert "uptime_s" not in fetcher._get_heartbeat_data()
+
+
+def test_get_heartbeat_data_provider_exception_logged_not_raised(caplog) -> None:
+    """If the uptime provider raises, the heartbeat is sent without
+    uptime_s rather than the entire poll failing.  Defence in depth: the
+    health module is unlikely to raise but the failure mode of dropping
+    one optional field is much better than blocking the poll."""
+    import logging as _logging
+
+    fetcher = _make_fetcher()
+    fetcher.set_heartbeat_data({"sdr_mode": "freq_hop"})
+
+    def _boom() -> float:
+        raise RuntimeError("simulated boom")
+
+    fetcher.set_uptime_provider(_boom)
+    with caplog.at_level(_logging.WARNING, logger="beagle_node.config.remote"):
+        data = fetcher._get_heartbeat_data()
+    assert "uptime_s" not in data
+    assert data == {"sdr_mode": "freq_hop"}
+    assert any(
+        "uptime_provider raised" in rec.message for rec in caplog.records
+    )

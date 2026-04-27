@@ -3,7 +3,6 @@
 ## Contents
 
 **Outstanding**
-- [Remote node restart trigger](#remote-node-restart-trigger)
 - [SDR hang detection and auto-restart](#sdr-hang-detection-and-auto-restart)
 - [Onset xcorr: investigate alternative detection methods](#onset-xcorr-investigate-alternative-detection-methods)
 - [Refresh real-data test fixtures](#refresh-real-data-test-fixtures)
@@ -16,6 +15,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Remote node restart trigger (admin button + uptime confirmation)](#remote-node-restart-trigger-admin-button--uptime-confirmation)
 - [✓ Server: Audio-PHAT TDOA method (FM-demodulate + GCC-PHAT)](#server-audio-phat-tdoa-method-fm-demodulate--gcc-phat)
 - [✓ Node: target_channels hot-reload now actually retunes the SDR](#node-target_channels-hot-reload-now-actually-retunes-the-sdr)
 - [✓ Server: median calibration + per-pair outlier filter (heavy-tail robustness)](#server-median-calibration--per-pair-outlier-filter-heavy-tail-robustness)
@@ -65,24 +65,82 @@
 
 ---
 
-### Remote node restart trigger
+### ✓ Remote node restart trigger (admin button + uptime confirmation)
 
-Add a mechanism to remotely trigger a node restart from the server UI or API.
-When a node is running under systemd with `Restart=on-failure`, the server
-can signal it to exit with code 75 (EX_TEMPFAIL), causing systemd to restart
-it with the updated config.
+**Completed 2026-04-26 evening** in response to a real outage: kb7ryy (an
+external operator's node) was running an old build that stamped events
+with the wrong ``channel_frequency_hz`` after a hot-reload retune (the
+previous bug in this TODO).  Without a server-side restart button, the
+only way to recover was to coordinate with the operator over a side
+channel and ask them to ``systemctl restart`` manually.
 
-**Motivation:** Config changes that require a full restart (sync station
-coordinates, SDR hardware params, sample rate) cannot be hot-reloaded.
-Currently the only way to restart a remote node is SSH access or asking
-the operator to do it manually. A server-side "restart node" button would
-allow the admin to trigger a clean restart remotely.
+**What landed:**
 
-**Approach:** Add a `restart_requested` flag to the node's config response.
-The node's config poll thread checks this flag; when set, it logs a message
-and calls `sys.exit(75)`. The server UI gets a "Restart" button per node
-(with armed confirmation). The flag is cleared after one delivery so the
-node doesn't restart in a loop.
+- **DB**: ``nodes.restart_requested`` integer column (idempotent migration
+  in ``open_registry_db``).  Two helpers in ``db.py``:
+  ``request_node_restart(node_id) -> bool`` sets the flag;
+  ``consume_restart_flag(node_id) -> bool`` does an atomic read-and-clear.
+- **API**: ``POST /api/v1/nodes/{node_id}/restart`` (admin-required).
+  Sets the flag.  Logs an INFO line ``Remote restart requested for node X
+  by user Y from <ip>``.
+- **Long-poll**: ``/api/v1/nodes/{node_id}/config`` now wakes immediately
+  when ``restart_requested`` transitions to 1 (alongside the existing
+  config_version comparison), includes ``restart_requested: <bool>`` in
+  the response body, and atomically clears the flag on delivery.  Logs
+  ``Delivering restart instruction to node X`` when the flag is sent.
+- **Node**: ``RemoteConfigFetcher._fetch_poll`` now returns a
+  ``(NodeConfig | None, restart: bool)`` tuple.  ``_poll_loop`` accepts
+  an optional ``on_restart`` callback that fires AFTER any in-flight
+  config update.  ``main.run`` registers a callback that calls
+  ``os._exit(75)``; systemd's ``Restart=on-failure`` brings the service
+  back up on the latest deployed code.
+- **Heartbeat ``uptime_s``**: ``RemoteConfigFetcher`` gained
+  ``set_uptime_provider`` -- registered to ``health.uptime_s`` in
+  ``main.run`` so every poll's heartbeat body carries a fresh uptime.
+  Server stores it on ``app.state.heartbeats`` and surfaces through
+  ``GET /map/nodes`` so the GUI can render it.  Drops back to a small
+  number once the restarted node's first post-restart heartbeat arrives
+  (typically 5-10 s) -- visual confirmation that Restart actually
+  happened.
+- **Restart-detection log**: when a heartbeat reports ``uptime_s`` lower
+  than the previous heartbeat for the same node, the server logs
+  ``Node X restart detected (uptime A -> B, heartbeat gap G)``.  This
+  catches BOTH operator-triggered restarts AND unexpected ones (OOM,
+  SDR hang fix, manual SSH restart) the operator wouldn't otherwise
+  see in the journal without per-node grepping.
+- **GUI**: Restart button in the Node panel actions row, two-click
+  armed-confirm pattern matching Delete.  ``Up: 22h`` field added to
+  the node-meta line so uptime is visible at a glance.
+
+**Tests** (32 new):
+- ``tests/integration/test_node_restart_trigger.py`` (20 tests):
+  DB migration adds column with default 0; ``request_node_restart`` /
+  ``consume_restart_flag`` semantics including idempotence and per-node
+  isolation; admin-auth gating (401/403 for missing or node-secret auth,
+  404 for unknown node); long-poll delivers the flag exactly once;
+  long-poll wakes immediately on the restart-flag transition without a
+  config_version bump; per-node flag isolation; ``uptime_s`` round-trips
+  into ``/map/nodes``; both the trigger and the delivery log lines
+  appear; uptime drop logs ``restart detected`` only when a prior
+  heartbeat exists AND new uptime < prior uptime (not on first
+  heartbeat, not on monotonic growth).
+- ``tests/unit/test_remote_config.py`` (12 new): ``_fetch_poll`` returns
+  the ``(cfg, restart)`` tuple and parses the new field; restart
+  delivered without config change; restart=False on 304 / no-body;
+  ``_poll_loop`` invokes ``on_restart`` after ``on_update`` in a
+  combined response; missing callback logs ERROR but doesn't crash;
+  callback exception swallowed and logged; ``set_uptime_provider``
+  stamps ``uptime_s`` rounded to 1 dp; provider can be unset; provider
+  exception logged and uptime omitted (poll continues).
+
+**Deployment note:** to use the new feature, both the server AND the
+target nodes must be running this build.  Older nodes will silently
+ignore the flag in the response (the field is ignored by old fetchers).
+The ``uptime_s`` field is also gated by node version -- older nodes
+report ``None`` in /map/nodes, the GUI tolerates this and just omits
+the ``Up:`` field.
+
+801 tests pass (was 769; +32).
 
 ---
 

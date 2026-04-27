@@ -1060,6 +1060,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             "noise_floor_db": body.get("noise_floor_db"),
             "onset_threshold_db": body.get("onset_threshold_db"),
             "offset_threshold_db": body.get("offset_threshold_db"),
+            "uptime_s": body.get("uptime_s"),
             "received_at": time.time(),
             "ip": client_ip,
         }
@@ -1477,6 +1478,29 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 body = {}
             body_lat = body.get("latitude_deg")
             body_lon = body.get("longitude_deg")
+            # Restart detection: ``uptime_s`` is monotonically non-decreasing
+            # while a process is alive, so a drop in the value (or any
+            # non-trivial decrease relative to the previous heartbeat)
+            # implies the node service restarted between heartbeats.  Log
+            # an INFO line so the operator gets confirmation of expected
+            # restarts (Restart button) AND visibility into unexpected ones
+            # (systemd OOM-killing, panic-and-restart, manual SSH restart).
+            # Skipped on first heartbeat (no prior to compare against) and
+            # on heartbeats that don't carry uptime_s (older nodes).
+            prev_hb = request.app.state.heartbeats.get(node_id)
+            new_uptime = body.get("uptime_s")
+            if (
+                prev_hb is not None
+                and new_uptime is not None
+                and prev_hb.get("uptime_s") is not None
+                and new_uptime < prev_hb["uptime_s"]
+            ):
+                gap_s = time.time() - prev_hb["received_at"]
+                _logger.info(
+                    "Node %s restart detected (uptime %.1fs -> %.1fs, "
+                    "heartbeat gap %.1fs)",
+                    node_id, prev_hb["uptime_s"], new_uptime, gap_s,
+                )
             request.app.state.heartbeats[node_id] = {
                 "node_id": node_id,
                 "latitude_deg": body_lat,
@@ -1486,6 +1510,11 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 "noise_floor_db": body.get("noise_floor_db"),
                 "onset_threshold_db": body.get("onset_threshold_db"),
                 "offset_threshold_db": body.get("offset_threshold_db"),
+                # uptime_s lets the GUI confirm a remote-restart took
+                # effect (drops to a small value when the node restarts).
+                # Older nodes without this field send None; the UI must
+                # tolerate that.
+                "uptime_s": new_uptime,
                 "received_at": time.time(),
                 "ip": client_ip,
             }
@@ -1574,7 +1603,17 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     raise HTTPException(status_code=404,
                                         detail="Node not found")
 
-                if node["config_version"] > since_version or wait == 0:
+                # The long-poll wakes on EITHER a config-version advance OR
+                # a fresh restart request.  Without the restart-requested
+                # branch the operator's "Restart" click would only take
+                # effect on the next poll wakeup, which can be up to ~120 s
+                # away if the node just started a fresh long-poll.
+                restart_pending = bool(node.get("restart_requested", 0))
+                if (
+                    node["config_version"] > since_version
+                    or restart_pending
+                    or wait == 0
+                ):
                     config_obj = None
                     if node["config_json"]:
                         try:
@@ -1592,11 +1631,32 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                             config_obj, grp,
                         )
 
+                    # Atomically read+clear the restart flag.  Doing this
+                    # AFTER assembling the response (and only when the flag
+                    # was already set above) keeps the contract simple:
+                    # exactly one long-poll response carries
+                    # ``restart_requested: true`` per ``request_node_restart``
+                    # call.  If the response is lost in transit the restart
+                    # is effectively cancelled; the operator must re-issue.
+                    delivered_restart = False
+                    if restart_pending:
+                        delivered_restart = await db_module.consume_restart_flag(
+                            registry_db, node_id,
+                        )
+                        if delivered_restart:
+                            _logger.info(
+                                "Delivering restart instruction to node %s "
+                                "(config_version=%d, client=%s)",
+                                node_id, node["config_version"],
+                                client_ip or "?",
+                            )
+
                     return {
                         "node_id": node_id,
                         "config_version": node["config_version"],
                         "config": config_obj,
                         "status": "pending" if config_obj is None else "ok",
+                        "restart_requested": delivered_restart,
                     }
 
                 remaining = deadline - time.monotonic()
@@ -1605,6 +1665,46 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 await asyncio.sleep(min(1.0, remaining))
         except asyncio.CancelledError:
             return Response(status_code=503)
+
+    # -------------------------------------------------------------------
+    # POST /api/v1/nodes/{node_id}/restart  - request a remote node restart
+    # -------------------------------------------------------------------
+    @app.post("/api/v1/nodes/{node_id}/restart")
+    async def request_node_restart(
+        node_id: str,
+        request: Request,
+        registry_db: aiosqlite.Connection = Depends(get_registry_db),
+    ) -> dict[str, Any]:
+        """Set a one-shot ``restart_requested`` flag on the node.
+
+        Mechanism: the next config long-poll from this node returns
+        ``restart_requested: true`` in its response payload.  The flag is
+        atomically cleared on that delivery (``db.consume_restart_flag``)
+        so the node restarts exactly once per request.  The node's poll
+        thread responds to the flag by exiting with code 75; systemd's
+        ``Restart=on-failure`` brings the service back up on the latest
+        deployed code.
+
+        Confirmation: the operator can watch the node's ``uptime_s`` field
+        in the Node panel drop to a small value once the node's first
+        post-restart heartbeat arrives (typically within ~5-10s).
+
+        Auth: admin required.  Returns 404 if the node is not registered.
+        Logs an INFO line on the request and a separate INFO line in the
+        long-poll handler when the flag is actually delivered to the node,
+        so journalctl carries a clean audit trail of who triggered what
+        and when it landed.
+        """
+        admin = await auth_module.require_admin(request, registry_db)
+        ok = await db_module.request_node_restart(registry_db, node_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Node not found")
+        client_ip = request.client.host if request.client else "?"
+        _logger.info(
+            "Remote restart requested for node %s by user %s from %s",
+            node_id, admin.get("username", "?"), client_ip,
+        )
+        return {"node_id": node_id, "restart_requested": True}
 
     # -------------------------------------------------------------------
     # POST /api/v1/nodes/{node_id}/regen-secret  - regenerate node secret
@@ -2138,6 +2238,11 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             n["noise_floor_db"] = hb.get("noise_floor_db") if hb else None
             n["onset_threshold_db"] = hb.get("onset_threshold_db") if hb else None
             n["offset_threshold_db"] = hb.get("offset_threshold_db") if hb else None
+            # uptime_s lets the GUI confirm a remote-restart took effect:
+            # the value drops to a small number once the restarted node's
+            # first post-restart heartbeat arrives.  Nodes running older
+            # software may not include this field; UI falls back to "?".
+            n["uptime_s"] = hb.get("uptime_s") if hb else None
             n["config_reload"] = _config_status_summary(reload_status.get(n["node_id"]))
             seen_ids.add(n["node_id"])
             result.append(n)
@@ -2164,6 +2269,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 "noise_floor_db": hb.get("noise_floor_db") if hb else None,
                 "onset_threshold_db": hb.get("onset_threshold_db") if hb else None,
                 "offset_threshold_db": hb.get("offset_threshold_db") if hb else None,
+                "uptime_s": hb.get("uptime_s") if hb else None,
             })
             seen_ids.add(e["node_id"])
 
@@ -2189,6 +2295,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 "noise_floor_db": hb.get("noise_floor_db"),
                 "onset_threshold_db": hb.get("onset_threshold_db"),
                 "offset_threshold_db": hb.get("offset_threshold_db"),
+                "uptime_s": hb.get("uptime_s"),
             })
 
         result.sort(key=lambda n: n["node_id"])

@@ -107,6 +107,7 @@ class RemoteConfigFetcher:
         self._thread: threading.Thread | None = None
         self._heartbeat_lock = threading.Lock()
         self._heartbeat_data: dict[str, object] = {}
+        self._uptime_provider: Callable[[], float] | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -141,13 +142,26 @@ class RemoteConfigFetcher:
             "(manage_nodes.py set-config)."
         )
 
-    def start_poll(self, on_update: Callable[[NodeConfig], None]) -> None:
+    def start_poll(
+        self,
+        on_update: Callable[[NodeConfig], None],
+        on_restart: Callable[[], None] | None = None,
+    ) -> None:
         """
         Start a background thread that long-polls the server for config updates.
 
         When a new config version is available, ``on_update`` is called with
-        the new NodeConfig.  The callback runs in the background thread and
-        should be thread-safe.
+        the new NodeConfig.
+
+        When the server delivers ``restart_requested: true`` in a poll
+        response (set via ``POST /api/v1/nodes/{id}/restart``), ``on_restart``
+        is called with no arguments.  The typical implementation calls
+        ``os._exit(75)`` so systemd brings the service back up on the
+        latest deployed code.  ``on_restart`` is invoked AFTER ``on_update``
+        for the same response, so a config update + restart in the same
+        poll applies the new config briefly before the process exits.
+        Both callbacks run in the background poll thread and should be
+        thread-safe.
 
         Call stop() to terminate the thread.
         """
@@ -155,7 +169,7 @@ class RemoteConfigFetcher:
             return
         self._thread = threading.Thread(
             target=self._poll_loop,
-            args=(on_update,),
+            args=(on_update, on_restart),
             name="remote-config-poll",
             daemon=True,
         )
@@ -185,10 +199,39 @@ class RemoteConfigFetcher:
         with self._heartbeat_lock:
             self._heartbeat_data = dict(data)
 
+    def set_uptime_provider(
+        self, provider: Callable[[], float] | None,
+    ) -> None:
+        """Register a callable that returns the node's uptime in seconds.
+
+        The fetcher invokes ``provider()`` once per poll and stamps
+        ``uptime_s`` (rounded to 1 decimal) on the heartbeat body sent
+        with that poll.  This keeps uptime fresh across the long-poll
+        cycle (up to 120 s) without the main loop having to remember to
+        update it on every set_heartbeat_data call.
+
+        Pass ``None`` to disable uptime stamping.  The provider may be
+        invoked from the poll thread; ``health.HealthMonitor.uptime_s``
+        is a safe choice.
+        """
+        self._uptime_provider = provider
+
     def _get_heartbeat_data(self) -> dict[str, object]:
-        """Snapshot the current heartbeat payload (thread-safe read)."""
+        """Snapshot the current heartbeat payload (thread-safe read).
+
+        Stamps a fresh ``uptime_s`` from ``self._uptime_provider`` if one
+        is registered, so the server-side heartbeat record always reflects
+        the node's true age at the moment the poll was issued (rather
+        than the age at last ``set_heartbeat_data`` call).
+        """
         with self._heartbeat_lock:
-            return dict(self._heartbeat_data)
+            data = dict(self._heartbeat_data)
+        if self._uptime_provider is not None:
+            try:
+                data["uptime_s"] = round(self._uptime_provider(), 1)
+            except Exception as exc:
+                logger.warning("uptime_provider raised: %s", exc)
+        return data
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -248,7 +291,7 @@ class RemoteConfigFetcher:
                 f"Config received: {json.dumps(config_obj, indent=2)}"
             ) from exc
 
-    def _fetch_poll(self, wait_s: int) -> NodeConfig | None:
+    def _fetch_poll(self, wait_s: int) -> tuple[NodeConfig | None, bool]:
         """
         Long-poll POST /api/v1/nodes/{node_id}/config?wait=N&since_version=V.
 
@@ -256,10 +299,14 @@ class RemoteConfigFetcher:
         clock source, location, etc.) so the server receives both a config
         poll and a heartbeat in a single round trip.
 
-        Return values:
-          NodeConfig - the server returned a new config; caller should apply it
-          None       - normal "no change" response (HTTP 304 or 200 with the
-                       same version we already have); caller loops immediately
+        Return values: a 2-tuple ``(new_config, restart_requested)``:
+          new_config         - NodeConfig if the server returned a new
+                               config, otherwise None
+          restart_requested  - True if the server's response carried
+                               ``restart_requested: true`` (operator clicked
+                               the Restart button); always False on 304
+
+        A 304 / no-change response returns ``(None, False)``.
 
         Raises:
           httpx.TransportError - network problem; caller backs off
@@ -279,7 +326,7 @@ class RemoteConfigFetcher:
             raise
 
         if resp.status_code == 304:
-            return None  # no change within wait window
+            return None, False  # no change within wait window
 
         if 500 <= resp.status_code < 600:
             # Server-side problem (5xx) - probably uvicorn still starting
@@ -301,29 +348,39 @@ class RemoteConfigFetcher:
         except Exception as exc:
             raise _TransientPollError(f"unparseable JSON response: {exc}") from exc
 
+        # Restart instruction is parsed first and returned regardless of
+        # whether the same response carries a config update.  A True value
+        # is delivered exactly once per ``request_node_restart`` server-side
+        # call (see api.py: consume_restart_flag is invoked atomically).
+        restart_requested = bool(payload.get("restart_requested"))
+
         new_version = int(payload.get("config_version", 0))
         if new_version <= self._current_version:
-            return None
+            return None, restart_requested
 
         config_obj = payload.get("config")
         if not config_obj:
-            return None
+            return None, restart_requested
 
         try:
             config = NodeConfig.model_validate(config_obj)
         except Exception as exc:
             logger.error("Received invalid config from server: %s", exc)
-            return None
+            return None, restart_requested
 
         self._current_version = new_version
-        return config
+        return config, restart_requested
 
     # Backoff parameters (class-level so unit tests can monkeypatch).
     _BACKOFF_INITIAL_S: float = 1.0
     _BACKOFF_MAX_S: float = 120.0
     _BACKOFF_FACTOR: float = 2.0
 
-    def _poll_loop(self, on_update: Callable[[NodeConfig], None]) -> None:
+    def _poll_loop(
+        self,
+        on_update: Callable[[NodeConfig], None],
+        on_restart: Callable[[], None] | None = None,
+    ) -> None:
         """Background thread: long-poll for config changes.
 
         Backoff strategy:
@@ -345,7 +402,7 @@ class RemoteConfigFetcher:
             # Add +/-10% jitter to the long-poll wait so nodes desynchronize
             jittered_wait = int(wait_s * random.uniform(0.9, 1.1))
             try:
-                new_config = self._fetch_poll(jittered_wait)
+                new_config, restart_requested = self._fetch_poll(jittered_wait)
             except (httpx.TransportError, _TransientPollError) as exc:
                 # Symmetric +/-25% jitter centred on the current backoff so
                 # the mean delay matches the nominal exponential schedule.
@@ -391,6 +448,32 @@ class RemoteConfigFetcher:
                 except Exception as exc:
                     logger.error("Config update callback raised: %s", exc)
             # else: 304 / no change - loop immediately for next long-poll
+
+            # Restart instruction is dispatched AFTER any in-flight config
+            # update, so a config-edit-and-restart issued in the same poll
+            # response applies the new config briefly before the process
+            # exits.  Typical on_restart implementation is os._exit(75);
+            # if we return from on_restart without exiting, fall through
+            # to the next loop iteration so the node keeps polling.
+            if restart_requested:
+                logger.warning(
+                    "Server requested node restart; invoking on_restart "
+                    "callback (process expected to exit).",
+                )
+                if on_restart is not None:
+                    try:
+                        on_restart()
+                    except Exception as exc:
+                        logger.error(
+                            "on_restart callback raised: %s", exc,
+                        )
+                else:
+                    logger.error(
+                        "Server requested restart but no on_restart "
+                        "callback was registered; ignoring.  This is a "
+                        "deployment bug -- the node will not restart "
+                        "until manually intervened.",
+                    )
 
     def _save_cache(self, config: NodeConfig) -> None:
         """Write the config to the on-disk cache file."""

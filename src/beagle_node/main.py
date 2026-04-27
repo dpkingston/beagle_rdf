@@ -220,10 +220,18 @@ def run(args: argparse.Namespace | None = None) -> int:
         "software_version": _node_version,
     }
     if _remote_fetcher is not None:
+        # Register the uptime provider so every poll's heartbeat body
+        # carries a fresh ``uptime_s`` value -- the server surfaces this
+        # in the Node panel so the operator can verify a remote-restart
+        # actually took effect (uptime drops back to a small value).
+        _remote_fetcher.set_uptime_provider(health.uptime_s)
         # Seed the fetcher so the first config poll carries location/mode
         _remote_fetcher.set_heartbeat_data(_heartbeat_payload)
     else:
-        # Classic mode: send initial heartbeat via reporter
+        # Classic mode: send initial heartbeat via reporter.  Uptime is
+        # included statically here (~0 s at startup) since the classic
+        # heartbeat path is not refreshed on a poll cadence.
+        _heartbeat_payload["uptime_s"] = round(health.uptime_s(), 1)
         reporter.post_heartbeat(_heartbeat_payload)
 
     # In bootstrap mode, start background config poll after reporter is up.
@@ -507,8 +515,13 @@ def run(args: argparse.Namespace | None = None) -> int:
             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
             if _remote_fetcher is not None:
+                # uptime_s is stamped fresh by the fetcher's uptime_provider
+                # hook on every poll; no need to write it into the dict here.
                 _remote_fetcher.set_heartbeat_data(_heartbeat_payload)
             else:
+                # Classic mode: the post_heartbeat path doesn't have a
+                # per-poll refresh hook, so stamp uptime here on every send.
+                _heartbeat_payload["uptime_s"] = round(health.uptime_s(), 1)
                 reporter.post_heartbeat(_heartbeat_payload)
 
             # --- Trigger restart if needed ---
@@ -572,7 +585,25 @@ def run(args: argparse.Namespace | None = None) -> int:
     # so the ``_on_config_update`` callback (defined above) can safely
     # reference it for runtime SDR retunes.
     if _remote_fetcher is not None:
-        _remote_fetcher.start_poll(_on_config_update)
+        def _on_restart_request() -> None:
+            """Server requested a restart -- exit so systemd brings us back.
+
+            Called from the remote-config poll thread when the server's
+            response includes ``restart_requested: true``.  We exit with
+            EX_TEMPFAIL (75); systemd's ``Restart=on-failure`` will spawn
+            a fresh process on the latest deployed code with the latest
+            config.  ``os._exit`` (rather than ``sys.exit``) is required
+            because ``sys.exit`` only raises SystemExit in the calling
+            thread, which would not actually terminate the SDR loop
+            running in the main thread.
+            """
+            logger.warning(
+                "Remote restart trigger received; exiting with code 75 "
+                "for systemd restart.",
+            )
+            os._exit(75)
+
+        _remote_fetcher.start_poll(_on_config_update, _on_restart_request)
 
     # ------------------------------------------------------------------
     # Pipeline
@@ -848,8 +879,11 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
                             if _remote_fetcher is not None:
+                                # uptime_s stamped fresh by fetcher's
+                                # uptime_provider hook on each poll.
                                 _remote_fetcher.set_heartbeat_data(_heartbeat_payload)
                             else:
+                                _heartbeat_payload["uptime_s"] = round(health.uptime_s(), 1)
                                 reporter.post_heartbeat(_heartbeat_payload)
                             _last_heartbeat = now
                             gc.collect(0)
@@ -891,8 +925,11 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
                             if _remote_fetcher is not None:
+                                # uptime_s stamped fresh by fetcher's
+                                # uptime_provider hook on each poll.
                                 _remote_fetcher.set_heartbeat_data(_heartbeat_payload)
                             else:
+                                _heartbeat_payload["uptime_s"] = round(health.uptime_s(), 1)
                                 reporter.post_heartbeat(_heartbeat_payload)
                             _last_heartbeat = now
                             # Proactively collect gen-0 cycles every heartbeat
@@ -934,8 +971,11 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
                             if _remote_fetcher is not None:
+                                # uptime_s stamped fresh by fetcher's
+                                # uptime_provider hook on each poll.
                                 _remote_fetcher.set_heartbeat_data(_heartbeat_payload)
                             else:
+                                _heartbeat_payload["uptime_s"] = round(health.uptime_s(), 1)
                                 reporter.post_heartbeat(_heartbeat_payload)
                             _last_heartbeat = now
                         health.update(

@@ -132,6 +132,19 @@ class HealthState:
             if sync_corr_peak is not None:
                 self.sync_corr_peak = sync_corr_peak
 
+    def uptime_s(self) -> float:
+        """Return seconds since this HealthMonitor was constructed.
+
+        Lightweight accessor for callers (e.g. the heartbeat assembler in
+        ``main.py``) that need only uptime, not the full snapshot.  Uses
+        ``time.monotonic()`` so the reading is unaffected by wall-clock
+        adjustments.  Returns a float (not rounded) so the caller can
+        choose its own precision.
+        """
+        # No lock needed: start_time is set once at __init__ and never
+        # mutated.  time.monotonic() is itself thread-safe.
+        return time.monotonic() - self.start_time
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             now = time.monotonic()

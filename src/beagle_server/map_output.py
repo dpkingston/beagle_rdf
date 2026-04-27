@@ -692,6 +692,17 @@ function fmtAge(sec) {
     return (Math.round(sec / 360) / 10) + 'h ago';
 }
 
+/* Duration formatter for elapsed-since-event displays (e.g. node uptime).
+   Differs from fmtAge in that it does NOT append "ago" -- the caller
+   labels the field (e.g. "Uptime: 22.0h").                              */
+function fmtDuration(sec) {
+    if (sec == null || isNaN(sec)) return '?';
+    if (sec < 60)    return Math.round(sec) + 's';
+    if (sec < 3600)  return Math.round(sec / 60) + 'm';
+    if (sec < 86400) return (Math.round(sec / 360) / 10) + 'h';
+    return (Math.round(sec / 8640) / 10) + 'd';
+}
+
 function setLive(text, bg) {
     var el = document.getElementById('tdoa-live');
     if (el) { el.textContent = text; el.style.background = bg; }
@@ -1520,6 +1531,13 @@ function renderNodes(nodes) {
         if (grpTag) html += grpTag;
         html += '<br>Last: ' + _esc(age);
         if (n.last_ip) { html += ' &bull; ' + _esc(n.last_ip); }
+        /* Uptime: how long the node process has been running.  Drops to
+           a small value after a remote-restart, providing visual
+           confirmation that a Restart click took effect.  Older nodes
+           that don't yet send uptime_s show nothing. */
+        if (n.uptime_s != null) {
+            html += ' &bull; Up: ' + _esc(fmtDuration(n.uptime_s));
+        }
         if (n.software_version) { html += '<br><span style="color:#5a8abf">v' + _esc(n.software_version) + '</span>'; }
         html += '</div>';
         /* Config-file reload status badge -- only shown for nodes whose
@@ -1557,6 +1575,10 @@ function renderNodes(nodes) {
             html += '<button class="tdoa-btn-sm ' + togCls + '"'
                   + ' onclick="window._tdoaToggle(this,&apos;' + nid + '&apos;,' + togEnable + ')">'
                   + togLabel + '</button>';
+            html += '<button class="tdoa-btn-sm toff" data-armed="0"'
+                  + ' onclick="window._tdoaRestart(this,&apos;' + nid + '&apos;)"'
+                  + ' title="Trigger a remote restart of the node service">'
+                  + 'Restart</button>';
             html += '<button class="tdoa-btn-sm toff" data-armed="0"'
                   + ' onclick="window._tdoaRegenSecret(this,&apos;' + nid + '&apos;)">'
                   + 'Regen Secret</button>';
@@ -1616,6 +1638,58 @@ window._tdoaDelete = function (btn, nodeId) {
         console.error('[Beagle] delete error:', e);
         btn.disabled = false;
         _nodeEditing = false;
+    });
+};
+
+/* POST /api/v1/nodes/{id}/restart -- request a remote restart.
+
+   Two-click armed confirmation pattern matching Delete.  After the second
+   click, sets the restart_requested flag in the registry; the next config
+   poll from the node returns the flag, the node calls os._exit(75), and
+   systemd brings it back up on the latest deployed code.
+
+   Visual confirmation arrives ~5-10 seconds later as the node's uptime_s
+   in the node card drops back to a small value.                          */
+window._tdoaRestart = function (btn, nodeId) {
+    if (btn.getAttribute('data-armed') !== '1') {
+        btn.setAttribute('data-armed', '1');
+        btn.textContent = 'Sure?';
+        _nodeEditing = true;
+        setTimeout(function () {
+            if (btn.getAttribute('data-armed') === '1') {
+                btn.setAttribute('data-armed', '0');
+                btn.textContent = 'Restart';
+                _nodeEditing = false;
+            }
+        }, 10000);
+        return;
+    }
+    btn.setAttribute('data-armed', '0');
+    btn.disabled = true;
+    btn.textContent = 'Sent';
+    _fetch(_u('/api/v1/nodes/' + encodeURIComponent(nodeId) + '/restart'), {
+        method: 'POST',
+        headers: _hdr()
+    })
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function () {
+        _nodeEditing = false;
+        /* Reload nodes a few seconds later so the operator sees the
+           uptime_s drop after the node restarts.  loadNodes() runs on
+           its own schedule too, but a nudge makes the confirmation
+           feel immediate.                                              */
+        setTimeout(loadNodes, 5000);
+        setTimeout(function () {
+            btn.disabled = false;
+            btn.textContent = 'Restart';
+        }, 8000);
+    })
+    .catch(function (e) {
+        console.error('[Beagle] restart error:', e);
+        btn.disabled = false;
+        btn.textContent = 'Restart';
+        _nodeEditing = false;
+        alert('Restart request failed: ' + e.message);
     });
 };
 
