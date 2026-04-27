@@ -307,6 +307,35 @@ class SolverConfig(BaseModel):
     Residual threshold (ns) for the seed-stuck suppression.  See
     ``seed_stuck_distance_m``.  Set to 0 to disable.
     """
+    node_stuck_distance_m: float = 50.0
+    """
+    Suppress fixes whose converged position lies within this many metres of
+    any participating node's coordinates AND whose residual exceeds
+    ``node_stuck_residual_ns``.  Catches the cost-surface-minimum-at-a-node
+    failure mode where biased pair TDOAs (e.g. calibration applied across
+    target bearings, or sync-period disambiguation outliers) find a
+    self-consistent unphysical solution at a node, where dist(fix, node) = 0
+    causes one term in the cost function to collapse to a constant that
+    can absorb the bias.
+
+    Manifestation (2026-04-27 Capitol Hill 2 corpus): 8 plateau fixes pinned
+    to dpk-tdoa1's exact coordinates with 35 microsecond residuals when
+    Magnolia-fitted calibration was applied to a different-bearing
+    transmitter.  Same shape as the cluster-#1 search-center attractor
+    that ``seed_stuck`` catches, but at a different attractor (a node
+    coordinate rather than a multistart seed).
+
+    A real transmitter near a node is allowed through by the residual
+    gate -- legitimate fixes have residual ~tens of ns; node-attractor
+    fixes carry hundreds to thousands of ns.
+
+    Set to 0 to disable.
+    """
+    node_stuck_residual_ns: float = 500.0
+    """
+    Residual threshold (ns) for the node-stuck suppression.  See
+    ``node_stuck_distance_m``.  Set to 0 to disable.
+    """
 
 
 class MapConfig(BaseModel):

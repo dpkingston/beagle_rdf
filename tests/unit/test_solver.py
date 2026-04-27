@@ -504,12 +504,13 @@ def test_multistart_ambiguity_disabled_when_threshold_zero():
 # ``seed_stuck_distance_m`` of a multistart seed AND has a residual above
 # ``seed_stuck_residual_ns``.
 
-def test_run_optimizer_emits_seed_distance_metric():
-    """``_run_optimizer`` returns a sixth value: smallest distance from the
-    converged best to any multistart seed.  Used by the seed_stuck check."""
+def test_run_optimizer_emits_seed_and_node_distance_metrics():
+    """``_run_optimizer`` returns sixth and seventh values: smallest
+    distance from the converged best to any multistart seed (used by
+    seed_stuck) and to any participating node coordinate (used by
+    node_stuck)."""
     from beagle_server.solver import _run_optimizer
     events = make_synthetic_events()
-    # Build a 3-node pair list directly, bypassing compute_tdoa_s.
     pairs: list[tuple[int, int, float]] = []
     for i in range(3):
         for j in range(i + 1, 3):
@@ -520,13 +521,18 @@ def test_run_optimizer_emits_seed_distance_metric():
             pairs.append((i, j, t_i - t_j))
     out = _run_optimizer(pairs, events, TARGET_LAT, TARGET_LON, 50.0)
     # Tuple of (lat, lon, rms_ns, multistart_disagreement_km,
-    # boundary_distance_km, seed_distance_m)
-    assert len(out) == 6
+    # boundary_distance_km, seed_distance_m, node_distance_m)
+    assert len(out) == 7
     seed_distance_m = out[5]
+    node_distance_m = out[6]
     assert seed_distance_m >= 0.0
+    assert node_distance_m >= 0.0
     # With seeds centered ON the target, the converged fix should be
     # within metres of the seed (the synthetic geometry is exact).
     assert seed_distance_m < 1000.0
+    # The synthetic target is several km from any node, so node_distance_m
+    # should be on the order of km.
+    assert node_distance_m > 1000.0
 
 
 def test_solve_fix_populates_seed_distance_m_field():
@@ -594,7 +600,11 @@ def test_seed_stuck_suppression_fires_for_stuck_optimizer(monkeypatch):
         # 2 m from the seed (well below default 50 m threshold), 6,500 ns
         # residual (well above default 500 ns threshold) -- mirrors the
         # 2026-04-27 cluster-#1 production observation.
-        return slat, slon, 6500.0, 0.0, 50.0, 2.0
+        # Tuple shape: (lat, lon, rms_ns, multistart_disagreement_km,
+        # boundary_distance_km, seed_distance_m, node_distance_m).
+        # 2 m from seed (triggers seed_stuck), 100 km from any node
+        # (does not trigger node_stuck).
+        return slat, slon, 6500.0, 0.0, 50.0, 2.0, 100_000.0
 
     monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
     events = make_synthetic_events()
@@ -615,7 +625,10 @@ def test_seed_stuck_suppression_does_not_fire_for_clean_fix_near_seed(monkeypatc
 
     def fake_optimizer(pairs, node_events, slat, slon, srad):
         # 5 m from seed, but residual is 12 ns (clean fit) -- no suppression.
-        return slat, slon, 12.0, 0.0, 50.0, 5.0
+        # 5 m from seed but residual is 12 ns (clean fit) -- no
+        # suppression on either seed_stuck or node_stuck.  Far from any
+        # node coordinate.
+        return slat, slon, 12.0, 0.0, 50.0, 5.0, 100_000.0
 
     monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
     events = make_synthetic_events()
@@ -633,7 +646,11 @@ def test_seed_stuck_disabled_when_distance_zero(monkeypatch):
 
     def fake_optimizer(pairs, node_events, slat, slon, srad):
         # Would trigger seed_stuck under default thresholds (2 m, 6500 ns).
-        return slat, slon, 6500.0, 0.0, 50.0, 2.0
+        # Tuple shape: (lat, lon, rms_ns, multistart_disagreement_km,
+        # boundary_distance_km, seed_distance_m, node_distance_m).
+        # 2 m from seed (triggers seed_stuck), 100 km from any node
+        # (does not trigger node_stuck).
+        return slat, slon, 6500.0, 0.0, 50.0, 2.0, 100_000.0
 
     monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
     events = make_synthetic_events()
@@ -651,7 +668,11 @@ def test_seed_stuck_disabled_when_residual_threshold_zero(monkeypatch):
     import beagle_server.solver as solver_mod
 
     def fake_optimizer(pairs, node_events, slat, slon, srad):
-        return slat, slon, 6500.0, 0.0, 50.0, 2.0
+        # Tuple shape: (lat, lon, rms_ns, multistart_disagreement_km,
+        # boundary_distance_km, seed_distance_m, node_distance_m).
+        # 2 m from seed (triggers seed_stuck), 100 km from any node
+        # (does not trigger node_stuck).
+        return slat, slon, 6500.0, 0.0, 50.0, 2.0, 100_000.0
 
     monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
     events = make_synthetic_events()
@@ -662,6 +683,142 @@ def test_seed_stuck_disabled_when_residual_threshold_zero(monkeypatch):
     assert result is not None
     if result.suppressed:
         assert result.suppression_reason != "seed_stuck"
+
+
+# ---------------------------------------------------------------------------
+# node_stuck suppression (2026-04-27 Capitol-Hill-2 cross-target regression)
+# ---------------------------------------------------------------------------
+#
+# Verified failure mode: 8 plateau fixes from a Capitol Hill 2 transmission
+# (with Magnolia-fitted calibration) pinned to dpk-tdoa1's exact coords
+# (47.67193, -122.40421) with 35 microsecond residuals.  Biased pair TDOAs
+# found a self-consistent unphysical minimum at a node attractor where one
+# pair's geometric prediction degenerates to a constant (dist(fix, node) = 0
+# for one term, so that term becomes -dist(fix, other)/c regardless of bias).
+#
+# Same shape as seed_stuck (cost-surface minimum at a fixed attractor; high
+# residual indicates the fix is trustworthy in that minimum but the minimum
+# itself is wrong) -- different attractor (a node coordinate rather than a
+# multistart seed).
+
+def test_solve_fix_populates_node_distance_m_field():
+    """FixResult.node_distance_m is populated on every return path."""
+    events = make_synthetic_events()
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    assert result is not None
+    assert result.node_distance_m is not None
+    assert result.node_distance_m >= 0.0
+
+
+def test_node_stuck_suppression_fires_for_fix_at_node_coords(monkeypatch):
+    """When ``_run_optimizer`` reports tiny node_distance and large rms_ns,
+    ``solve_fix`` must mark the fix suppressed with reason ``node_stuck``.
+    """
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        # Far from seeds (no seed_stuck), 5 m from a node, 35 microsecond
+        # residual -- mirrors the Capitol Hill 2 dpk-tdoa1 pile-up.
+        return (slat + 0.1, slon + 0.1, 35_000.0, 0.0, 50.0,
+                100_000.0, 5.0)
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    assert result is not None
+    assert result.suppressed
+    assert result.suppression_reason == "node_stuck"
+    assert result.node_distance_m == pytest.approx(5.0)
+    assert result.residual_ns == pytest.approx(35_000.0)
+
+
+def test_node_stuck_does_not_fire_for_clean_fix_near_node(monkeypatch):
+    """A legitimate clean fix that happens to be near a node (e.g.
+    transmitter physically close to one of the receivers) must NOT
+    trigger node_stuck.  The residual gate prevents false positives.
+    """
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        # 5 m from a node but residual 12 ns (clean fit) -- no
+        # suppression.  A real transmitter could plausibly be metres
+        # from a receiver.
+        return (slat + 0.1, slon + 0.1, 12.0, 0.0, 50.0,
+                100_000.0, 5.0)
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    assert result is not None
+    assert not (
+        result.suppressed and result.suppression_reason == "node_stuck"
+    ), (
+        f"Clean low-residual fix near node should not trigger node_stuck; "
+        f"got suppressed={result.suppressed} reason={result.suppression_reason}"
+    )
+
+
+def test_node_stuck_disabled_when_distance_zero(monkeypatch):
+    """node_stuck_distance_m=0 disables the node_stuck suppression check."""
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        # Would trigger node_stuck under defaults.
+        return (slat + 0.1, slon + 0.1, 35_000.0, 0.0, 50.0,
+                100_000.0, 5.0)
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(
+        events, 47.6, -122.3, search_radius_km=80.0,
+        node_stuck_distance_m=0.0,
+    )
+    assert result is not None
+    if result.suppressed:
+        assert result.suppression_reason != "node_stuck"
+
+
+def test_node_stuck_disabled_when_residual_threshold_zero(monkeypatch):
+    """node_stuck_residual_ns=0 disables the node_stuck suppression check."""
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        return (slat + 0.1, slon + 0.1, 35_000.0, 0.0, 50.0,
+                100_000.0, 5.0)
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(
+        events, 47.6, -122.3, search_radius_km=80.0,
+        node_stuck_residual_ns=0.0,
+    )
+    assert result is not None
+    if result.suppressed:
+        assert result.suppression_reason != "node_stuck"
+
+
+def test_seed_stuck_takes_priority_over_node_stuck(monkeypatch):
+    """When both seed_stuck and node_stuck would fire (rare -- a
+    multistart seed coincidentally near a node), seed_stuck wins.
+    Documents the priority order for callers parsing
+    ``suppression_reason``.
+    """
+    import beagle_server.solver as solver_mod
+
+    def fake_optimizer(pairs, node_events, slat, slon, srad):
+        # Both criteria met: 2 m from seed AND 5 m from a node.
+        return slat, slon, 6500.0, 0.0, 50.0, 2.0, 5.0
+
+    monkeypatch.setattr(solver_mod, "_run_optimizer", fake_optimizer)
+    events = make_synthetic_events()
+    result = solve_fix(events, 47.6, -122.3, search_radius_km=80.0)
+    assert result is not None
+    assert result.suppressed
+    # seed_stuck check runs first (elif chain order); both metrics are
+    # populated so callers can see the full picture.
+    assert result.suppression_reason == "seed_stuck"
+    assert result.seed_distance_m == pytest.approx(2.0)
+    assert result.node_distance_m == pytest.approx(5.0)
 
 
 # ---------------------------------------------------------------------------

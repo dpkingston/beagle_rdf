@@ -194,6 +194,13 @@ class FixResult:
     L-BFGS-B terminated at iteration 0 without taking a meaningful step
     (typically because the cost magnitude was too small for gtol/ftol to
     register a finite-difference gradient).  See seed_stuck suppression."""
+    node_distance_m: float | None = None
+    """Smallest great-circle distance (m) between the converged best
+    position and any participating node's coordinates.  Tiny values with
+    non-zero residual indicate the cost surface has a minimum at a node
+    attractor (where one pair's predicted TDOA collapses to a constant
+    because dist(fix, node) = 0, absorbing a biased measurement at the
+    cost of a physically wrong fix).  See node_stuck suppression."""
 
 
 def _predicted_tdoa_s(
@@ -212,12 +219,12 @@ def _run_optimizer(
     search_center_lat: float,
     search_center_lon: float,
     search_radius_km: float,
-) -> tuple[float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, float]:
     """
     Run the L-BFGS-B multi-start optimizer for the given TDOA pairs.
 
     Returns (fix_lat, fix_lon, rms_residual_ns, multistart_disagreement_km,
-    boundary_distance_km, seed_distance_m).
+    boundary_distance_km, seed_distance_m, node_distance_m).
 
     multistart_disagreement_km is the maximum great-circle distance between
     any two of the multi-start converged positions whose cost values are
@@ -237,6 +244,16 @@ def _run_optimizer(
     small for L-BFGS-B's gtol/ftol thresholds to register a meaningful
     gradient (verified failure mode for 2026-04-27 cluster-#1 fixes).
     Used by ``solve_fix`` for the ``seed_stuck`` suppression criterion.
+
+    node_distance_m is the smallest great-circle distance (m) between the
+    converged best position and any of the participating nodes' coordinates.
+    Small values with non-zero residual indicate the cost surface has a
+    minimum at a node (where one pair's predicted TDOA can absorb a wildly
+    biased measurement because the node-to-itself distance is 0).  Verified
+    failure mode for 2026-04-27 Capitol Hill 2 fixes with Magnolia-fitted
+    calibration: 8 plateau fixes pinned to dpk-tdoa1's exact coordinates
+    with 35 microsecond residuals.  Used by ``solve_fix`` for the
+    ``node_stuck`` suppression criterion.
     """
     def cost(xy: np.ndarray) -> float:
         # Squared residual is summed in nanoseconds^2, NOT seconds^2.  The
@@ -351,9 +368,24 @@ def _run_optimizer(
         for s in start_points
     )
 
+    # Smallest distance from the converged position to any participating
+    # node's coordinates.  Tiny values with non-zero residual indicate
+    # the cost surface has a minimum at a node attractor (the optimizer
+    # finds a point where one of the predicted TDOA terms simplifies
+    # because dist(fix, node)=0, which can absorb a biased measurement
+    # at the cost of an unphysical fix).  See node_stuck suppression in
+    # ``solve_fix``.
+    node_distance_m = min(
+        haversine_m(
+            fix_lat, fix_lon,
+            float(ev["node_lat"]), float(ev["node_lon"]),
+        )
+        for ev in node_events
+    )
+
     return (fix_lat, fix_lon, rms_ns,
             float(multistart_disagreement_km), float(boundary_distance_km),
-            float(seed_distance_m))
+            float(seed_distance_m), float(node_distance_m))
 
 
 def _pair_residuals_ns(
@@ -450,6 +482,8 @@ def solve_fix(
     pair_outlier_min_history: int = 20,
     seed_stuck_distance_m: float = 50.0,
     seed_stuck_residual_ns: float = 500.0,
+    node_stuck_distance_m: float = 50.0,
+    node_stuck_residual_ns: float = 500.0,
 ) -> FixResult | None:
     """
     Compute a transmitter fix from a list of events from the same transmission.
@@ -520,6 +554,27 @@ def solve_fix(
         the realistic best-case residual (~tens of ns for clean 4-node
         Audio-PHAT) and well below stuck-seed residuals (~thousands of
         ns).  0 disables.
+    node_stuck_distance_m :
+        If the converged position is within this many metres of any
+        participating node's coordinates AND the residual exceeds
+        ``node_stuck_residual_ns``, the result is marked ``suppressed``
+        with reason ``node_stuck``.  Catches the cost-surface-minimum-at-
+        a-node failure mode observed on the 2026-04-27 Capitol Hill 2
+        corpus, where 8 plateau fixes pinned to dpk-tdoa1's exact
+        coordinates with 35 microsecond residuals -- biased pair TDOAs
+        (Magnolia calibration applied to a bearing-different target)
+        produced a self-consistent cost minimum at a node, where one
+        pair's geometric prediction degenerates to a constant.
+
+        A real transmitter that happens to be near a node is allowed
+        through by the residual gate (legitimate fixes have residual on
+        the order of tens of ns; a node-attractor fix carries hundreds
+        to thousands of ns of unmodelled bias).  Set to 0 to disable.
+    node_stuck_residual_ns :
+        Residual threshold (ns) for the node-stuck suppression.  Same
+        rationale as ``seed_stuck_residual_ns``: well above realistic
+        best-case residuals and well below the bias-driven residuals
+        that mark a node-attractor fix.  Set to 0 to disable.
 
     Returns
     -------
@@ -612,7 +667,8 @@ def solve_fix(
         return None
 
     (fix_lat, fix_lon, rms_ns, multistart_disagreement_km_value,
-     boundary_distance_km_value, seed_distance_m_value) = _run_optimizer(
+     boundary_distance_km_value, seed_distance_m_value,
+     node_distance_m_value) = _run_optimizer(
         pairs, node_events, search_center_lat, search_center_lon, search_radius_km,
     )
 
@@ -638,7 +694,8 @@ def solve_fix(
         clean_node_idxs = {i for i, j, _ in clean_pairs} | {j for i, j, _ in clean_pairs}
         if len(clean_node_idxs) >= 2 and clean_pairs:
             (fix_lat, fix_lon, rms_ns, multistart_disagreement_km_value,
-             boundary_distance_km_value, seed_distance_m_value) = _run_optimizer(
+             boundary_distance_km_value, seed_distance_m_value,
+             node_distance_m_value) = _run_optimizer(
                 clean_pairs, node_events,
                 search_center_lat, search_center_lon, search_radius_km,
             )
@@ -710,6 +767,27 @@ def solve_fix(
             fix_lat, fix_lon,
             [nid for nid in node_ids if nid not in excluded_nodes],
         )
+    elif (
+        node_stuck_distance_m > 0.0
+        and node_stuck_residual_ns > 0.0
+        and node_distance_m_value < node_stuck_distance_m
+        and rms_ns > node_stuck_residual_ns
+    ):
+        suppressed = True
+        suppression_reason = "node_stuck"
+        logger.warning(
+            "Fix suppressed (node_stuck): converged %.0f m from a "
+            "participating node's coordinates (threshold %.0f m) with "
+            "residual %.0f ns (threshold %.0f ns); the cost surface has a "
+            "minimum at a node attractor, typically because biased pair "
+            "TDOAs find a self-consistent unphysical solution where "
+            "dist(fix, node) = 0 collapses one term.  best=(%.5f, %.5f) "
+            "nodes=%s",
+            node_distance_m_value, node_stuck_distance_m,
+            rms_ns, node_stuck_residual_ns,
+            fix_lat, fix_lon,
+            [nid for nid in node_ids if nid not in excluded_nodes],
+        )
 
     return FixResult(
         latitude_deg=fix_lat,
@@ -726,4 +804,5 @@ def solve_fix(
         boundary_distance_km=boundary_distance_km_value,
         multistart_disagreement_km=multistart_disagreement_km_value,
         seed_distance_m=seed_distance_m_value,
+        node_distance_m=node_distance_m_value,
     )

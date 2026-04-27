@@ -15,6 +15,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Solver: node_stuck suppression (node-attractor failure mode)](#solver-node_stuck-suppression-node-attractor-failure-mode)
 - [✓ Solver: ns² cost rescale + seed_stuck suppression (cluster-#1 hallucination fix)](#solver-ns-cost-rescale--seed_stuck-suppression-cluster-1-hallucination-fix)
 - [✓ Remote node restart trigger (admin button + uptime confirmation)](#remote-node-restart-trigger-admin-button--uptime-confirmation)
 - [✓ Server: Audio-PHAT TDOA method (FM-demodulate + GCC-PHAT)](#server-audio-phat-tdoa-method-fm-demodulate--gcc-phat)
@@ -63,6 +64,63 @@
 - [✓ Web Page Control - Dynamic Aging Window](#web-page-control-dynamic-aging-window)
 - [✓ Map Control Panel](#map-control-panel)
 - [✓ Fix Layer Ordering + Hyperbola Generator](#fix-layer-ordering-hyperbola-generator)
+
+---
+
+### ✓ Solver: node_stuck suppression (node-attractor failure mode)
+
+**Completed 2026-04-27** as a follow-up to the seed_stuck suppression.
+Verified failure mode on the 11:25 Capitol Hill 2 corpus (Magnolia-fitted
+calibration applied to a different-bearing target): 8 plateau fixes
+pinned to dpk-tdoa1's exact coordinates (47.67193, -122.40421) with
+~35 microsecond residuals.  The cost surface had a local minimum at the
+node because biased pair TDOAs (per-target bias drift) found a self-
+consistent unphysical solution where dist(fix, node) = 0 collapses one
+term in the cost function to a constant that absorbs the bias.
+
+Same shape as cluster-#1 / seed_stuck (cost-surface minimum at a fixed
+attractor with high residual) -- just at a different attractor (a
+participating node coordinate rather than a multistart seed).
+``boundary_clamp_km`` doesn't catch it because the node isn't on the
+search-area boundary.  ``seed_stuck`` doesn't catch it because the
+node isn't a multistart seed.
+
+Implementation:
+
+  - ``_run_optimizer`` now also returns ``node_distance_m`` -- smallest
+    great-circle distance from the converged best to any participating
+    node coordinate.  Seventh tuple element (after seed_distance_m).
+  - ``FixResult.node_distance_m`` populated on every return path.
+  - ``solve_fix`` gained ``node_stuck_distance_m`` (default 50 m) and
+    ``node_stuck_residual_ns`` (default 500 ns) parameters.  Suppression
+    fires when converged position is within ``node_stuck_distance_m`` of
+    any participating node AND residual exceeds ``node_stuck_residual_ns``.
+  - Priority order in the elif chain: boundary_clamped > multistart_ambiguous
+    > seed_stuck > node_stuck.  Documents the order via a test.
+  - Both knobs threaded through ``SolverConfig`` and the ``/api/v1/events``
+    solver call site (api.py).
+
+Tests (6 new in tests/unit/test_solver.py):
+
+  - ``_run_optimizer`` now returns the 7-tuple; updated existing test.
+  - ``test_solve_fix_populates_node_distance_m_field``.
+  - ``test_node_stuck_suppression_fires_for_fix_at_node_coords``: monkeypatch
+    _run_optimizer to return a stuck-at-node result; expect
+    ``suppression_reason='node_stuck'``.
+  - ``test_node_stuck_does_not_fire_for_clean_fix_near_node``: same
+    near-node convergence with low residual must NOT be suppressed
+    (a real transmitter could plausibly be metres from a receiver).
+  - ``test_node_stuck_disabled_when_distance_zero`` and
+    ``test_node_stuck_disabled_when_residual_threshold_zero``: kill-switch
+    knobs work.
+  - ``test_seed_stuck_takes_priority_over_node_stuck``: when both criteria
+    fire (rare -- a multistart seed coincidentally near a node), seed_stuck
+    wins.  Documents the priority order for callers.
+
+Existing seed_stuck monkeypatch tests updated to return the new 7-tuple
+shape from ``_run_optimizer`` mocks.
+
+814 tests pass (was 808; +6).
 
 ---
 
