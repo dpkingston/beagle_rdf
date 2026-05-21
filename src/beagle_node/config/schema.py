@@ -351,7 +351,47 @@ class CarrierDetectConfig(BaseModel):
     prominently in production logs.  Plateaus resume on the next idle ->
     active transition (i.e. after a normal offset/onset cycle).
 
+    With ``plateau_slow_interval_s`` enabled, you can often set this to
+    0 (no cap) because slow-mode already bounds long-active disk usage.
+
     0 = no cap (legacy behaviour; emit plateaus indefinitely while active).
+    """
+    plateau_burst_count: int = 0
+    """Number of plateau emissions to send at the fast cadence
+    (``plateau_event_interval_s``) before switching to the slow cadence
+    (``plateau_slow_interval_s``) for the remainder of the active period.
+
+    The initial burst gives the server-side coherent cross-correlator
+    enough samples per pair to converge quickly on a fix; the slow phase
+    keeps a lighter trickle of measurements flowing for long key-downs
+    without burning bandwidth or journal space.
+
+    0 (default) = disabled: stay at the fast cadence for the entire active
+    period (legacy behaviour).  Three-phase emission is enabled only when
+    both this value AND ``plateau_slow_interval_s`` are > 0.
+
+    Counter resets on every idle -> active transition; the next active
+    period starts fresh in the fast phase.
+    """
+    plateau_slow_interval_s: float = 0.0
+    """Slow-phase cadence (seconds) used after ``plateau_burst_count``
+    emissions in a single active period.
+
+    When > 0 and ``plateau_burst_count`` > 0, the emitter transitions
+    from the fast cadence to this slower one after ``plateau_burst_count``
+    emissions, and stays at the slow cadence until the next idle ->
+    active transition.
+
+    Phase-locked to the wall-clock grid (same mechanism as the fast
+    phase) so all nodes' slow-phase emissions remain time-aligned for
+    cross-correlation.
+
+    Recommended: 2.5 seconds (i.e. 2 emissions every 5 s) for steady-
+    state coverage of long transmissions.  Must be >= ``plateau_event_interval_s``
+    when both are non-zero (otherwise the "slow" phase would be faster
+    than the "fast" phase, which is almost certainly a config error).
+
+    0 (default) = disabled: legacy single-cadence behaviour.
     """
 
     @model_validator(mode="after")
@@ -370,6 +410,33 @@ class CarrierDetectConfig(BaseModel):
             raise ValueError(
                 f"carrier.auto_threshold_update_interval_s must be > 0, "
                 f"got {self.auto_threshold_update_interval_s}"
+            )
+        if self.plateau_burst_count < 0:
+            raise ValueError(
+                f"carrier.plateau_burst_count must be >= 0, "
+                f"got {self.plateau_burst_count}"
+            )
+        if self.plateau_slow_interval_s < 0.0:
+            raise ValueError(
+                f"carrier.plateau_slow_interval_s must be >= 0, "
+                f"got {self.plateau_slow_interval_s}"
+            )
+        # Both knobs must be set together to enable the three-phase emitter;
+        # if exactly one is set we have an ambiguous config -- accept it (it
+        # just behaves as fast-only) but flag with a clear validator so the
+        # operator gets a hint at config-load time rather than a silent no-op.
+        # The slow-interval >= fast-interval check fires only when both are
+        # active.
+        if (
+            self.plateau_burst_count > 0
+            and self.plateau_slow_interval_s > 0.0
+            and self.plateau_slow_interval_s < self.plateau_event_interval_s
+        ):
+            raise ValueError(
+                f"carrier.plateau_slow_interval_s ({self.plateau_slow_interval_s}) "
+                f"must be >= carrier.plateau_event_interval_s "
+                f"({self.plateau_event_interval_s}); the slow phase cannot "
+                f"be faster than the fast phase."
             )
         return self
 

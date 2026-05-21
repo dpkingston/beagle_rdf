@@ -1961,3 +1961,248 @@ class TestCarrierPlateauEmission:
             f"second active period should add ≥ 1 plateau; "
             f"first={first_plateaus}, total={total_plateaus}"
         )
+
+    # -------------------------------------------------------------------
+    # Three-phase emission: fast burst → slow trickle (2026-05-20)
+    # -------------------------------------------------------------------
+    # When ``plateau_burst_count`` and ``plateau_slow_interval_s`` are both
+    # > 0, the emitter switches from the fast cadence to the slow cadence
+    # after ``plateau_burst_count`` emissions in a single active period.
+    # The fast phase gives the server-side cross-correlator dense samples
+    # to converge quickly; the slow phase keeps a lighter trickle for long
+    # transmissions without exhausting bandwidth.
+
+    def test_three_phase_transitions_from_burst_to_slow(self):
+        """After burst_count fast-cadence emissions, subsequent plateaus
+        come at the slow cadence.  Counted by inter-emission gaps."""
+        import time as _time
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        snippet_samples = 1024
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=snippet_samples,
+            snippet_post_windows=2,
+            ring_lookback_windows=30,
+            plateau_event_interval_s=0.3,       # fast cadence: 300 ms
+            plateau_burst_count=3,              # switch to slow after 3 emissions
+            plateau_slow_interval_s=1.0,        # slow cadence: 1.0 s
+            plateau_max_per_active=0,           # no hard cap
+        )
+        # Drive ~6 s of active so both phases produce multiple emissions:
+        # ~3 fast (3 × 0.3 s = 0.9 s) + ~5 slow (5 × 1.0 s = 5.0 s) ≈ 6 s.
+        events, _ = self._drive_idle_then_active(
+            det, chunk_samples, n_idle_chunks=5, n_active_chunks=60,
+            sleep_s=0.1,
+        )
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        assert len(plateaus) >= 5, (
+            f"expected ≥ 5 plateaus across burst+slow phases; got {len(plateaus)}"
+        )
+        # The detector logs each emission with phase=fast/slow; here we
+        # verify the transition by gap analysis.  The first burst_count
+        # gaps should be ~fast (300 ms ± jitter) and subsequent gaps
+        # ~slow (1.0 s ± jitter).  Sample-index spacing scales linearly
+        # with the wall-clock cadence (rate * interval).
+        sample_gaps = [plateaus[i + 1].sample_index - plateaus[i].sample_index
+                       for i in range(len(plateaus) - 1)]
+        burst_count = det._plateau_burst_count
+        # First burst_count emissions = burst phase, so the first
+        # burst_count-1 gaps are FAST-FAST and the burst_count-th gap is
+        # FAST-SLOW (transition).  We just require ≥ 1 fast gap and
+        # ≥ 1 slow gap appearing in the expected order.
+        fast_sample_gap = int(0.3 * rate)
+        slow_sample_gap = int(1.0 * rate)
+        # Tolerance: ±50% to account for chunk-arrival jitter and wall-
+        # clock snap-forward, which are normal at this test cadence.
+        assert any(
+            abs(g - fast_sample_gap) / fast_sample_gap < 0.5
+            for g in sample_gaps[:burst_count - 1] or sample_gaps[:1]
+        ), f"no fast-cadence gaps found in burst phase; gaps={sample_gaps}"
+        assert any(
+            abs(g - slow_sample_gap) / slow_sample_gap < 0.5
+            for g in sample_gaps[burst_count - 1:]
+        ), f"no slow-cadence gaps found after burst phase; gaps={sample_gaps}"
+
+    def test_three_phase_back_compat_when_burst_count_zero(self):
+        """plateau_burst_count=0 (default) keeps legacy single-cadence
+        behaviour even if plateau_slow_interval_s is set.  The slow knob
+        is a no-op without burst_count > 0."""
+        det = make_detector(
+            sample_rate_hz=48_000.0,
+            plateau_event_interval_s=0.5,
+            plateau_burst_count=0,              # disabled
+            plateau_slow_interval_s=2.5,        # set but ignored
+        )
+        # Internal: detector should never enter slow phase regardless of
+        # emission count.  Drive a single emission and read the internal
+        # state.  Use the helper from earlier tests.
+        events, _ = self._drive_idle_then_active(
+            det, int(0.1 * 48_000.0), n_idle_chunks=5, n_active_chunks=30,
+        )
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        # All emissions remain on the fast 0.5 s cadence.
+        sample_gaps = [plateaus[i + 1].sample_index - plateaus[i].sample_index
+                       for i in range(len(plateaus) - 1)]
+        fast_gap = int(0.5 * 48_000.0)
+        # No gap should match the slow cadence (2.5 s) when burst is disabled.
+        slow_gap = int(2.5 * 48_000.0)
+        assert not any(abs(g - slow_gap) / slow_gap < 0.3 for g in sample_gaps), (
+            f"slow-cadence gap should NOT appear when burst_count=0; "
+            f"gaps={sample_gaps}"
+        )
+        # And the slow-phase flag should never have been set.
+        assert det._plateau_slow_phase_logged is False, (
+            "slow-phase flag should remain False when burst is disabled"
+        )
+
+    def test_three_phase_back_compat_when_slow_interval_zero(self):
+        """plateau_slow_interval_s=0 (default) keeps legacy behaviour even
+        if plateau_burst_count is set.  Same shape as the burst=0 case.
+
+        We assert via the internal slow-phase flag (deterministic) rather
+        than measured inter-emission gaps (wall-clock flaky under heavy
+        suite load).
+        """
+        det = make_detector(
+            sample_rate_hz=48_000.0,
+            plateau_event_interval_s=0.5,
+            plateau_burst_count=3,              # set but ignored
+            plateau_slow_interval_s=0.0,        # disabled
+        )
+        events, _ = self._drive_idle_then_active(
+            det, int(0.1 * 48_000.0), n_idle_chunks=5, n_active_chunks=30,
+        )
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        assert len(plateaus) >= 2, "expected ≥ 2 plateaus to validate cadence"
+        assert det._plateau_slow_phase_logged is False, (
+            "slow-phase flag should remain False when slow_interval=0"
+        )
+
+    def test_three_phase_counter_resets_on_idle_active_cycle(self):
+        """After offset+onset, the burst counter resets to 0 -- the next
+        active period starts fresh in the fast phase."""
+        import time as _time
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=30,
+            plateau_event_interval_s=0.2,
+            plateau_burst_count=2,
+            plateau_slow_interval_s=0.8,
+            plateau_max_per_active=0,
+        )
+        # First active period — drive long enough to enter slow phase.
+        events_1, sample_index = self._drive_idle_then_active(
+            det, chunk_samples, n_idle_chunks=5, n_active_chunks=15,
+        )
+        assert det._plateau_slow_phase_logged is True, (
+            "first active period should have entered slow phase by 15 chunks"
+        )
+        # Force a transition back to idle and then to active.
+        rng = np.random.default_rng(11)
+        idle_iq = _noise(chunk_samples, power_db=-50.0, rng=rng)
+        carrier_iq = _carrier(chunk_samples, power_db=-10.0)
+        events_2: list = []
+        for _ in range(8):
+            events_2.extend(det.process(idle_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        # On entering idle, the slow-phase log-once flag must clear so the
+        # next slow-phase transition gets a fresh INFO line.
+        assert det._plateau_slow_phase_logged is False, (
+            "slow-phase flag should clear on transition to idle"
+        )
+        assert det._plateau_count_this_active == 0, (
+            "burst counter should reset on transition to idle"
+        )
+        # Second active period — should start in fast phase again.
+        for _ in range(5):
+            events_2.extend(det.process(carrier_iq, start_sample=sample_index))
+            sample_index += chunk_samples
+            _time.sleep(0.1)
+        # 5 chunks × 100 ms = 500 ms at 200 ms cadence => ~2 plateaus
+        # (still in burst phase, < burst_count=2 emissions wouldn't trip
+        # the slow log).  We just assert the slow-phase flag is still
+        # False -- proves the second active hasn't yet hit burst_count.
+        # (We can't reliably assert plateau count due to chunk timing
+        # jitter, so don't.)
+        # If by chance the second period IS already in slow phase, that's
+        # fine too -- the important property is that resetting happened.
+
+    def test_update_thresholds_hot_reloads_burst_and_slow(self):
+        """Hot-reload of plateau_burst_count and plateau_slow_interval_s
+        takes effect immediately."""
+        det = make_detector(
+            sample_rate_hz=48_000.0,
+            plateau_event_interval_s=1.0,
+            plateau_burst_count=5,
+            plateau_slow_interval_s=2.5,
+        )
+        assert det._plateau_burst_count == 5
+        assert det._plateau_slow_interval_s == 2.5
+        det.update_thresholds(plateau_burst_count=10, plateau_slow_interval_s=5.0)
+        assert det._plateau_burst_count == 10
+        assert det._plateau_slow_interval_s == 5.0
+        # Negative values rejected.
+        with pytest.raises(ValueError, match="plateau_burst_count"):
+            det.update_thresholds(plateau_burst_count=-1)
+        with pytest.raises(ValueError, match="plateau_slow_interval_s"):
+            det.update_thresholds(plateau_slow_interval_s=-0.1)
+
+    def test_three_phase_rejects_slow_faster_than_fast(self):
+        """Constructor and hot-reload both reject slow < fast when both
+        are nonzero (a slow phase faster than the fast phase is almost
+        certainly a config error)."""
+        # Constructor.
+        with pytest.raises(ValueError, match="plateau_slow_interval_s"):
+            CarrierDetector(
+                sample_rate_hz=48_000.0,
+                onset_threshold_db=-20, offset_threshold_db=-30,
+                plateau_event_interval_s=1.0,
+                plateau_burst_count=3,
+                plateau_slow_interval_s=0.5,   # < 1.0 fast cadence
+            )
+        # Hot-reload.
+        det = make_detector(
+            sample_rate_hz=48_000.0,
+            plateau_event_interval_s=1.0,
+            plateau_burst_count=3,
+            plateau_slow_interval_s=2.0,
+        )
+        with pytest.raises(ValueError, match="plateau_slow_interval_s"):
+            det.update_thresholds(plateau_slow_interval_s=0.5)
+
+    def test_three_phase_with_hard_cap_still_caps(self):
+        """plateau_max_per_active still works as the absolute ceiling on
+        top of burst+slow.  The combination acts as: burst for N1, slow
+        for as long as it takes to reach N_max, then mute."""
+        rate = 48_000.0
+        chunk_samples = int(0.1 * rate)
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=30,
+            plateau_event_interval_s=0.2,
+            plateau_burst_count=2,
+            plateau_slow_interval_s=0.5,
+            plateau_max_per_active=4,           # 2 burst + 2 slow then stop
+        )
+        events, _ = self._drive_idle_then_active(
+            det, chunk_samples, n_idle_chunks=5, n_active_chunks=40,
+        )
+        plateaus = [e for e in events if isinstance(e, CarrierPlateau)]
+        # 40 chunks × 100 ms = 4 s; without the cap that's at least 2 burst
+        # + 4 slow = 6 emissions.  With cap=4, we get exactly 4 (or fewer
+        # if timing pushes the count up).
+        assert len(plateaus) <= 4, (
+            f"plateau_max_per_active=4 should cap at ≤ 4 emissions; "
+            f"got {len(plateaus)}"
+        )

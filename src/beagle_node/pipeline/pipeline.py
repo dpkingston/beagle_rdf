@@ -127,6 +127,15 @@ class PipelineConfig:
     # for "stuck active" failures; 0 = no cap (legacy).  See carrier.
     # plateau_max_per_active in the node config schema for full discussion.
     carrier_plateau_max_per_active: int = 30
+    # Burst-then-slow plateau emission.  When both knobs are > 0, the emitter
+    # uses ``carrier_plateau_event_interval_s`` for the first ``carrier_plateau_burst_count``
+    # emissions in an active period and then transitions to the slower
+    # ``carrier_plateau_slow_interval_s`` cadence for the remainder.  When
+    # either is 0, single-cadence (legacy) behaviour is preserved.  See
+    # carrier.plateau_burst_count / carrier.plateau_slow_interval_s in the
+    # node config schema.
+    carrier_plateau_burst_count: int = 0
+    carrier_plateau_slow_interval_s: float = 0.0
 
     # Auto-threshold tracking (matches GUI "Auto-Calibrate" button, applied
     # continuously so thresholds follow changing noise conditions without
@@ -199,6 +208,8 @@ class NodePipeline:
             auto_threshold_update_interval_s=c.carrier_auto_threshold_update_interval_s,
             plateau_event_interval_s=c.carrier_plateau_event_interval_s,
             plateau_max_per_active=c.carrier_plateau_max_per_active,
+            plateau_burst_count=c.carrier_plateau_burst_count,
+            plateau_slow_interval_s=c.carrier_plateau_slow_interval_s,
         )
 
         # Delta computer

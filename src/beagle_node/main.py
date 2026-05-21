@@ -306,6 +306,8 @@ def run(args: argparse.Namespace | None = None) -> int:
                 "min_active_windows_for_offset",
                 "plateau_event_interval_s",
                 "plateau_max_per_active",
+                "plateau_burst_count",
+                "plateau_slow_interval_s",
             })
             _CARRIER_RESTART_FIELDS = frozenset({
                 "window_samples", "snippet_samples",
@@ -353,6 +355,8 @@ def run(args: argparse.Namespace | None = None) -> int:
                             min_active_windows_for_offset=new_config.carrier.min_active_windows_for_offset,
                             plateau_event_interval_s=new_config.carrier.plateau_event_interval_s,
                             plateau_max_per_active=new_config.carrier.plateau_max_per_active,
+                            plateau_burst_count=new_config.carrier.plateau_burst_count,
+                            plateau_slow_interval_s=new_config.carrier.plateau_slow_interval_s,
                         )
                         logger.info(
                             "Remote config update: carrier hot-reload applied (%s)",
@@ -803,6 +807,8 @@ def run(args: argparse.Namespace | None = None) -> int:
             carrier_auto_threshold_update_interval_s=config.carrier.auto_threshold_update_interval_s,
             carrier_plateau_event_interval_s=config.carrier.plateau_event_interval_s,
             carrier_plateau_max_per_active=config.carrier.plateau_max_per_active,
+            carrier_plateau_burst_count=config.carrier.plateau_burst_count,
+            carrier_plateau_slow_interval_s=config.carrier.plateau_slow_interval_s,
         ),
         on_measurement=on_measurement,
     )

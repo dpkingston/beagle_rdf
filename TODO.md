@@ -15,6 +15,7 @@
 - [Sync-lock gate: node warmup + server sanity filter](#sync-lock-gate-node-warmup--server-sanity-filter)
 
 **Completed**
+- [✓ Node: three-phase plateau emission (burst then slow trickle)](#node-three-phase-plateau-emission-burst-then-slow-trickle)
 - [✓ Solver: node_stuck suppression (node-attractor failure mode)](#solver-node_stuck-suppression-node-attractor-failure-mode)
 - [✓ Solver: ns² cost rescale + seed_stuck suppression (cluster-#1 hallucination fix)](#solver-ns-cost-rescale--seed_stuck-suppression-cluster-1-hallucination-fix)
 - [✓ Remote node restart trigger (admin button + uptime confirmation)](#remote-node-restart-trigger-admin-button--uptime-confirmation)
@@ -64,6 +65,85 @@
 - [✓ Web Page Control - Dynamic Aging Window](#web-page-control-dynamic-aging-window)
 - [✓ Map Control Panel](#map-control-panel)
 - [✓ Fix Layer Ordering + Hyperbola Generator](#fix-layer-ordering-hyperbola-generator)
+
+---
+
+### ✓ Node: three-phase plateau emission (burst then slow trickle)
+
+**Completed 2026-05-20** in response to the observation that long
+sustained transmissions on busy repeaters (146.96 MHz) produced
+either a hard cap (at ``plateau_max_per_active=30``) or a steady
+bandwidth burn at 1 Hz.  Neither is ideal: the dense first-second's
+worth of plateaus is the most valuable for server-side cross-correlator
+convergence; subsequent plateaus carry diminishing-returns information
+but consume real bandwidth and journal space.
+
+New behaviour (opt-in, default off):
+
+  - **Phase 1 - burst**: first ``plateau_burst_count`` emissions at the
+    fast cadence ``plateau_event_interval_s`` (existing knob, 1 Hz
+    typical).  Gives the server dense early samples.
+  - **Phase 2 - slow**: subsequent emissions at the slow cadence
+    ``plateau_slow_interval_s`` (new knob, 2.5 s typical = 2 per 5 s).
+    Keeps a light trickle flowing for long key-downs.
+  - **Phase 3 - hard cap (optional)**: ``plateau_max_per_active`` still
+    works as an absolute ceiling.  Operators can now set it to 0 (no
+    cap) because slow-mode bounds long-active disk usage anyway.
+
+Both new knobs default to 0 (legacy single-cadence behaviour
+preserved).  Three-phase activates only when BOTH are > 0.  A
+config-time validator rejects ``plateau_slow_interval_s <
+plateau_event_interval_s`` when both are nonzero (would mean the slow
+phase is faster than fast -- almost certainly a typo).
+
+Implementation:
+
+  - ``CarrierDetectConfig`` (``src/beagle_node/config/schema.py``):
+    two new fields with extensive docstrings, plus validator.
+  - ``CarrierDetector`` (``src/beagle_node/pipeline/carrier_detect.py``):
+    ``__init__`` accepts new params; ``_maybe_emit_plateau`` computes
+    ``current_interval_s`` based on ``_plateau_count_this_active``
+    vs ``_plateau_burst_count``; the wall-clock anchor / snap-forward /
+    rate-gate / advance arithmetic all use the current interval so
+    the slow phase remains wall-clock-grid phase-locked across nodes
+    (preserving cross-correlation alignment).  Logs an INFO line once
+    per active period on the burst→slow transition.
+  - ``CarrierDetector.update_thresholds``: new params hot-reloadable;
+    cross-validates ``slow >= fast`` on every update; resets the slow-
+    phase-logged flag so a fresh transition gets a fresh log line.
+  - ``PipelineConfig`` (``src/beagle_node/pipeline/pipeline.py``) and
+    ``main.run`` cold-start construction: both new params plumbed.
+  - ``main._on_config_update``: both new params added to
+    ``_CARRIER_HOT_FIELDS`` and passed through to ``update_thresholds``.
+
+Tests (7 new in tests/unit/test_carrier_detect.py):
+
+  - ``test_three_phase_transitions_from_burst_to_slow``: drive 6 s of
+    active and verify inter-emission gaps shift from fast to slow.
+  - ``test_three_phase_back_compat_when_burst_count_zero`` and
+    ``..._when_slow_interval_zero``: legacy behaviour preserved when
+    either knob is 0.
+  - ``test_three_phase_counter_resets_on_idle_active_cycle``: counter
+    + slow-phase flag both reset on idle transition; next active
+    period starts in fast phase.
+  - ``test_update_thresholds_hot_reloads_burst_and_slow``: hot-reload
+    works; negative values rejected.
+  - ``test_three_phase_rejects_slow_faster_than_fast``: constructor and
+    hot-reload both refuse ``slow < fast`` when both nonzero.
+  - ``test_three_phase_with_hard_cap_still_caps``: ``plateau_max_per_active``
+    works as the absolute ceiling on top of burst+slow.
+
+821 tests pass (was 814; +7).
+
+Operational example (in a node YAML):
+
+```yaml
+carrier:
+  plateau_event_interval_s: 1.0   # fast cadence: 1 emission/s
+  plateau_burst_count: 10         # 10 fast emissions = first 10 s dense
+  plateau_slow_interval_s: 2.5    # then 2 per 5 s indefinitely
+  plateau_max_per_active: 0       # no hard cap (slow mode already bounded)
+```
 
 ---
 

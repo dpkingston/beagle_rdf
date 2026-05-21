@@ -149,10 +149,29 @@ class CarrierDetector:
         auto_threshold_update_interval_s: float = 2.0,
         plateau_event_interval_s: float = 0.0,
         plateau_max_per_active: int = 0,
+        plateau_burst_count: int = 0,
+        plateau_slow_interval_s: float = 0.0,
     ) -> None:
         if plateau_max_per_active < 0:
             raise ValueError(
                 f"plateau_max_per_active must be >= 0, got {plateau_max_per_active}"
+            )
+        if plateau_burst_count < 0:
+            raise ValueError(
+                f"plateau_burst_count must be >= 0, got {plateau_burst_count}"
+            )
+        if plateau_slow_interval_s < 0.0:
+            raise ValueError(
+                f"plateau_slow_interval_s must be >= 0, got {plateau_slow_interval_s}"
+            )
+        if (
+            plateau_burst_count > 0
+            and plateau_slow_interval_s > 0.0
+            and plateau_slow_interval_s < plateau_event_interval_s
+        ):
+            raise ValueError(
+                f"plateau_slow_interval_s ({plateau_slow_interval_s}) must be "
+                f">= plateau_event_interval_s ({plateau_event_interval_s})"
             )
         if offset_threshold_db >= onset_threshold_db:
             raise ValueError(
@@ -215,6 +234,18 @@ class CarrierDetector:
         self._plateau_max_per_active: int = int(plateau_max_per_active)
         self._plateau_count_this_active: int = 0
         self._plateau_cap_warned: bool = False
+
+        # Burst-then-slow emission (three-phase).  When both _plateau_burst_count
+        # and _plateau_slow_interval_s are > 0, the emitter uses the fast
+        # cadence (_plateau_interval_s) for the first _plateau_burst_count
+        # emissions in an active period and then transitions to the slow
+        # cadence for the remainder.  When either is 0, single-cadence
+        # (legacy) behaviour is preserved.  ``_plateau_in_slow_phase`` is
+        # logged once on the burst→slow transition so the operator can see
+        # the regime change in the journal.
+        self._plateau_burst_count: int = int(plateau_burst_count)
+        self._plateau_slow_interval_s: float = float(plateau_slow_interval_s)
+        self._plateau_slow_phase_logged: bool = False
 
         # Onset-edge tracker for first-plateau-of-active-period coverage.
         # Records the absolute target-stream sample at which the carrier
@@ -435,6 +466,8 @@ class CarrierDetector:
         min_active_windows_for_offset: int | None = None,
         plateau_event_interval_s: float | None = None,
         plateau_max_per_active: int | None = None,
+        plateau_burst_count: int | None = None,
+        plateau_slow_interval_s: float | None = None,
     ) -> None:
         """Update detection thresholds on a live detector without resetting state.
 
@@ -485,13 +518,46 @@ class CarrierDetector:
             # Re-arm the warn flag so a fresh cap value gets a fresh WARN
             # if/when it trips.
             self._plateau_cap_warned = False
+        if plateau_burst_count is not None:
+            if plateau_burst_count < 0:
+                raise ValueError(
+                    f"plateau_burst_count must be >= 0, got {plateau_burst_count}"
+                )
+            self._plateau_burst_count = int(plateau_burst_count)
+        if plateau_slow_interval_s is not None:
+            if plateau_slow_interval_s < 0.0:
+                raise ValueError(
+                    f"plateau_slow_interval_s must be >= 0, got {plateau_slow_interval_s}"
+                )
+            # Reset cadence anchor on the slow-interval change too, so the
+            # next eligibility check re-aligns to a fresh wall-clock grid
+            # boundary rather than inheriting the old interval's anchor.
+            if self._plateau_slow_interval_s != plateau_slow_interval_s:
+                self._last_plateau_wall_s = None
+            self._plateau_slow_interval_s = float(plateau_slow_interval_s)
+        # Cross-validate the burst/slow pair after both updates are applied.
+        if (
+            self._plateau_burst_count > 0
+            and self._plateau_slow_interval_s > 0.0
+            and self._plateau_slow_interval_s < self._plateau_interval_s
+        ):
+            raise ValueError(
+                f"plateau_slow_interval_s ({self._plateau_slow_interval_s}) "
+                f"must be >= plateau_event_interval_s "
+                f"({self._plateau_interval_s})"
+            )
+        # Re-arm the "switched to slow phase" one-shot log so the next
+        # transition gets a fresh INFO line.
+        self._plateau_slow_phase_logged = False
         logger.info(
             "Thresholds updated: onset=%.1f offset=%.1f hold=%d release=%d "
             "min_active_for_offset=%d plateau_event_interval_s=%.2f "
-            "plateau_max_per_active=%d",
+            "plateau_max_per_active=%d plateau_burst_count=%d "
+            "plateau_slow_interval_s=%.2f",
             self._onset_db, self._offset_db, self._min_hold, self._min_release,
             self._min_active_for_offset, self._plateau_interval_s,
             self._plateau_max_per_active,
+            self._plateau_burst_count, self._plateau_slow_interval_s,
         )
 
     def _apply_auto_thresholds(self) -> None:
@@ -1106,13 +1172,16 @@ class CarrierDetector:
         if self._plateau_interval_s <= 0.0:
             return
         if self._state != "active":
-            # Reset stuck-active counter, cadence anchor, and onset-edge
-            # tracker so the next active period starts fresh: the WARN-once
-            # flag re-arms, and the first plateau on the next active period
-            # fires ASAP (after onset-edge clearance) rather than waiting
-            # for the next wall-clock interval boundary.
+            # Reset stuck-active counter, cadence anchor, onset-edge
+            # tracker, and the slow-phase log-once flag so the next active
+            # period starts fresh: the WARN-once flag re-arms, the slow-
+            # phase INFO line will fire again on the next transition, and
+            # the first plateau on the next active period fires ASAP
+            # (after onset-edge clearance) rather than waiting for the
+            # next wall-clock interval boundary.
             self._plateau_count_this_active = 0
             self._plateau_cap_warned = False
+            self._plateau_slow_phase_logged = False
             self._last_plateau_wall_s = None
             return
         if self._pending_event_type is not None:
@@ -1133,6 +1202,34 @@ class CarrierDetector:
                 )
                 self._plateau_cap_warned = True
             return
+
+        # Three-phase emission: select the cadence based on how many
+        # emissions we've already sent in this active period.  When both
+        # plateau_burst_count and plateau_slow_interval_s are configured,
+        # the first ``plateau_burst_count`` emissions use the fast cadence
+        # (_plateau_interval_s); all subsequent emissions in the same
+        # active period use the slow cadence (_plateau_slow_interval_s).
+        # When either knob is 0 the legacy single-cadence behaviour is
+        # preserved -- ``current_interval_s`` stays at the fast interval
+        # for every emission.
+        slow_phase_active = (
+            self._plateau_burst_count > 0
+            and self._plateau_slow_interval_s > 0.0
+            and self._plateau_count_this_active >= self._plateau_burst_count
+        )
+        if slow_phase_active:
+            current_interval_s = self._plateau_slow_interval_s
+            if not self._plateau_slow_phase_logged:
+                logger.info(
+                    "Plateau emitter switched to slow phase after %d burst "
+                    "emissions; cadence %.2f s -> %.2f s.",
+                    self._plateau_burst_count,
+                    self._plateau_interval_s,
+                    self._plateau_slow_interval_s,
+                )
+                self._plateau_slow_phase_logged = True
+        else:
+            current_interval_s = self._plateau_interval_s
 
         # Need enough recent IQ to fill snippet_samples.
         ring_total_samples = sum(len(w) for w in self._iq_ring)
@@ -1168,10 +1265,12 @@ class CarrierDetector:
             # this catches short transmissions that wouldn't otherwise
             # produce a plateau.  Anchor the cadence to the wall-clock
             # grid for subsequent plateaus so they remain phase-locked
-            # across nodes.
+            # across nodes.  Anchor uses the CURRENT cadence (which is
+            # always the fast cadence for emission #1 since slow_phase
+            # activates only after burst_count emissions).
             self._last_plateau_wall_s = (
-                math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
-                - self._plateau_interval_s
+                math.floor(now / current_interval_s) * current_interval_s
+                - current_interval_s
             )
             # Falls through to emission below (now - last == interval, so
             # the elapsed-interval check passes).
@@ -1181,12 +1280,13 @@ class CarrierDetector:
         # than emitting back-to-back plateaus to "catch up".  Without
         # this, every process() call could fire a plateau until
         # _last_plateau_wall_s catches up to wall time — bursting at
-        # the chunk-arrival rate.
-        if now - self._last_plateau_wall_s > 2 * self._plateau_interval_s:
+        # the chunk-arrival rate.  Uses current_interval_s so both fast
+        # and slow phases get the same snap-forward protection.
+        if now - self._last_plateau_wall_s > 2 * current_interval_s:
             self._last_plateau_wall_s = (
-                math.floor(now / self._plateau_interval_s) * self._plateau_interval_s
+                math.floor(now / current_interval_s) * current_interval_s
             )
-        if now - self._last_plateau_wall_s < self._plateau_interval_s:
+        if now - self._last_plateau_wall_s < current_interval_s:
             return
 
         iq_cat = np.concatenate(list(self._iq_ring))
@@ -1208,13 +1308,22 @@ class CarrierDetector:
         )
         self._emit(events, ev)
         self._plateau_count_this_active += 1
-        # Advance the cadence by exactly one interval so subsequent emissions
-        # stay phase-locked to the original schedule.  (The "far behind" snap
-        # above guarantees we won't emit more than once per process() call.)
-        self._last_plateau_wall_s += self._plateau_interval_s
+        # Advance the cadence by exactly one *current* interval so subsequent
+        # emissions stay phase-locked to the rolling schedule.  When this
+        # emission was the last of the burst phase, the NEXT call will see
+        # ``slow_phase_active = True`` and use the slow cadence -- the
+        # advance here, however, uses the cadence that was just applied,
+        # so the very first slow-phase emission lands at
+        # (last_burst_emission_time + slow_interval_s) which is the
+        # earliest valid slow-grid slot.  (The "far behind" snap above
+        # guarantees we won't emit more than once per process() call.)
+        self._last_plateau_wall_s += current_interval_s
         logger.debug(
-            "CarrierPlateau emitted at sample %d (interval %.1f s)",
-            snippet_first_sample, self._plateau_interval_s,
+            "CarrierPlateau emitted at sample %d (interval %.1f s, count %d, "
+            "phase=%s)",
+            snippet_first_sample, current_interval_s,
+            self._plateau_count_this_active,
+            "slow" if slow_phase_active else "fast",
         )
 
     def _encode_snippet(self) -> bytes:
