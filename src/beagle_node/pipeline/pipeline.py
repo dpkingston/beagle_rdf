@@ -10,6 +10,11 @@ Data flow (freq_hop / same_sdr mode)
       |-> sync_decimator  (-> ~256 kHz)
       |       +-> FMDemodulator
       |               +-> RDSSyncDetector  ----------> SyncEvent
+      |               |                                    |
+      |               +-> RDSDecoderService (visibility — Group records via
+      |                                       rolling-window re-decode, used
+      |                                       by DeltaComputer for block-A
+      |                                       anchor selection)
       |                                                    |
       +-> target_decimator (-> ~48 kHz)                    |
               +-> CarrierDetector                          |
@@ -43,6 +48,7 @@ from beagle_node.pipeline.decimator import Decimator
 from beagle_node.pipeline.delta import DeltaComputer, TDOAMeasurement
 from beagle_node.pipeline.demodulator import FMDemodulator
 from beagle_node.pipeline.pps_detector import PPSDetector
+from beagle_node.pipeline.rds_decoder import RDSDecoderService
 from beagle_node.pipeline.rds_sync_detector import RDSSyncDetector
 
 logger = logging.getLogger(__name__)
@@ -150,6 +156,12 @@ class PipelineConfig:
     max_sync_age_samples: int = 20_480  # ~80 ms at 256 kHz (8x sync period)
     min_corr_peak: float = 0.1
 
+    # RDS block decoder service (visibility only in Commit 3; consumed by
+    # DeltaComputer in Commit 4).  Window must be ≥ 0.5 s for the decoder
+    # to lock; longer = more CPU per decode but better noise immunity.
+    rds_decoder_window_seconds: float = 2.0
+    rds_decoder_interval_ms: float = 1000.0   # min wallclock between decodes
+
     # PPS (two_sdr mode only)
     pps_spike_threshold_db: float = 10.0
     pps_window_samples: int = 32
@@ -185,6 +197,17 @@ class NodePipeline:
         if c.sync_mode == "rds":
             self._sync_det = RDSSyncDetector(
                 sample_rate_hz=c.sdr_rate_hz / c.sync_decimation,
+            )
+            # RDS block decoder service: runs in parallel with the pilot-
+            # derived sync detector to recover RDS group structure (block
+            # letters, PI, group types).  Used for visibility / telemetry
+            # now; will be consumed by DeltaComputer in a follow-up commit
+            # for block-A anchor selection.
+            self._rds_decoder: RDSDecoderService | None = RDSDecoderService(
+                fs_in=c.sdr_rate_hz / c.sync_decimation,
+                window_seconds=c.rds_decoder_window_seconds,
+                decode_interval_ms=c.rds_decoder_interval_ms,
+                use_fec=True,
             )
         else:
             raise ValueError(f"Unknown sync_mode: {c.sync_mode!r}")
@@ -265,6 +288,11 @@ class NodePipeline:
         """Most recent SyncEvent.sample_rate_correction (crystal calibration factor)."""
         return self._latest_sample_rate_correction
 
+    @property
+    def rds_decoder(self) -> RDSDecoderService | None:
+        """The RDS block decoder service (visibility / future block-A anchor lookup)."""
+        return self._rds_decoder
+
     # ------------------------------------------------------------------
     # Buffer processing
     # ------------------------------------------------------------------
@@ -323,6 +351,34 @@ class NodePipeline:
             last_se = sync_events[-1]
             self._latest_corr_peak = last_se.corr_peak
             self._latest_sample_rate_correction = last_se.sample_rate_correction
+
+        # Feed the same FM-demodulated audio into the RDS block decoder
+        # service.  It buffers internally and re-decodes on a configurable
+        # interval; emits groups as side-channel telemetry for now.  No
+        # change to SyncEvent or DeltaComputer behavior in this commit.
+        if self._rds_decoder is not None:
+            new_groups = self._rds_decoder.push_audio(audio, start_sample=dec_start)
+            if new_groups:
+                # Log a one-line summary at INFO whenever a decode runs;
+                # individual groups at DEBUG.
+                stats = self._rds_decoder.stats
+                logger.info(
+                    "RDS decode: %d groups in %.1f s window "
+                    "(BLER mean %.2f, decode %.0f ms)",
+                    stats.last_group_count,
+                    stats.last_decode_input_seconds,
+                    stats.last_bler_mean if stats.last_bler_mean == stats.last_bler_mean else -1,
+                    stats.last_decode_duration_ms,
+                )
+                for g in new_groups[:10]:
+                    if g.pi is not None:
+                        logger.debug(
+                            "RDS group: pi=%s type=%s bler=%.2f anchor_sample=%.1f",
+                            f"0x{g.pi:04X}",
+                            g.group_type or "?",
+                            g.bler,
+                            g.sample_index_first_bit,
+                        )
 
         self._sync_sample_count = raw_start + len(iq)
         return []   # measurements arrive via process_target_buffer / on_measurement
