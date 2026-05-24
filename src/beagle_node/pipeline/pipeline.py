@@ -235,12 +235,19 @@ class NodePipeline:
             plateau_slow_interval_s=c.carrier_plateau_slow_interval_s,
         )
 
-        # Delta computer
+        # Delta computer.  When the RDS decoder service is active, pass
+        # its lookup() in so that DeltaComputer can prefer block-A
+        # bit-0 anchors over the legacy "most recent before event"
+        # heuristic (Commit 4 — shared cross-node anchor selection).
+        block_lookup = (
+            self._rds_decoder.lookup if self._rds_decoder is not None else None
+        )
         self._delta = DeltaComputer(
             sample_rate_hz=c.sdr_rate_hz / c.sync_decimation,
             max_sync_age_samples=c.max_sync_age_samples,
             pps_anchored=pps_anchored,
             min_corr_peak=c.min_corr_peak,
+            block_context_lookup=block_lookup,
         )
 
         # PPS detector (only used in two_sdr mode)

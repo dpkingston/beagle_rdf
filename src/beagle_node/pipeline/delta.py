@@ -49,10 +49,17 @@ two_sdr
 
 Sync matching
 -------------
-For each carrier event, DeltaComputer finds the most recent SyncEvent whose
-sample_index <= event sample_index and is within max_sync_age_samples.
-If no sync event is available within the search window, the event is dropped
-and a warning is logged.
+For each carrier event, DeltaComputer finds the best SyncEvent within
+max_sync_age_samples.  The selection prefers **block-A bit-0** anchors
+(the start of each RDS group) when an RDS block decoder lookup is
+available, falling back to the most recent SyncEvent before the carrier
+event when no block-A anchor is in range.
+
+Block-A bit-0 anchoring matters cross-node: every receiver of the same
+FM station sees the same broadcast bits, so when both nodes pick the
+nearest block-A-bit-0 they end up locked to the same physical RDS
+group boundary.  This converts a fixed-but-arbitrary per-pair offset
+(which the server must calibrate out) into a shared zero reference.
 """
 
 from __future__ import annotations
@@ -63,8 +70,18 @@ import os
 from dataclasses import dataclass
 from typing import Union
 
+from typing import Callable, Optional
+
 from beagle_node.pipeline.carrier_detect import CarrierOnset, CarrierOffset, CarrierPlateau
+from beagle_node.pipeline.rds_decoder import BlockContext
 from beagle_node.pipeline.sync_detector import SyncEvent
+
+# Lookup signature: given a (sub-sample-precision) MPX sample index,
+# return BlockContext or None.  Passed as a Callable rather than a direct
+# RDSDecoderService dependency so DeltaComputer is testable with simple
+# mock lookups (and so that nothing on the carrier-event hot path
+# materializes the whole decoder).
+BlockContextLookup = Callable[[float], Optional[BlockContext]]
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +122,15 @@ class TDOAMeasurement:
     sync_pilot_phase_rad: float = 0.0   # pilot_phase_rad from the matched SyncEvent
     sync_sample_index: float = 0.0      # absolute sample index of the matched SyncEvent
     sync_delta_samples: float = 0.0     # raw sample delta (snippet_start - sync_sample)
+    # RDS block anchor context (Commit 4): when an RDS block context was
+    # available for the matched SyncEvent, these record which group
+    # boundary the measurement is anchored to.  ``anchor_block_letter``
+    # is "A" with ``anchor_bit_in_block == 0`` for the preferred
+    # block-A bit-0 anchor; otherwise None for legacy nearest matches.
+    anchor_block_letter: str | None = None
+    anchor_bit_in_block: int | None = None
+    anchor_group_pi: int | None = None
+    anchor_group_type: str | None = None
 
 
 class DeltaComputer:
@@ -132,11 +158,20 @@ class DeltaComputer:
         max_sync_age_samples: int = 7_680,
         pps_anchored: bool = False,
         min_corr_peak: float = 0.1,
+        block_context_lookup: BlockContextLookup | None = None,
     ) -> None:
         self._rate = float(sample_rate_hz)
         self._max_age = int(max_sync_age_samples)
         self._pps_anchored = bool(pps_anchored)
         self._min_corr = float(min_corr_peak)
+        # When provided, _match() prefers SyncEvents that land on the
+        # first bit of an RDS block A (the natural group boundary).
+        # When None, falls back to the legacy "most recent sync before
+        # carrier event" behavior.
+        self._block_lookup = block_context_lookup
+        # Telemetry: counts of anchor-selection outcomes per match.
+        self._anchor_chose_block_a: int = 0    # matches that found a block-A anchor
+        self._anchor_fallback_legacy: int = 0  # matches that used legacy nearest
 
         # Recent sync events (kept until too old)
         self._sync_events: list[SyncEvent] = []
@@ -303,15 +338,26 @@ class DeltaComputer:
         """
         Find the best SyncEvent for this carrier event.
 
-        Strategy: use the most recent SyncEvent whose sample_index <= event.sample_index
-        AND is within max_sync_age_samples of the event.
+        Selection (in priority order):
+          1. **Block-A bit-0** anchor: if a block context lookup is configured
+             and any SyncEvent within max_sync_age_samples is the first bit
+             of an RDS group's block A (block_letter="A", bit_in_block=0),
+             choose the one closest in time to the carrier event.
+          2. **Legacy nearest**: most recent SyncEvent with
+             sample_index <= event.sample_index and within max_sync_age_samples.
+
+        Preference (1) is enabled whenever ``block_context_lookup`` was
+        passed to __init__; it requires the RDS decoder to have actually
+        decoded the group containing the candidate sync event.  During the
+        decoder's warmup phase (or under poor signal conditions) no block
+        context is available and we fall through to (2) — which keeps the
+        legacy behavior unchanged, so this is a strict improvement.
         """
-        candidates = [
+        in_range = [
             s for s in self._sync_events
-            if s.sample_index <= event.sample_index
-            and event.sample_index - s.sample_index <= self._max_age
+            if abs(s.sample_index - event.sample_index) <= self._max_age
         ]
-        if not candidates:
+        if not in_range:
             logger.debug(
                 "No sync event within %d samples of %s at %d "
                 "(newest sync: %.1f, total syncs: %d)",
@@ -323,8 +369,50 @@ class DeltaComputer:
             )
             return None
 
-        # Most recent sync before the event within the age window
-        best = max(candidates, key=lambda s: s.sample_index)
+        # Tier 1: prefer block-A bit-0 anchors when the decoder lookup
+        # has identified any in the search window.
+        anchor_letter: str | None = None
+        anchor_bit: int | None = None
+        anchor_group_pi: int | None = None
+        anchor_group_type: str | None = None
+        best: SyncEvent | None = None
+
+        if self._block_lookup is not None:
+            a_anchors: list[tuple[SyncEvent, BlockContext]] = []
+            for s in in_range:
+                ctx = self._block_lookup(s.sample_index)
+                if ctx is None:
+                    continue
+                if ctx.block_letter == "A" and ctx.bit_in_block == 0:
+                    a_anchors.append((s, ctx))
+            if a_anchors:
+                best, best_ctx = min(
+                    a_anchors,
+                    key=lambda sc: abs(sc[0].sample_index - event.sample_index),
+                )
+                anchor_letter = best_ctx.block_letter
+                anchor_bit = best_ctx.bit_in_block
+                anchor_group_pi = best_ctx.group_pi
+                anchor_group_type = best_ctx.group_type
+                self._anchor_chose_block_a += 1
+                logger.debug(
+                    "block-A anchor at sample %.1f for %s at %d "
+                    "(pi=0x%04X type=%s)",
+                    best.sample_index, event_type, event.sample_index,
+                    anchor_group_pi or 0, anchor_group_type or "?",
+                )
+
+        # Tier 2: legacy "most recent sync before event" fallback.
+        if best is None:
+            pre_event = [s for s in in_range if s.sample_index <= event.sample_index]
+            if not pre_event:
+                logger.debug(
+                    "No pre-event sync within %d samples of %s at %d",
+                    self._max_age, event_type, event.sample_index,
+                )
+                return None
+            best = max(pre_event, key=lambda s: s.sample_index)
+            self._anchor_fallback_legacy += 1
 
         # Apply crystal calibration to the sample rate
         corrected_rate = self._rate * best.sample_rate_correction
@@ -377,6 +465,10 @@ class DeltaComputer:
             sync_pilot_phase_rad=best.pilot_phase_rad,
             sync_sample_index=best.sample_index,
             sync_delta_samples=delta_samples,
+            anchor_block_letter=anchor_letter,
+            anchor_bit_in_block=anchor_bit,
+            anchor_group_pi=anchor_group_pi,
+            anchor_group_type=anchor_group_type,
         )
 
     # ------------------------------------------------------------------
