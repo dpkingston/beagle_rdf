@@ -1,0 +1,110 @@
+{"pi":"0x4652","bler":10,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"d       "}
+{"pi":"0x4652","bler":10,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":10,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"d Se    "}
+{"pi":"0x4652","bler":10,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B"}
+{"pi":"0x4652","bler":10,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"d Serv  "}
+{"pi":"0x4652","bler":10,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"d Servic"}
+{"pi":"0x4652","bler":10,"group":"10A","tp":false,"prog_type":"News"}
+{"pi":"0x4652","bler":10,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC                       "}
+{"pi":"0x4652","bler":6,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"e       "}
+{"pi":"0x4652","bler":4,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC Worl                  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"e on    "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"e on K  "}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Se              "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"e on KUO"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"e       "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Servic          "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"e on    "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"e on K  "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on      "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on KUO  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"e on KUO"}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","radiotext":"BBC World Service on KUOW"}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"e       "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"e on    "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC                       "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"e on K  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"e on KUO"}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC Worl                  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"e       "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"e on    "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Se              "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Servic          "}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"e on K  "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on      "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"e on KUO"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":" o      "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on KUO  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":" on     "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":" on KU  "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","radiotext":"BBC World Service on KUOW"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":" on KUOW"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":" o      "}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"10A","tp":false,"prog_type":"News","pty_name":"NPRNEWS "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC                       "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":" on     "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC Worl                  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":" on KU  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":" on KUOW"}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Se              "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":" o      "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":" on     "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Servic          "}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":" on KU  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":" on KUOW"}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on      "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on KUO  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":" o      "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","radiotext":"BBC World Service on KUOW"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":" on     "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":" on KU  "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC                       "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":" on KUOW"}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"BB      "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC Worl                  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"BBC     "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"BBC Wo  "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Se              "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Servic          "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"BBC Worl"}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on      "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"BB      "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"BBC     "}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on KUO  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"BBC Wo  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"BBC Worl"}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","radiotext":"BBC World Service on KUOW"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"BB      "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"BBC     "}
+{"pi":"0x4652","bler":0,"group":"10A","tp":false,"prog_type":"News"}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC                       "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"BBC Wo  "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC Worl                  "}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"BBC Worl"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"BB      "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Se              "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"BBC     "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"BBC Wo  "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Servic          "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"BBC Worl"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"d       "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on      "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC World Service on KUO  "}
+{"pi":"0x4652","bler":0,"group":"1A","tp":false,"prog_type":"News","debug":["invalid PIN"],"has_linkage":false}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"d Se    "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","radiotext":"BBC World Service on KUOW"}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"d Serv  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"stereo":true},"ta":false,"is_music":false,"ps":"d Servic"}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC                       "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"dynamic_pty":false},"ta":false,"is_music":false,"partial_ps":"d       "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"compressed":false},"ta":false,"is_music":false,"partial_ps":"d Se    "}
+{"pi":"0x4652","bler":0,"group":"2A","tp":false,"prog_type":"News","rt_ab":"B","partial_radiotext":"BBC Worl                  "}
+{"pi":"0x4652","bler":0,"group":"0A","tp":false,"prog_type":"News","di":{"artificial_head":false},"ta":false,"is_music":false,"partial_ps":"d Serv  "}
