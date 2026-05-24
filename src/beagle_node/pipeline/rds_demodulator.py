@@ -70,6 +70,31 @@ RRC_SPAN_SYMBOLS: int = 12
 # Biphase polarity detection window (PSK symbols).  Redsea uses 128.
 POLARITY_WINDOW: int = 128
 
+# Hysteresis margin for polarity flips: the alternative pairing must have at
+# least this many times more energy than the current pairing before the
+# detector switches polarity.  1.5× blocks fade-induced false flips
+# (transient signal drop → noise-dominated decision → spurious flip)
+# while still permitting genuine inversions that persist across multiple
+# windows.  Higher = more resistant to noise; too high will prevent
+# legitimate inversions from being detected on real signal.
+#
+# Two nodes receiving the same broadcast both experience the same fades
+# and the same legitimate inversions, so with hysteresis they make
+# correlated decisions at correlated times — the key requirement for
+# cross-node block-A anchor agreement.
+POLARITY_HYSTERESIS_FACTOR: float = 1.5
+
+# Minimum total per-window energy (sum of even and odd) below which the
+# polarity decision is skipped entirely (current polarity is held).
+# During deep fades, both energies drop to noise level and the ratio
+# becomes meaningless.  Holding through the fade preserves the polarity
+# that was correct under good SNR; re-evaluation resumes when signal
+# recovers.  Threshold is in post-AGC magnitude-squared units; ~5%
+# of nominal locked-signal energy (≈ 64 within-bit pairs × |biphase|² ≈ 1
+# → nominal ≈ 64) gives a useful no-decision band without holding through
+# legitimate signal-state changes.
+POLARITY_MIN_DECISION_ENERGY: float = 4.0
+
 
 @dataclass(frozen=True)
 class DecodedBit:
@@ -262,8 +287,34 @@ def _biphase_diff_decode(
     in_per_dec: float,
 ) -> list[DecodedBit]:
     """
-    Convert PSK symbols → biphase bits → differential bits, with adaptive
-    biphase clock polarity (same heuristic as redsea BiphaseDecoder).
+    Convert PSK symbols → biphase bits → differential bits.
+
+    Polarity selection
+    ------------------
+    The biphase decoder must choose between two possible pairings of
+    consecutive PSK symbols: even-index pairs (s0,s1),(s2,s3),... or
+    odd-index pairs (s1,s2),(s3,s4),....  The correct pairing has high
+    differential magnitude (within-bit symbols are opposite-signed);
+    the wrong pairing has lower magnitude (across-bit differences are
+    a mix of 0 and 2).
+
+    Selection algorithm (this implementation):
+
+      1. Every POLARITY_WINDOW PSK symbols, sum |biphase.real|² for the
+         even-index and the odd-index pairings.
+      2. **Fade guard**: if the total per-window energy is below
+         POLARITY_MIN_DECISION_ENERGY, skip the decision and hold the
+         current polarity.  Avoids spurious flips during signal fades
+         when both energies drop to noise level.
+      3. **Hysteresis**: only flip away from the current polarity if the
+         alternative's energy exceeds the current's by a factor of at
+         least POLARITY_HYSTERESIS_FACTOR.
+
+    Both nodes receiving the same broadcast see the same fades, the same
+    bit pattern, and the same persistent SNR regime — so under hysteresis
+    + fade-guard they make correlated decisions at correlated times.
+    This is the cross-node decision synchrony required for block-A
+    anchor agreement.
 
     Parameters
     ----------
@@ -304,12 +355,20 @@ def _biphase_diff_decode(
             window_energy_odd += magsq
         window_count += 1
 
-        # Refresh polarity decision every POLARITY_WINDOW symbols
+        # End of a polarity-decision window — re-evaluate with hysteresis
+        # and fade guard.
         if window_count >= POLARITY_WINDOW:
-            if window_energy_even > window_energy_odd:
-                polarity = 0
-            else:
-                polarity = 1
+            total_e = window_energy_even + window_energy_odd
+            if total_e >= POLARITY_MIN_DECISION_ENERGY:
+                current_e = (window_energy_even if polarity == 0
+                             else window_energy_odd)
+                alt_e = (window_energy_odd if polarity == 0
+                         else window_energy_even)
+                if alt_e > current_e * POLARITY_HYSTERESIS_FACTOR:
+                    # Significantly stronger evidence → flip
+                    polarity = 1 - polarity
+                # else: hysteresis blocks the flip (or no flip needed)
+            # else: fade in progress → hold current polarity
             window_energy_even = 0.0
             window_energy_odd = 0.0
             window_count = 0
