@@ -1065,6 +1065,9 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             "onset_threshold_db": body.get("onset_threshold_db"),
             "offset_threshold_db": body.get("offset_threshold_db"),
             "uptime_s": body.get("uptime_s"),
+            # RDS decoder + block-A anchor health summary (Commit 9).
+            # Optional dict; absent on older nodes or non-RDS sync_mode.
+            "rds": body.get("rds"),
             "received_at": time.time(),
             "ip": client_ip,
         }
@@ -1519,6 +1522,9 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 # Older nodes without this field send None; the UI must
                 # tolerate that.
                 "uptime_s": new_uptime,
+                # RDS decoder + block-A anchor health summary (Commit 9).
+                # Optional dict; absent on older nodes or non-RDS sync_mode.
+                "rds": body.get("rds"),
                 "received_at": time.time(),
                 "ip": client_ip,
             }
@@ -1773,6 +1779,14 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             if config_obj is not None:
                 node["config_json"] = json.dumps(config_obj)
                 node["config_merged"] = True
+
+        # Surface the latest in-memory heartbeat so the dashboard's node-detail
+        # modal can show live state (noise floor, RDS health, etc.) without
+        # SSHing to the node.  Heartbeat may be absent for nodes that haven't
+        # reported since server startup.
+        hb = request.app.state.heartbeats.get(node_id) if hasattr(request.app.state, "heartbeats") else None
+        if hb is not None:
+            node["heartbeat"] = hb
 
         return node
 

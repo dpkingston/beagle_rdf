@@ -518,6 +518,7 @@ def run(args: argparse.Namespace | None = None) -> int:
             _heartbeat_payload["noise_floor_db"] = pipeline.carrier_detector.noise_floor_db
             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
+            _heartbeat_payload["rds"] = pipeline.rds_health_snapshot()
             if _remote_fetcher is not None:
                 # uptime_s is stamped fresh by the fetcher's uptime_provider
                 # hook on every poll; no need to write it into the dict here.
@@ -884,6 +885,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["noise_floor_db"] = pipeline.carrier_detector.noise_floor_db
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
+                            _heartbeat_payload["rds"] = pipeline.rds_health_snapshot()
                             if _remote_fetcher is not None:
                                 # uptime_s stamped fresh by fetcher's
                                 # uptime_provider hook on each poll.
@@ -931,6 +933,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["noise_floor_db"] = pipeline.carrier_detector.noise_floor_db
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
+                            _heartbeat_payload["rds"] = pipeline.rds_health_snapshot()
                             if _remote_fetcher is not None:
                                 # uptime_s stamped fresh by fetcher's
                                 # uptime_provider hook on each poll.
@@ -978,6 +981,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["noise_floor_db"] = pipeline.carrier_detector.noise_floor_db
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
+                            _heartbeat_payload["rds"] = pipeline.rds_health_snapshot()
                             if _remote_fetcher is not None:
                                 # uptime_s stamped fresh by fetcher's
                                 # uptime_provider hook on each poll.

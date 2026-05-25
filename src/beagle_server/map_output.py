@@ -2014,6 +2014,76 @@ window._tdoaOpenDetail = function (nodeId) {
         }
         html += '</div></div>';
 
+        /* --- Live heartbeat (incl. RDS / anchor health) --- */
+        var hb = node.heartbeat || {};
+        var hbAgeS = hb.received_at ? (Date.now()/1000 - hb.received_at) : null;
+        if (Object.keys(hb).length > 0) {
+            html += '<div style="margin-top:10px;padding:6px 8px;border:1px solid #2a3a4a;border-radius:4px;background:rgba(40,55,70,0.4)">';
+            html += '<div style="color:#c8d4e8;font-size:12px;margin-bottom:6px">Live heartbeat';
+            if (hbAgeS != null) {
+                var ageStr = hbAgeS < 60 ? hbAgeS.toFixed(0) + 's ago'
+                          : hbAgeS < 3600 ? (hbAgeS/60).toFixed(1) + 'm ago'
+                          : (hbAgeS/3600).toFixed(1) + 'h ago';
+                var ageCls = hbAgeS < 60 ? '#2ecc71' : hbAgeS < 300 ? '#f39c12' : '#e74c3c';
+                html += ' <span style="font-size:10px;color:' + ageCls + '">(' + ageStr + ')</span>';
+            }
+            html += '</div>';
+
+            if (hb.software_version) {
+                html += '<div class="tp-row"><span class="tp-key">Software</span><span style="font-family:monospace;font-size:11px">'
+                      + _esc(hb.software_version) + '</span></div>';
+            }
+            if (hb.uptime_s != null) {
+                var up = hb.uptime_s;
+                var upStr = up < 3600 ? (up/60).toFixed(1) + 'm'
+                          : up < 86400 ? (up/3600).toFixed(1) + 'h'
+                          : (up/86400).toFixed(1) + 'd';
+                html += '<div class="tp-row"><span class="tp-key">Uptime</span><span>' + upStr + '</span></div>';
+            }
+            if (hb.noise_floor_db != null) {
+                html += '<div class="tp-row"><span class="tp-key">Noise floor</span><span>'
+                      + hb.noise_floor_db.toFixed(1) + ' dB</span></div>';
+            }
+
+            /* RDS / anchor health (Commit 9) — only shown when the node
+             * is running RDS sync mode and has produced a decode. */
+            var rds = hb.rds;
+            if (rds && typeof rds === 'object') {
+                html += '<div style="margin-top:6px;padding-top:4px;border-top:1px dashed #3a4a5a">';
+                html += '<div style="font-size:11px;color:#7a9bbf;margin-bottom:3px">RDS decoder &amp; anchor</div>';
+                if (rds.group_count != null) {
+                    html += '<div class="tp-row"><span class="tp-key">Groups / 2 s</span><span>' + rds.group_count + ' / 22.8</span></div>';
+                }
+                if (rds.bler_mean != null) {
+                    var blerCls = rds.bler_mean < 0.05 ? '#2ecc71' : rds.bler_mean < 0.15 ? '#f39c12' : '#e74c3c';
+                    html += '<div class="tp-row"><span class="tp-key">BLER mean</span>'
+                          + '<span style="color:' + blerCls + '">' + (rds.bler_mean * 100).toFixed(1) + '%</span></div>';
+                }
+                if (rds.decode_ms != null) {
+                    html += '<div class="tp-row"><span class="tp-key">Decode</span><span>' + rds.decode_ms.toFixed(0) + ' ms</span></div>';
+                }
+                var emitFrac = rds.anchor_emit_fraction;
+                if (emitFrac != null) {
+                    var efCls = emitFrac > 0.95 ? '#2ecc71' : emitFrac > 0.8 ? '#f39c12' : '#e74c3c';
+                    html += '<div class="tp-row"><span class="tp-key">Anchor emit %</span>'
+                          + '<span style="color:' + efCls + '">' + (emitFrac * 100).toFixed(1) + '%</span></div>';
+                }
+                if (rds.anchor_emitted != null) {
+                    html += '<div class="tp-row"><span class="tp-key">Emitted</span><span>' + rds.anchor_emitted + '</span></div>';
+                }
+                if (rds.anchor_dropped_no_a != null && rds.anchor_dropped_no_a > 0) {
+                    html += '<div class="tp-row"><span class="tp-key">Dropped (no A)</span>'
+                          + '<span style="color:#f39c12">' + rds.anchor_dropped_no_a + '</span></div>';
+                }
+                if (rds.anchor_dropped_no_lookup != null && rds.anchor_dropped_no_lookup > 0) {
+                    html += '<div class="tp-row"><span class="tp-key">Dropped (no lookup)</span>'
+                          + '<span style="color:#e74c3c">' + rds.anchor_dropped_no_lookup + '</span></div>';
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+
         var cfgText = '';
         if (node.config_json) {
             try { cfgText = JSON.stringify(JSON.parse(node.config_json), null, 2); }
