@@ -24,6 +24,16 @@ Response schema
   "sdr_overflows":        0,
   "backlog_drains":       0,
   "discontinuities":      0,
+  "rds": {                                 # RDS decoder + block-A anchor summary
+    "group_count":                 22,     # groups decoded in most recent rolling window
+    "group_period_hz":           11.418,   # theoretical RDS group rate (constant)
+    "bler_mean":                  0.02,    # 0..1, mean over the rolling window
+    "decode_ms":                  105.0,   # CPU time of last decode
+    "anchor_emitted":             1842,    # cumulative measurements with a block-A anchor
+    "anchor_dropped_no_lookup":      0,    # cumulative drops because no RDS context
+    "anchor_dropped_no_a":          17,    # cumulative drops because no A in ±half-group
+    "anchor_emit_fraction":      0.991     # emitted / (emitted+dropped); null until first onset
+  },
   "sdr_mode":             "rspduo",           # present if configured
   "sample_rate_hz":       2048000.0,          # present if configured
   "sync_station":         "KISW_99.9",        # present if configured
@@ -84,6 +94,11 @@ class HealthState:
         self.offset_threshold_db: float | None = None
         # Sync detector quality (latest SyncEvent.corr_peak; 0-1).
         self.sync_corr_peak: float | None = None
+        # RDS decoder + anchor-selection summary.  Populated from
+        # Pipeline.rds_health_snapshot() each health-update cycle;
+        # passed through to the server in the /health JSON.  None until
+        # the pipeline has produced its first decode.
+        self.rds: dict[str, Any] | None = None
 
     def record_event(self) -> None:
         with self._lock:
@@ -110,6 +125,7 @@ class HealthState:
         onset_threshold_db: float | None = None,
         offset_threshold_db: float | None = None,
         sync_corr_peak: float | None = None,
+        rds: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
             # Update last_sync_time if new sync events have arrived
@@ -131,6 +147,8 @@ class HealthState:
                 self.offset_threshold_db = offset_threshold_db
             if sync_corr_peak is not None:
                 self.sync_corr_peak = sync_corr_peak
+            if rds is not None:
+                self.rds = rds
 
     def uptime_s(self) -> float:
         """Return seconds since this HealthMonitor was constructed.
@@ -203,6 +221,8 @@ class HealthState:
                 result["offset_threshold_db"] = round(self.offset_threshold_db, 1)
             if self.sync_corr_peak is not None:
                 result["sync_corr_peak"] = round(self.sync_corr_peak, 4)
+            if self.rds is not None:
+                result["rds"] = self.rds
             return result
 
 

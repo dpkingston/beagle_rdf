@@ -300,6 +300,52 @@ class NodePipeline:
         """The RDS block decoder service (visibility / future block-A anchor lookup)."""
         return self._rds_decoder
 
+    def rds_health_snapshot(self) -> dict | None:
+        """
+        Compact summary of RDS decoder + anchor-selection health for the
+        ``/health`` endpoint and the server's heartbeat consumer.  Returns
+        None when RDS sync mode is disabled.
+
+        Keys:
+          group_count            - most recent decode's group count
+          group_period_hz        - 11.4 (constant; for the server's reference)
+          bler_mean              - 0..1, mean over the rolling window
+          decode_ms              - most recent decode CPU time
+          anchor_emitted         - measurements emitted with a block-A anchor
+                                   (cumulative since pipeline start)
+          anchor_dropped_no_lookup
+                                 - measurements dropped because no RDS
+                                   context was available
+          anchor_dropped_no_a    - measurements dropped because no A-anchor
+                                   was in the ±half-group search window
+          anchor_emit_fraction   - emitted / (emitted + both dropped counts);
+                                   None until any onset has been seen
+        """
+        if self._rds_decoder is None:
+            return None
+        stats = self._rds_decoder.stats
+        emitted = self._delta._anchor_chose_block_a
+        no_lookup = self._delta._anchor_no_lookup_dropped
+        no_a = self._delta._anchor_no_a_in_window_dropped
+        total = emitted + no_lookup + no_a
+        emit_frac = (emitted / total) if total > 0 else None
+        return {
+            "group_count": stats.last_group_count,
+            "group_period_hz": 1187.5 / 104.0,
+            "bler_mean": (
+                round(stats.last_bler_mean, 3)
+                if stats.last_bler_mean == stats.last_bler_mean  # not NaN
+                else None
+            ),
+            "decode_ms": round(stats.last_decode_duration_ms, 1),
+            "anchor_emitted": emitted,
+            "anchor_dropped_no_lookup": no_lookup,
+            "anchor_dropped_no_a": no_a,
+            "anchor_emit_fraction": (
+                round(emit_frac, 3) if emit_frac is not None else None
+            ),
+        }
+
     # ------------------------------------------------------------------
     # Buffer processing
     # ------------------------------------------------------------------
@@ -361,15 +407,18 @@ class NodePipeline:
 
         # Feed the same FM-demodulated audio into the RDS block decoder
         # service.  It buffers internally and re-decodes on a configurable
-        # interval; emits groups as side-channel telemetry for now.  No
-        # change to SyncEvent or DeltaComputer behavior in this commit.
+        # interval; emits Group records consumed by DeltaComputer.lookup
+        # for anchor selection.  Health-summary plumbing (Commit 7) surfaces
+        # the per-decode stats to the server.
         if self._rds_decoder is not None:
             new_groups = self._rds_decoder.push_audio(audio, start_sample=dec_start)
             if new_groups:
-                # Log a one-line summary at INFO whenever a decode runs;
-                # individual groups at DEBUG.
                 stats = self._rds_decoder.stats
-                logger.info(
+                # DEBUG: detailed per-decode stats and per-group lines.  The
+                # production health snapshot carries the rolling summary
+                # numbers to the server; per-second console logs would just
+                # be noise.
+                logger.debug(
                     "RDS decode: %d groups in %.1f s window "
                     "(BLER mean %.2f, decode %.0f ms)",
                     stats.last_group_count,

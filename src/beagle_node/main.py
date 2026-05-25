@@ -906,6 +906,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
                             offset_threshold_db=pipeline.carrier_detector.offset_threshold_db,
                             sync_corr_peak=pipeline.latest_corr_peak,
+                            rds=pipeline.rds_health_snapshot(),
                         )
             elif config.sdr_mode == "rspduo" and hasattr(receiver, "paired_stream"):
                 # RSPduo dual-tuner: master=sync, slave=target.  Both buffers
@@ -956,6 +957,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
                             offset_threshold_db=pipeline.carrier_detector.offset_threshold_db,
                             sync_corr_peak=pipeline.latest_corr_peak,
+                            rds=pipeline.rds_health_snapshot(),
                         )
 
             else:
@@ -996,6 +998,7 @@ def run(args: argparse.Namespace | None = None) -> int:
                             onset_threshold_db=pipeline.carrier_detector.onset_threshold_db,
                             offset_threshold_db=pipeline.carrier_detector.offset_threshold_db,
                             sync_corr_peak=pipeline.latest_corr_peak,
+                            rds=pipeline.rds_health_snapshot(),
                         )
 
     except KeyboardInterrupt:

@@ -140,3 +140,22 @@ class TestPipelineIntegration:
         pipe = NodePipeline(config=cfg)
         assert pipe.rds_decoder is not None
         assert isinstance(pipe.rds_decoder, RDSDecoderService)
+
+    def test_rds_health_snapshot_initial(self):
+        """Snapshot is well-formed before any decode has run."""
+        from beagle_node.pipeline.pipeline import NodePipeline, PipelineConfig
+        cfg = PipelineConfig(sync_mode="rds")
+        pipe = NodePipeline(config=cfg)
+        snap = pipe.rds_health_snapshot()
+        assert snap is not None
+        # Counters start at zero
+        assert snap["anchor_emitted"] == 0
+        assert snap["anchor_dropped_no_lookup"] == 0
+        assert snap["anchor_dropped_no_a"] == 0
+        # No onsets yet → emit fraction is undefined
+        assert snap["anchor_emit_fraction"] is None
+        # No decodes yet → group count is zero, bler is None (NaN sentinel)
+        assert snap["group_count"] == 0
+        assert snap["bler_mean"] is None or snap["bler_mean"] == 0.0
+        # group_period_hz is the constant for the server's reference
+        assert snap["group_period_hz"] == pytest.approx(11.418, abs=0.01)

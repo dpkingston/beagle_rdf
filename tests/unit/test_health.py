@@ -90,6 +90,39 @@ def test_sync_corr_peak_none_does_not_clear(state):
     assert snap["sync_corr_peak"] == 0.5
 
 
+def test_rds_field_optional(state):
+    """``rds`` is omitted from snapshot until set (e.g., RDS sync mode off)."""
+    snap = state.snapshot()
+    assert "rds" not in snap
+
+
+def test_rds_field_round_trip(state):
+    """The RDS health summary dict passes through verbatim."""
+    rds_snap = {
+        "group_count": 22,
+        "group_period_hz": 11.418,
+        "bler_mean": 0.02,
+        "decode_ms": 105.0,
+        "anchor_emitted": 1842,
+        "anchor_dropped_no_lookup": 0,
+        "anchor_dropped_no_a": 17,
+        "anchor_emit_fraction": 0.991,
+    }
+    state.update(rds=rds_snap)
+    snap = state.snapshot()
+    assert snap["rds"] == rds_snap
+
+
+def test_rds_none_does_not_clear(state):
+    """Calling update() without rds preserves the prior value (so the
+    server keeps seeing the last decoder summary even on cycles where
+    no new decode has fired yet)."""
+    state.update(rds={"group_count": 22, "bler_mean": 0.0})
+    state.update(events_submitted=10)
+    snap = state.snapshot()
+    assert snap["rds"]["group_count"] == 22
+
+
 def test_degraded_when_events_dropped(state):
     # Fake enough uptime to leave "starting"
     state.start_time -= 40.0
