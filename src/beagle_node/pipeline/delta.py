@@ -47,19 +47,36 @@ two_sdr
     After PPS alignment, both streams are treated as a single shared clock.
     pps_anchored=True is set on the resulting CarrierEvent.
 
-Sync matching
--------------
-For each carrier event, DeltaComputer finds the best SyncEvent within
-max_sync_age_samples.  The selection prefers **block-A bit-0** anchors
-(the start of each RDS group) when an RDS block decoder lookup is
-available, falling back to the most recent SyncEvent before the carrier
-event when no block-A anchor is in range.
+Sync matching (Commit 6 — fail-closed block-A anchor)
+-----------------------------------------------------
+For each carrier event, DeltaComputer searches a window of
+**±half an RDS group period** (≈ ±44 ms) around the carrier event's
+sample index for a SyncEvent that the block-context lookup identifies
+as the first bit (bit 0) of an RDS block A.
 
-Block-A bit-0 anchoring matters cross-node: every receiver of the same
-FM station sees the same broadcast bits, so when both nodes pick the
-nearest block-A-bit-0 they end up locked to the same physical RDS
-group boundary.  This converts a fixed-but-arbitrary per-pair offset
-(which the server must calibrate out) into a shared zero reference.
+A complete RDS group spans 104 bits ≈ 87.6 ms; bit-0 of block A occurs
+exactly once per group.  So a ±44 ms window contains **at most one**
+broadcast A-bit-0.  When both receivers have decoded that group, both
+independently pick the same physical anchor (deterministic agreement).
+When either node has lost the group to a BLER gap, that node emits
+**nothing** — there is no fallback.  The server-side pair-matcher will
+drop the unpaired measurement on the other node, preserving cross-pair
+consistency at the cost of an occasional dropped event.
+
+This fail-closed design is appropriate because:
+
+  - CarrierPlateau events fire periodically during sustained carriers,
+    so a single sustained transmission yields multiple measurement
+    opportunities.  Losing one to a BLER gap rarely loses the whole
+    transmission.
+  - The legacy "nearest sync before event" fallback is independently
+    bad cross-node: each node has its own sub-bit alignment offset, so
+    even when both fall back to legacy they pick anchors that differ
+    by tens to hundreds of microseconds.  Emitting nothing is no worse
+    than emitting an unaligned legacy measurement.
+
+A block_context_lookup callable is required.  Without it, _match
+returns None for every event.
 """
 
 from __future__ import annotations
@@ -161,17 +178,30 @@ class DeltaComputer:
         block_context_lookup: BlockContextLookup | None = None,
     ) -> None:
         self._rate = float(sample_rate_hz)
+        # RDS group period in samples (87.578... ms at 1187.5 / 104 bits/group).
+        # Half this value caps the anchor-search window: a window wider than
+        # half a group period would risk picking the *wrong* group's A-bit-0
+        # (since the broadcast emits one A-bit-0 per group period).
+        self._group_period_samples = self._rate / (1187.5 / 104.0)
+        self._half_group_samples = int(round(self._group_period_samples / 2.0))
+        # max_sync_age_samples drives BOTH pending-event aging and the
+        # anchor-search window.  The search window is capped at half a
+        # group period (above) to keep the per-event "at most one
+        # candidate" invariant.  Production callers should pass
+        # max_sync_age_samples ≥ half_group_samples so the search window
+        # isn't clipped; tests sometimes pass small values intentionally.
         self._max_age = int(max_sync_age_samples)
+        self._search_window = min(self._max_age, self._half_group_samples)
         self._pps_anchored = bool(pps_anchored)
         self._min_corr = float(min_corr_peak)
-        # When provided, _match() prefers SyncEvents that land on the
-        # first bit of an RDS block A (the natural group boundary).
-        # When None, falls back to the legacy "most recent sync before
-        # carrier event" behavior.
+        # block_context_lookup is REQUIRED for the fail-closed matcher to
+        # emit anything.  When None, every _match() call returns None and
+        # no measurements are produced.  See module docstring "Sync matching".
         self._block_lookup = block_context_lookup
-        # Telemetry: counts of anchor-selection outcomes per match.
-        self._anchor_chose_block_a: int = 0    # matches that found a block-A anchor
-        self._anchor_fallback_legacy: int = 0  # matches that used legacy nearest
+        # Telemetry: outcomes of anchor selection per _match() invocation.
+        self._anchor_chose_block_a: int = 0    # picked a block-A bit-0 anchor → emitted
+        self._anchor_no_lookup_dropped: int = 0  # no lookup configured → dropped
+        self._anchor_no_a_in_window_dropped: int = 0  # no A-anchor in ±window → dropped
 
         # Recent sync events (kept until too old)
         self._sync_events: list[SyncEvent] = []
@@ -241,12 +271,26 @@ class DeltaComputer:
         # This must happen here (not only in _flush) because _flush is only called
         # by feed_onset/feed_offset.  During quiet periods with no carrier activity,
         # sync events accumulate at ~100 Hz indefinitely without this pruning.
-        # A sync can only match a carrier event with sample_index >= sync.sample_index,
-        # so future carrier events (arriving after this sync) need syncs no older
-        # than max_sync_age_samples behind them.  Pruning to the current event's
-        # sample_index - max_age is safe: any carrier event at or after this sync
-        # can use syncs >= its own sample_index - max_age >= this cutoff.
-        cutoff = event.sample_index - self._max_age
+        #
+        # Cutoff must be the older of:
+        #   (a) event.sample_index - max_age — any future carrier event needs
+        #       syncs no older than max_age before its own sample_index
+        #   (b) oldest_pending.sample_index - max_age — the symmetric window
+        #       used by _match means a *pending* carrier event still needs
+        #       syncs UP TO max_age *after* its sample_index too; conversely
+        #       it needs syncs at its sample_index - max_age and later
+        #
+        # Pre-Commit-6 this only used (a) because the legacy matcher accepted
+        # only pre-event syncs.  The Commit 6 ±half-group symmetric search
+        # window means pending events still need post-event syncs that haven't
+        # arrived yet — so we must NOT prune syncs that fall in a pending
+        # event's search window just because they're older than the latest
+        # sync's max_age cutoff.
+        if self._pending_events:
+            oldest_pending = min(e.sample_index for e, _ in self._pending_events)
+            cutoff = min(oldest_pending, event.sample_index) - self._max_age
+        else:
+            cutoff = event.sample_index - self._max_age
         self._sync_events = [s for s in self._sync_events if s.sample_index >= cutoff]
 
     def feed_onset(self, onset: CarrierOnset) -> list[TDOAMeasurement]:
@@ -336,83 +380,80 @@ class DeltaComputer:
 
     def _match(self, event: _CarrierEvent, event_type: str) -> TDOAMeasurement | None:
         """
-        Find the best SyncEvent for this carrier event.
+        Find the SyncEvent that anchors this carrier event to a block-A bit-0.
 
-        Selection (in priority order):
-          1. **Block-A bit-0** anchor: if a block context lookup is configured
-             and any SyncEvent within max_sync_age_samples is the first bit
-             of an RDS group's block A (block_letter="A", bit_in_block=0),
-             choose the one closest in time to the carrier event.
-          2. **Legacy nearest**: most recent SyncEvent with
-             sample_index <= event.sample_index and within max_sync_age_samples.
+        Searches a window of ±half an RDS group period (≈ ±44 ms) around
+        the carrier event for a SyncEvent that the block-context lookup
+        identifies as bit 0 of a block A.  Returns the corresponding
+        TDOAMeasurement, or **None** if:
 
-        Preference (1) is enabled whenever ``block_context_lookup`` was
-        passed to __init__; it requires the RDS decoder to have actually
-        decoded the group containing the candidate sync event.  During the
-        decoder's warmup phase (or under poor signal conditions) no block
-        context is available and we fall through to (2) — which keeps the
-        legacy behavior unchanged, so this is a strict improvement.
+          - no block-context lookup is configured, OR
+          - the lookup identifies no A-bit-0 anchor in the search window
+            (e.g., the surrounding group failed to decode due to a BLER
+            gap, polarity flip, or signal fade)
+
+        There is no legacy fallback.  A returned None means the caller
+        emits no measurement — the server's pair-matcher will drop the
+        unpaired counterpart on the other node, which is the desired
+        behavior: better to lose this measurement than to emit one
+        anchored to a per-node-arbitrary bit boundary that won't agree
+        with the other node's choice.
         """
-        in_range = [
-            s for s in self._sync_events
-            if abs(s.sample_index - event.sample_index) <= self._max_age
-        ]
-        if not in_range:
+        if self._block_lookup is None:
+            self._anchor_no_lookup_dropped += 1
             logger.debug(
-                "No sync event within %d samples of %s at %d "
-                "(newest sync: %.1f, total syncs: %d)",
-                self._max_age,
-                event_type,
-                event.sample_index,
-                self._sync_events[-1].sample_index if self._sync_events else -1,
-                len(self._sync_events),
+                "No block-context lookup configured; dropping %s at %d",
+                event_type, event.sample_index,
             )
             return None
 
-        # Tier 1: prefer block-A bit-0 anchors when the decoder lookup
-        # has identified any in the search window.
+        # Search window: ±_search_window samples around the carrier event,
+        # capped at half a group period to ensure at most one broadcast
+        # A-bit-0 falls in the window (groups are spaced exactly one group
+        # period apart in the broadcast bit stream).
+        window = self._search_window
         anchor_letter: str | None = None
         anchor_bit: int | None = None
         anchor_group_pi: int | None = None
         anchor_group_type: str | None = None
         best: SyncEvent | None = None
+        best_ctx: BlockContext | None = None
+        best_dist: int | float = window + 1
 
-        if self._block_lookup is not None:
-            a_anchors: list[tuple[SyncEvent, BlockContext]] = []
-            for s in in_range:
-                ctx = self._block_lookup(s.sample_index)
-                if ctx is None:
-                    continue
-                if ctx.block_letter == "A" and ctx.bit_in_block == 0:
-                    a_anchors.append((s, ctx))
-            if a_anchors:
-                best, best_ctx = min(
-                    a_anchors,
-                    key=lambda sc: abs(sc[0].sample_index - event.sample_index),
-                )
-                anchor_letter = best_ctx.block_letter
-                anchor_bit = best_ctx.bit_in_block
-                anchor_group_pi = best_ctx.group_pi
-                anchor_group_type = best_ctx.group_type
-                self._anchor_chose_block_a += 1
-                logger.debug(
-                    "block-A anchor at sample %.1f for %s at %d "
-                    "(pi=0x%04X type=%s)",
-                    best.sample_index, event_type, event.sample_index,
-                    anchor_group_pi or 0, anchor_group_type or "?",
-                )
+        for s in self._sync_events:
+            dist = abs(s.sample_index - event.sample_index)
+            if dist > window:
+                continue
+            ctx = self._block_lookup(s.sample_index)
+            if ctx is None:
+                continue
+            if ctx.block_letter != "A" or ctx.bit_in_block != 0:
+                continue
+            if dist < best_dist:
+                best = s
+                best_ctx = ctx
+                best_dist = dist
 
-        # Tier 2: legacy "most recent sync before event" fallback.
-        if best is None:
-            pre_event = [s for s in in_range if s.sample_index <= event.sample_index]
-            if not pre_event:
-                logger.debug(
-                    "No pre-event sync within %d samples of %s at %d",
-                    self._max_age, event_type, event.sample_index,
-                )
-                return None
-            best = max(pre_event, key=lambda s: s.sample_index)
-            self._anchor_fallback_legacy += 1
+        if best is None or best_ctx is None:
+            self._anchor_no_a_in_window_dropped += 1
+            logger.debug(
+                "No block-A bit-0 anchor in ±%d samples of %s at %d "
+                "(total syncs in buffer: %d) - dropping",
+                window, event_type, event.sample_index, len(self._sync_events),
+            )
+            return None
+
+        anchor_letter = best_ctx.block_letter
+        anchor_bit = best_ctx.bit_in_block
+        anchor_group_pi = best_ctx.group_pi
+        anchor_group_type = best_ctx.group_type
+        self._anchor_chose_block_a += 1
+        logger.debug(
+            "block-A anchor at sample %.1f for %s at %d "
+            "(pi=0x%04X type=%s, dist %d samples)",
+            best.sample_index, event_type, event.sample_index,
+            anchor_group_pi or 0, anchor_group_type or "?", int(best_dist),
+        )
 
         # Apply crystal calibration to the sample rate
         corrected_rate = self._rate * best.sample_rate_correction

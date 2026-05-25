@@ -78,24 +78,28 @@ def _ctx_other(letter: str, bit: int) -> BlockContext:
 
 
 # ---------------------------------------------------------------------------
-# Legacy preserved
+# Fail-closed: no block-A bit-0 anchor in window → no measurement
 # ---------------------------------------------------------------------------
 
-class TestLegacyPreserved:
-    def test_no_lookup_uses_most_recent_before_event(self):
-        dc = DeltaComputer(sample_rate_hz=256_000.0)
+class TestFailClosed:
+    """Commit 6 removed the legacy "nearest-sync-before-event" fallback.
+
+    The matcher now emits a measurement ONLY when a block-context lookup
+    identifies a SyncEvent within the ±half-group search window as
+    block-A bit-0.  All other configurations return no measurement.
+    """
+
+    def test_no_lookup_returns_no_measurement(self):
+        dc = DeltaComputer(sample_rate_hz=256_000.0)   # no block_context_lookup
         dc.feed_sync(_sync(1000))
         dc.feed_sync(_sync(2000))
         dc.feed_sync(_sync(3000))
         results = dc.feed_onset(_onset(3500))
-        assert len(results) == 1
-        m = results[0]
-        # Legacy = most recent before event
-        assert m.sync_sample == 3000
-        assert m.anchor_block_letter is None
-        assert m.anchor_bit_in_block is None
+        assert results == []
+        # Telemetry should reflect the cause
+        assert dc._anchor_no_lookup_dropped >= 1
 
-    def test_lookup_returning_none_falls_back_to_legacy(self):
+    def test_lookup_returning_none_returns_no_measurement(self):
         dc = DeltaComputer(
             sample_rate_hz=256_000.0,
             block_context_lookup=lambda s: None,
@@ -104,14 +108,12 @@ class TestLegacyPreserved:
         dc.feed_sync(_sync(2000))
         dc.feed_sync(_sync(3000))
         results = dc.feed_onset(_onset(3500))
-        assert len(results) == 1
-        m = results[0]
-        assert m.sync_sample == 3000  # legacy nearest-before
-        assert m.anchor_block_letter is None
+        assert results == []
+        assert dc._anchor_no_a_in_window_dropped >= 1
 
-    def test_lookup_returning_non_block_a_falls_back_to_legacy(self):
-        # All in-range sync events are decoded as block C, bit 5 — not the
-        # preferred A-bit-0 anchor.  Should fall back to legacy.
+    def test_lookup_returning_only_non_block_a_returns_no_measurement(self):
+        """When all in-range syncs are decoded as block C / not bit-0,
+        the matcher finds no A-bit-0 and drops the event."""
         def lookup(s: float) -> Optional[BlockContext]:
             return _ctx_other("C", 5)
 
@@ -121,9 +123,8 @@ class TestLegacyPreserved:
         for s in [1000, 2000, 3000]:
             dc.feed_sync(_sync(s))
         results = dc.feed_onset(_onset(3500))
-        assert len(results) == 1
-        assert results[0].sync_sample == 3000
-        assert results[0].anchor_block_letter is None
+        assert results == []
+        assert dc._anchor_no_a_in_window_dropped >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +198,13 @@ class TestBlockAAnchor:
         assert len(results) == 1
         assert results[0].sync_sample == 5000
 
-    def test_anchor_only_when_in_age_window(self):
-        # Block-A anchor exists but is too old (outside max_sync_age).
-        # Should fall back to legacy with whatever's in range.
+    def test_anchor_outside_window_is_dropped(self):
+        """A block-A anchor outside the search window doesn't qualify.
+
+        With the Commit 6 fail-closed matcher, an out-of-window A-anchor
+        plus an in-window non-A sync still produces no measurement (the
+        legacy fallback to non-A is gone).
+        """
         def lookup(s: float) -> Optional[BlockContext]:
             if abs(s - 1000) < 0.5:
                 return _ctx_a0()
@@ -207,17 +212,14 @@ class TestBlockAAnchor:
 
         dc = DeltaComputer(
             sample_rate_hz=256_000.0,
-            max_sync_age_samples=5_000,
+            max_sync_age_samples=5_000,   # also caps the search window
             block_context_lookup=lookup,
         )
-        dc.feed_sync(_sync(1000))     # block-A, but too old
-        dc.feed_sync(_sync(9000))     # in range, not block-A
+        dc.feed_sync(_sync(1000))     # block-A, but >5000 samples from event
+        dc.feed_sync(_sync(9000))     # in range, but not block-A
         results = dc.feed_onset(_onset(10_000))
-        assert len(results) == 1
-        m = results[0]
-        # 1000 is out of range (10000 - 1000 = 9000 > 5000); 9000 is in range
-        assert m.sync_sample == 9000
-        assert m.anchor_block_letter is None
+        # Fail-closed: no A-anchor in the ±5000 search window → no measurement
+        assert results == []
 
 
 # ---------------------------------------------------------------------------
@@ -291,47 +293,56 @@ class TestEndToEndRealFixture:
             else:
                 results.extend(dc.feed_onset(ev))
 
-        assert len(results) >= 14, f"Too few resolved onsets: {len(results)}"
-
-        # Block-A anchor should dominate now that the decoder has groups
-        with_anchor = sum(1 for m in results if m.anchor_block_letter == "A")
-        frac = with_anchor / len(results)
-        assert frac >= 0.85, (
-            f"Only {frac:.0%} of onsets used block-A anchor "
-            f"({with_anchor}/{len(results)})"
+        # Commit 6 fail-closed: emitted measurements may be fewer than the
+        # number of onsets (some are dropped when no A-anchor is in window).
+        # But every emitted measurement must be a block-A bit-0 anchor with
+        # the correct KUOW PI.
+        assert len(results) >= 10, (
+            f"Too few resolved onsets: {len(results)} (expected ≥10 of 18; "
+            f"some may be dropped due to BLER gaps)"
         )
-        # All anchored measurements should carry the correct KUOW PI and bit-0
         for m in results:
-            if m.anchor_block_letter == "A":
-                assert m.anchor_bit_in_block == 0
-                assert m.anchor_group_pi == 0x4652
+            assert m.anchor_block_letter == "A", (
+                f"Fail-closed broken: emitted non-A measurement {m!r}"
+            )
+            assert m.anchor_bit_in_block == 0
+            assert m.anchor_group_pi == 0x4652
 
 
 class TestAnchorTelemetry:
     def test_counters_reflect_selection_outcomes(self):
-        # Three calls: 1 should use block-A, 2 should fall back to legacy.
-        n_a_calls = 0
-
+        """Three carrier events with different lookup outcomes:
+          #1: no A-anchor in window when first checked → pending; later
+              re-evaluated when sync@5000 arrives and resolved as block-A
+          #2: A-anchor at 5000 in window → emit immediately
+          #3: A-anchor at 5000 still in window of 8500 → emit
+        All three eventually emit; the pending mechanic ensures event #1
+        isn't lost just because the A-anchor hadn't arrived yet.
+        """
         def lookup(s: float) -> Optional[BlockContext]:
-            nonlocal n_a_calls
-            # Only the SyncEvent at exactly sample 5000 is block-A
             if abs(s - 5000) < 0.5:
-                n_a_calls += 1
                 return _ctx_a0()
             return None
 
         dc = DeltaComputer(
             sample_rate_hz=256_000.0, block_context_lookup=lookup
         )
-        # Match #1: only sync at 1500, no A in range → legacy
+        # Event #1: only sync at 1500 (not A) → pending
         dc.feed_sync(_sync(1500))
-        dc.feed_onset(_onset(2000))
-        # Match #2: now sync at 5000 is in range → A-bit-0 win
+        r1 = dc.feed_onset(_onset(2000))
+        assert r1 == []
+        # Event #2: sync at 5000 is A; both pending #1 and new #2 resolve
         dc.feed_sync(_sync(5000))
-        dc.feed_onset(_onset(5500))
-        # Match #3: A is still in range but match takes nearest A
+        r2 = dc.feed_onset(_onset(5500))
+        assert len(r2) == 2   # #1 resolves retrospectively, plus #2
+        # Event #3: A-anchor still in window → emit
         dc.feed_sync(_sync(8000))
-        dc.feed_onset(_onset(8500))
-        # 8500 - 5000 = 3500 ≤ default 7680 max_sync_age → A still in range
-        assert dc._anchor_chose_block_a == 2  # matches #2 and #3
-        assert dc._anchor_fallback_legacy == 1  # match #1
+        r3 = dc.feed_onset(_onset(8500))
+        assert len(r3) == 1
+        # All three were ultimately A-anchored
+        assert dc._anchor_chose_block_a == 3
+        # No_a counter was incremented once when event #1 was first checked
+        # but ultimately the pending-retry succeeded for it
+        assert dc._anchor_no_a_in_window_dropped >= 1
+        # The other counter (no_lookup) only increments when lookup is None
+        assert dc._anchor_no_lookup_dropped == 0

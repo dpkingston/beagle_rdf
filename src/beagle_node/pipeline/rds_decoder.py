@@ -178,23 +178,36 @@ class RDSDecoderService:
 
         Returns ``None`` if no decoded group contains this position, or
         if the parent block didn't fully decode.
+
+        The query is tolerant of sub-bit-period misalignment: a sample
+        falling within ±½ bit-width of a block boundary is classified
+        as that block's bit 0 (or bit 25 of the previous block).
+        This matters because the query usually comes from a pilot-
+        derived SyncEvent whose sample_index is calculated through a
+        different timing path than the demodulator's per-bit
+        sample_index — they're nominally at the same physical bit
+        boundary but can differ by a fraction of a bit period.
         """
         # Walk the groups looking for the one whose blocks span sample_index.
         # Groups are time-ordered (BlockSync emits in order).
+        bit_width_samples = self._fs_in / 1187.5
+        half_bit = bit_width_samples / 2.0
         for g in self._latest_groups:
             for blk in g.blocks:
                 if blk is None or not blk.is_received or math.isnan(blk.sample_index):
                     continue
-                # Each block is 26 bits.  Estimate the bit period from the
-                # bit_position spacing if we have an anchor.
-                # Compute the end-of-block sample by adding 26 nominal bit
-                # widths.  Nominal width = fs_in / 1187.5 Hz.
-                bit_width_samples = self._fs_in / 1187.5
-                start = blk.sample_index
-                end = start + BLOCK_LENGTH * bit_width_samples
+                # Each block is 26 bits.  We treat a sample as belonging to
+                # this block if it's within ±½ bit-width of the block's bit-
+                # boundary range — that handles the case where a SyncEvent
+                # for "bit 0" arrives a fraction of a bit before the block's
+                # demodulator-derived start sample.
+                start = blk.sample_index - half_bit
+                end = blk.sample_index + BLOCK_LENGTH * bit_width_samples - half_bit
                 if start <= sample_index < end:
                     # Found
-                    bit_in_block = int((sample_index - start) / bit_width_samples)
+                    bit_in_block = int(
+                        (sample_index - blk.sample_index + half_bit) / bit_width_samples
+                    )
                     bit_in_block = max(0, min(BLOCK_LENGTH - 1, bit_in_block))
                     letter = _offset_letter(blk.offset)
                     return BlockContext(

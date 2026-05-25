@@ -7,6 +7,7 @@ import pytest
 
 from beagle_node.pipeline.carrier_detect import CarrierOnset, CarrierOffset
 from beagle_node.pipeline.delta import DeltaComputer, TDOAMeasurement
+from beagle_node.pipeline.rds_decoder import BlockContext
 from beagle_node.pipeline.sync_detector import SyncEvent
 
 RATE = 256_000.0   # Hz
@@ -31,9 +32,34 @@ def make_offset(sample_index: int, power_db: float = -35.0) -> CarrierOffset:
     return CarrierOffset(sample_index=sample_index, power_db=power_db)
 
 
+def _always_a_lookup(sample_index: float) -> BlockContext:
+    """
+    Test lookup: every sync event is treated as a block-A bit-0 anchor.
+
+    DeltaComputer's production matcher is fail-closed — it only emits a
+    measurement when the block-context lookup identifies a block-A bit-0
+    SyncEvent within the search window.  These legacy tests don't care
+    about the block context; they only test sync-matching mechanics.
+    Configuring a "every sync is block A" lookup keeps the matcher
+    operational without the tests needing to know about the RDS decoder.
+
+    Tests that specifically want to verify fail-closed behavior should
+    pass ``block_context_lookup=None`` to ``make_dc()``.
+    """
+    return BlockContext(
+        block_letter="A",
+        bit_in_block=0,
+        group_pi=0x4652,
+        group_type="0A",
+        group_anchor_sample=float(sample_index),
+        bler=0.0,
+    )
+
+
 def make_dc(**kwargs) -> DeltaComputer:
     defaults = dict(sample_rate_hz=RATE, max_sync_age_samples=10_000,
-                    pps_anchored=False, min_corr_peak=0.1)
+                    pps_anchored=False, min_corr_peak=0.1,
+                    block_context_lookup=_always_a_lookup)
     defaults.update(kwargs)
     return DeltaComputer(**defaults)
 
@@ -83,13 +109,21 @@ def test_uses_most_recent_sync():
     assert results[0].sync_sample == 900
 
 
-def test_sync_after_onset_not_used():
-    """A SyncEvent whose sample_index > onset is NOT used."""
+def test_sync_after_onset_used_if_within_window():
+    """A SyncEvent whose sample_index > onset IS used if in search window.
+
+    The Commit 6 matcher uses a symmetric ±window-samples search around
+    the carrier event for a block-A bit-0 anchor; post-event anchors are
+    valid when in range.  (Legacy "pre-event only" semantics were
+    removed when the fail-closed block-A matcher landed.)
+    """
     dc = make_dc()
-    dc.feed_sync(make_sync(2000))   # after onset
+    dc.feed_sync(make_sync(2000))   # after onset, within window
     results = dc.feed_onset(make_onset(1000))
-    # No valid sync -> no measurement yet
-    assert results == []
+    assert len(results) == 1
+    assert results[0].sync_sample == 2000
+    # sync_delta_samples is negative (sync after event)
+    assert results[0].sync_delta_samples == -1000
 
 
 # ---------------------------------------------------------------------------
