@@ -32,36 +32,60 @@ def make_offset(sample_index: int, power_db: float = -35.0) -> CarrierOffset:
     return CarrierOffset(sample_index=sample_index, power_db=power_db)
 
 
-def _always_a_lookup(sample_index: float) -> BlockContext:
+_SENTINEL = object()
+
+
+def make_dc(*, block_a_anchor_lookup=_SENTINEL, **kwargs) -> DeltaComputer:
+    """Build a DeltaComputer for tests.
+
+    By default supplies a ``block_a_anchor_lookup`` that emulates "every
+    fed SyncEvent is a block-A bit-0 anchor".  This lets the broad body
+    of existing tests that exercise sync-matching mechanics continue to
+    work without each test rewiring the RDS decoder.
+
+    Tests that specifically want to verify fail-closed behavior pass
+    ``block_a_anchor_lookup=None`` (no lookup) or
+    ``block_a_anchor_lookup=lambda c, lb: None`` (lookup that never
+    finds an anchor).
     """
-    Test lookup: every sync event is treated as a block-A bit-0 anchor.
+    # Closure capturing the DC's sync_events list so the lookup naturally
+    # uses whatever SyncEvents the test has fed.  Initialized after the
+    # DC is built.
+    dc_container: list[DeltaComputer] = []
 
-    DeltaComputer's production matcher is fail-closed — it only emits a
-    measurement when the block-context lookup identifies a block-A bit-0
-    SyncEvent within the search window.  These legacy tests don't care
-    about the block context; they only test sync-matching mechanics.
-    Configuring a "every sync is block A" lookup keeps the matcher
-    operational without the tests needing to know about the RDS decoder.
+    def _emulated_a_anchor_lookup(
+        carrier_sample: float, max_lookback: float
+    ) -> BlockContext | None:
+        if not dc_container:
+            return None
+        dc = dc_container[0]
+        valid = [
+            s.sample_index for s in dc._sync_events
+            if s.sample_index <= carrier_sample
+            and carrier_sample - s.sample_index <= max_lookback
+        ]
+        if not valid:
+            return None
+        return BlockContext(
+            block_letter="A",
+            bit_in_block=0,
+            group_pi=0x4652,
+            group_type="0A",
+            group_anchor_sample=max(valid),
+            bler=0.0,
+        )
 
-    Tests that specifically want to verify fail-closed behavior should
-    pass ``block_context_lookup=None`` to ``make_dc()``.
-    """
-    return BlockContext(
-        block_letter="A",
-        bit_in_block=0,
-        group_pi=0x4652,
-        group_type="0A",
-        group_anchor_sample=float(sample_index),
-        bler=0.0,
-    )
+    if block_a_anchor_lookup is _SENTINEL:
+        anchor_lookup = _emulated_a_anchor_lookup
+    else:
+        anchor_lookup = block_a_anchor_lookup
 
-
-def make_dc(**kwargs) -> DeltaComputer:
     defaults = dict(sample_rate_hz=RATE, max_sync_age_samples=10_000,
-                    pps_anchored=False, min_corr_peak=0.1,
-                    block_context_lookup=_always_a_lookup)
+                    pps_anchored=False, min_corr_peak=0.1)
     defaults.update(kwargs)
-    return DeltaComputer(**defaults)
+    dc = DeltaComputer(block_a_anchor_lookup=anchor_lookup, **defaults)
+    dc_container.append(dc)
+    return dc
 
 
 # ---------------------------------------------------------------------------
@@ -109,21 +133,18 @@ def test_uses_most_recent_sync():
     assert results[0].sync_sample == 900
 
 
-def test_sync_after_onset_used_if_within_window():
-    """A SyncEvent whose sample_index > onset IS used if in search window.
+def test_sync_after_onset_not_used():
+    """A SyncEvent whose sample_index > onset is NOT used.
 
-    The Commit 6 matcher uses a symmetric ±window-samples search around
-    the carrier event for a block-A bit-0 anchor; post-event anchors are
-    valid when in range.  (Legacy "pre-event only" semantics were
-    removed when the fail-closed block-A matcher landed.)
+    Commit 8 changed the matcher to "most recent A-anchor at or before
+    the carrier event" (per the cross-node-consistency design).  A
+    SyncEvent after the carrier event is never picked as the anchor.
     """
     dc = make_dc()
-    dc.feed_sync(make_sync(2000))   # after onset, within window
+    dc.feed_sync(make_sync(2000))   # after onset; not usable
     results = dc.feed_onset(make_onset(1000))
-    assert len(results) == 1
-    assert results[0].sync_sample == 2000
-    # sync_delta_samples is negative (sync after event)
-    assert results[0].sync_delta_samples == -1000
+    # No pre-event sync → no anchor → no measurement
+    assert results == []
 
 
 # ---------------------------------------------------------------------------
@@ -487,24 +508,22 @@ class TestSyncEventPruning:
         assert len(results) == 1, "Expected one match after quiet period"
         assert results[0].sync_sample == last_sync_sample
 
-    def test_old_syncs_not_usable_after_pruning(self):
+    def test_carrier_far_past_all_syncs_dropped(self):
         """
-        After quiet-period pruning, syncs older than max_age are gone and
-        cannot be used to match a carrier event that arrives much later.
-        This is correct behaviour: such a match would also be rejected by
-        _match()'s max_sync_age_samples guard anyway.
+        With the Commit 8 matcher, if the most recent sync is more than
+        one group period before the carrier event, the anchor lookup
+        returns None (no decoded A-anchor in the ≈87 ms lookback window).
         """
-        max_age = 500
-        dc = make_dc(max_sync_age_samples=max_age)
+        # Use a small lookback so the test stays in small sample numbers.
+        # group_period_samples ≈ rate / 11.4; at 256k that's 22420.
+        # Place syncs ~50k samples before the carrier — well past lookback.
+        dc = make_dc(max_sync_age_samples=100_000)
+        for i in range(5):
+            dc.feed_sync(make_sync(i * 100))   # syncs at 0..400
 
-        # One early sync; then a long quiet period pushes it out of the window
-        dc.feed_sync(make_sync(0))
-        for i in range(20):
-            dc.feed_sync(make_sync((i + 1) * 100))  # up to sample 2000
-
-        # Carrier event far in the future - the sync at 0 is pruned AND too old
-        results = dc.feed_onset(make_onset(3000))
-        # No sync within max_age=500 of sample 3000 (last sync is at 2000, gap=1000)
+        # Carrier event 50k samples after the last sync.
+        results = dc.feed_onset(make_onset(50_000))
+        # Lookup finds no anchor in the ≈22k lookback window.
         assert results == []
 
     def test_flush_pruning_runs_when_pending_empty(self):

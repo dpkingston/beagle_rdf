@@ -172,6 +172,65 @@ class RDSDecoderService:
         """All groups from the most recent decode of the rolling buffer."""
         return list(self._latest_groups)
 
+    def reset(self) -> None:
+        """
+        Drop the rolling audio buffer and the latest decoded groups.
+
+        Called by the pipeline when an SDR discontinuity (overflow,
+        re-tune) makes the buffered audio inconsistent.  Without this
+        reset the rolling buffer carries pre-discontinuity audio for
+        up to ``window_seconds`` after the event, causing stale or
+        garbled decodes during recovery.
+        """
+        self._buf.clear()
+        self._latest_groups = []
+        self._latest_decode_buffer_start_sample = 0
+        self._last_decode_wallclock_ms = -math.inf
+        # Stats counters are intentionally preserved — they're cumulative
+        # for the lifetime of the process so the server can compute
+        # per-deployment drop rates.
+
+    def find_a_bit0_anchor(
+        self,
+        carrier_sample: float,
+        max_lookback_samples: float,
+    ) -> Optional[BlockContext]:
+        """
+        Find the most recent block-A bit-0 anchor at or before
+        ``carrier_sample``, within ``max_lookback_samples``.
+
+        Returns a BlockContext where ``group_anchor_sample`` is the
+        demodulator-derived sample position of bit 0 of block A.
+        The DeltaComputer uses this as a rough indicator to find the
+        SyncEvent closest to it; that SyncEvent becomes the actual
+        TDOA anchor (sub-µs precision from the pilot path).
+
+        Returns None when the decoder has no decoded block-A bit 0 in
+        the lookback window (e.g., during a BLER gap or right after
+        reset).  Callers should fail-closed in that case.
+        """
+        best_ctx: Optional[BlockContext] = None
+        best_sample: float = float("-inf")
+        for g in self._latest_groups:
+            blk_a = g.blocks[0]
+            if blk_a is None or not blk_a.is_received or math.isnan(blk_a.sample_index):
+                continue
+            if blk_a.sample_index > carrier_sample:
+                continue
+            if carrier_sample - blk_a.sample_index > max_lookback_samples:
+                continue
+            if blk_a.sample_index > best_sample:
+                best_sample = blk_a.sample_index
+                best_ctx = BlockContext(
+                    block_letter="A",
+                    bit_in_block=0,
+                    group_pi=g.pi,
+                    group_type=g.group_type,
+                    group_anchor_sample=blk_a.sample_index,
+                    bler=g.bler,
+                )
+        return best_ctx
+
     def lookup(self, sample_index: float) -> Optional[BlockContext]:
         """
         Find the block context for an MPX sample position.
@@ -179,14 +238,11 @@ class RDSDecoderService:
         Returns ``None`` if no decoded group contains this position, or
         if the parent block didn't fully decode.
 
-        The query is tolerant of sub-bit-period misalignment: a sample
-        falling within ±½ bit-width of a block boundary is classified
-        as that block's bit 0 (or bit 25 of the previous block).
-        This matters because the query usually comes from a pilot-
-        derived SyncEvent whose sample_index is calculated through a
-        different timing path than the demodulator's per-bit
-        sample_index — they're nominally at the same physical bit
-        boundary but can differ by a fraction of a bit period.
+        Currently used only by legacy callers / tests.  The matcher in
+        DeltaComputer now uses ``find_a_bit0_anchor`` instead, which
+        sidesteps the sync-event-vs-block-sample alignment problem that
+        a ±½ bit-width tolerance can't solve when the two timing paths
+        drift apart (e.g., on a different sample rate or SDR chain).
         """
         # Walk the groups looking for the one whose blocks span sample_index.
         # Groups are time-ordered (BlockSync emits in order).
@@ -198,9 +254,7 @@ class RDSDecoderService:
                     continue
                 # Each block is 26 bits.  We treat a sample as belonging to
                 # this block if it's within ±½ bit-width of the block's bit-
-                # boundary range — that handles the case where a SyncEvent
-                # for "bit 0" arrives a fraction of a bit before the block's
-                # demodulator-derived start sample.
+                # boundary range.
                 start = blk.sample_index - half_bit
                 end = blk.sample_index + BLOCK_LENGTH * bit_width_samples - half_bit
                 if start <= sample_index < end:

@@ -55,13 +55,17 @@ def _onset(sample_index: int, power_db: float = 20.0) -> CarrierOnset:
 
 
 # Block context helpers
-def _ctx_a0(pi: int = 0x4652, group_type: str = "0A") -> BlockContext:
+def _ctx_a0(anchor_sample: float, pi: int = 0x4652,
+            group_type: str = "0A") -> BlockContext:
+    """A block-A bit-0 BlockContext where ``group_anchor_sample`` is the
+    demod-derived sample position of bit 0 (used by the matcher to find
+    the closest SyncEvent)."""
     return BlockContext(
         block_letter="A",
         bit_in_block=0,
         group_pi=pi,
         group_type=group_type,
-        group_anchor_sample=0.0,
+        group_anchor_sample=float(anchor_sample),
         bler=0.0,
     )
 
@@ -77,32 +81,43 @@ def _ctx_other(letter: str, bit: int) -> BlockContext:
     )
 
 
+def _anchor_lookup_at(anchor_samples: list[float]):
+    """Build a block_a_anchor_lookup that returns the most recent anchor
+    from ``anchor_samples`` at or before the queried carrier sample, within
+    the lookback window.  Used to simulate a decoder's view in tests."""
+    def lookup(carrier: float, lookback: float):
+        valid = [a for a in anchor_samples
+                 if a <= carrier and carrier - a <= lookback]
+        if not valid:
+            return None
+        return _ctx_a0(anchor_sample=max(valid))
+    return lookup
+
+
 # ---------------------------------------------------------------------------
 # Fail-closed: no block-A bit-0 anchor in window → no measurement
 # ---------------------------------------------------------------------------
 
 class TestFailClosed:
-    """Commit 6 removed the legacy "nearest-sync-before-event" fallback.
-
-    The matcher now emits a measurement ONLY when a block-context lookup
-    identifies a SyncEvent within the ±half-group search window as
-    block-A bit-0.  All other configurations return no measurement.
+    """Commits 6 and 8 made the matcher fail-closed.  A measurement is
+    emitted only when a block_a_anchor_lookup returns a block-A bit-0
+    context AND there's a SyncEvent close enough to that anchor's
+    sample position.  All other configurations return no measurement.
     """
 
     def test_no_lookup_returns_no_measurement(self):
-        dc = DeltaComputer(sample_rate_hz=256_000.0)   # no block_context_lookup
+        dc = DeltaComputer(sample_rate_hz=256_000.0)   # no anchor lookup
         dc.feed_sync(_sync(1000))
         dc.feed_sync(_sync(2000))
         dc.feed_sync(_sync(3000))
         results = dc.feed_onset(_onset(3500))
         assert results == []
-        # Telemetry should reflect the cause
         assert dc._anchor_no_lookup_dropped >= 1
 
     def test_lookup_returning_none_returns_no_measurement(self):
         dc = DeltaComputer(
             sample_rate_hz=256_000.0,
-            block_context_lookup=lambda s: None,
+            block_a_anchor_lookup=lambda c, lb: None,
         )
         dc.feed_sync(_sync(1000))
         dc.feed_sync(_sync(2000))
@@ -111,20 +126,21 @@ class TestFailClosed:
         assert results == []
         assert dc._anchor_no_a_in_window_dropped >= 1
 
-    def test_lookup_returning_only_non_block_a_returns_no_measurement(self):
-        """When all in-range syncs are decoded as block C / not bit-0,
-        the matcher finds no A-bit-0 and drops the event."""
-        def lookup(s: float) -> Optional[BlockContext]:
-            return _ctx_other("C", 5)
-
+    def test_lookup_finds_a_but_no_sync_close_enough(self):
+        """Lookup returns an A-anchor at sample 5000, but no SyncEvent
+        is in the buffer close enough to that anchor → drop."""
         dc = DeltaComputer(
-            sample_rate_hz=256_000.0, block_context_lookup=lookup
+            sample_rate_hz=256_000.0,
+            # Anchor at 5000, but the syncs we feed are 1000-3000 (far from anchor)
+            block_a_anchor_lookup=lambda c, lb: (
+                _ctx_a0(5000.0) if c >= 5000 and c - 5000 <= lb else None
+            ),
         )
         for s in [1000, 2000, 3000]:
             dc.feed_sync(_sync(s))
-        results = dc.feed_onset(_onset(3500))
+        results = dc.feed_onset(_onset(5500))
         assert results == []
-        assert dc._anchor_no_a_in_window_dropped >= 1
+        assert dc._anchor_no_sync_near_a_dropped >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -132,17 +148,13 @@ class TestFailClosed:
 # ---------------------------------------------------------------------------
 
 class TestBlockAAnchor:
-    def test_prefers_block_a_anchor_when_available(self):
-        # SyncEvents at 1000 and 3000.  Only 1000 is annotated as A-bit-0
-        # by the lookup; 3000 is annotated as C bit 5.  Expected: pick 1000
-        # even though 3000 is more recent.
-        def lookup(s: float) -> Optional[BlockContext]:
-            if abs(s - 1000) < 0.5:
-                return _ctx_a0()
-            return _ctx_other("C", 5)
-
+    def test_block_a_anchor_picked_as_sync_sample(self):
+        # Anchor available at sample 3000; matching SyncEvents at 1000, 2000, 3000.
+        # The lookup returns "most recent A-anchor before carrier at sample 3000".
+        # The closest SyncEvent to 3000 is the one at 3000.
         dc = DeltaComputer(
-            sample_rate_hz=256_000.0, block_context_lookup=lookup
+            sample_rate_hz=256_000.0,
+            block_a_anchor_lookup=_anchor_lookup_at([3000.0]),
         )
         dc.feed_sync(_sync(1000))
         dc.feed_sync(_sync(2000))
@@ -150,76 +162,56 @@ class TestBlockAAnchor:
         results = dc.feed_onset(_onset(3500))
         assert len(results) == 1
         m = results[0]
-        assert m.sync_sample == 1000
+        assert m.sync_sample == 3000   # SyncEvent closest to the A anchor
         assert m.anchor_block_letter == "A"
         assert m.anchor_bit_in_block == 0
         assert m.anchor_group_pi == 0x4652
         assert m.anchor_group_type == "0A"
 
-    def test_block_a_anchor_after_event_allowed(self):
-        # A SyncEvent AFTER the carrier onset, but within max_sync_age,
-        # is acceptable when it's a block-A bit-0.  This relaxes the
-        # legacy pre-event constraint.
-        def lookup(s: float) -> Optional[BlockContext]:
-            if abs(s - 5000) < 0.5:
-                return _ctx_a0()
-            return None
-
+    def test_anchor_after_event_not_picked(self):
+        """Commit 8 uses 'most recent A-anchor at or before the carrier
+        event'.  A future anchor (sample > carrier) is never used.
+        """
+        # Anchor only exists at sample 5000; carrier is at 4000.
         dc = DeltaComputer(
-            sample_rate_hz=256_000.0, block_context_lookup=lookup
+            sample_rate_hz=256_000.0,
+            block_a_anchor_lookup=_anchor_lookup_at([5000.0]),
         )
         dc.feed_sync(_sync(3000))
         dc.feed_sync(_sync(5000))
-        # Carrier at 4000 — A anchor at 5000 is 1000 samples after
         results = dc.feed_onset(_onset(4000))
-        assert len(results) == 1
-        m = results[0]
-        assert m.sync_sample == 5000
-        assert m.anchor_block_letter == "A"
-        # The sample delta is negative (sync after event)
-        assert m.sync_delta_samples == -1000
+        # No A-anchor at or before sample 4000 → drop
+        assert results == []
+        assert dc._anchor_no_a_in_window_dropped >= 1
 
-    def test_chooses_closest_block_a_anchor_when_multiple(self):
-        # Three block-A bit-0 anchors at 1000, 5000, 9000.  Carrier at
-        # 6000.  Expect 5000 (closest, 1000 before) — not 9000 (3000 after).
-        def lookup(s: float) -> Optional[BlockContext]:
-            if int(s) in (1000, 5000, 9000):
-                return _ctx_a0()
-            return None
-
+    def test_chooses_most_recent_block_a_anchor_before_event(self):
+        # Two A-anchors before the carrier (5000, 9000); carrier at 9500.
+        # 'Most recent before' picks 9000.
         dc = DeltaComputer(
             sample_rate_hz=256_000.0,
             max_sync_age_samples=20_000,
-            block_context_lookup=lookup,
+            block_a_anchor_lookup=_anchor_lookup_at([1000.0, 5000.0, 9000.0]),
         )
         for s in [1000, 5000, 9000]:
             dc.feed_sync(_sync(s))
-        results = dc.feed_onset(_onset(6000))
+        results = dc.feed_onset(_onset(9500))
         assert len(results) == 1
-        assert results[0].sync_sample == 5000
+        # Closest SyncEvent to A-anchor 9000 is the SyncEvent at sample 9000
+        assert results[0].sync_sample == 9000
 
-    def test_anchor_outside_window_is_dropped(self):
-        """A block-A anchor outside the search window doesn't qualify.
-
-        With the Commit 6 fail-closed matcher, an out-of-window A-anchor
-        plus an in-window non-A sync still produces no measurement (the
-        legacy fallback to non-A is gone).
-        """
-        def lookup(s: float) -> Optional[BlockContext]:
-            if abs(s - 1000) < 0.5:
-                return _ctx_a0()
-            return None
-
+    def test_anchor_outside_lookback_dropped(self):
+        """An A-anchor too far back (beyond one group period) doesn't qualify."""
+        # Anchor at sample 1000, but carrier at sample 100_000 — far beyond
+        # one group period (~22000 samples at 256 kHz).
         dc = DeltaComputer(
             sample_rate_hz=256_000.0,
-            max_sync_age_samples=5_000,   # also caps the search window
-            block_context_lookup=lookup,
+            block_a_anchor_lookup=_anchor_lookup_at([1000.0]),
         )
-        dc.feed_sync(_sync(1000))     # block-A, but >5000 samples from event
-        dc.feed_sync(_sync(9000))     # in range, but not block-A
-        results = dc.feed_onset(_onset(10_000))
-        # Fail-closed: no A-anchor in the ±5000 search window → no measurement
+        dc.feed_sync(_sync(99000))
+        results = dc.feed_onset(_onset(100_000))
+        # Lookup returns None because 100_000 - 1000 > 1 group period
         assert results == []
+        assert dc._anchor_no_a_in_window_dropped >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +275,8 @@ class TestEndToEndRealFixture:
 
         dc = DeltaComputer(
             sample_rate_hz=fs,
-            block_context_lookup=svc.lookup,
-            max_sync_age_samples=int(0.2 * fs),  # 200 ms anchor window
+            block_a_anchor_lookup=svc.find_a_bit0_anchor,
+            max_sync_age_samples=int(0.2 * fs),  # 200 ms pending-event aging
         )
         results = []
         for _, kind, ev in queue:
@@ -311,38 +303,40 @@ class TestEndToEndRealFixture:
 
 class TestAnchorTelemetry:
     def test_counters_reflect_selection_outcomes(self):
-        """Three carrier events with different lookup outcomes:
-          #1: no A-anchor in window when first checked → pending; later
-              re-evaluated when sync@5000 arrives and resolved as block-A
-          #2: A-anchor at 5000 in window → emit immediately
-          #3: A-anchor at 5000 still in window of 8500 → emit
-        All three eventually emit; the pending mechanic ensures event #1
-        isn't lost just because the A-anchor hadn't arrived yet.
+        """Three carrier events, each preceded by an A-anchor:
+          #1: no A-anchor yet → pending, eventually ages out (no_a counter)
+          #2: A-anchor 100 samples back exists → emit (chose_block_a)
+          #3: A-anchor still in lookback → emit (chose_block_a)
         """
-        def lookup(s: float) -> Optional[BlockContext]:
-            if abs(s - 5000) < 0.5:
-                return _ctx_a0()
-            return None
+        anchor_samples: list[float] = []
+
+        def lookup(carrier: float, lookback: float):
+            valid = [a for a in anchor_samples
+                     if a <= carrier and carrier - a <= lookback]
+            if not valid:
+                return None
+            return _ctx_a0(anchor_sample=max(valid))
 
         dc = DeltaComputer(
-            sample_rate_hz=256_000.0, block_context_lookup=lookup
+            sample_rate_hz=256_000.0,
+            max_sync_age_samples=3_000,    # small so #1 ages out by #2
+            block_a_anchor_lookup=lookup,
         )
-        # Event #1: only sync at 1500 (not A) → pending
+        # Event #1: no anchor yet → pending
         dc.feed_sync(_sync(1500))
         r1 = dc.feed_onset(_onset(2000))
         assert r1 == []
-        # Event #2: sync at 5000 is A; both pending #1 and new #2 resolve
+        # Event #2: add an anchor before the carrier; #1 still has no anchor
+        # before its time (anchor 5000 > 2000), so #1 ages out.  #2 resolves.
+        anchor_samples.append(5000.0)
         dc.feed_sync(_sync(5000))
         r2 = dc.feed_onset(_onset(5500))
-        assert len(r2) == 2   # #1 resolves retrospectively, plus #2
-        # Event #3: A-anchor still in window → emit
+        assert len(r2) == 1
+        # Event #3: still has anchor 5000 in lookback
         dc.feed_sync(_sync(8000))
         r3 = dc.feed_onset(_onset(8500))
         assert len(r3) == 1
-        # All three were ultimately A-anchored
-        assert dc._anchor_chose_block_a == 3
-        # No_a counter was incremented once when event #1 was first checked
-        # but ultimately the pending-retry succeeded for it
+        assert dc._anchor_chose_block_a == 2
+        # #1 was checked many times and dropped each → counter increments
         assert dc._anchor_no_a_in_window_dropped >= 1
-        # The other counter (no_lookup) only increments when lookup is None
         assert dc._anchor_no_lookup_dropped == 0

@@ -236,18 +236,20 @@ class NodePipeline:
         )
 
         # Delta computer.  When the RDS decoder service is active, pass
-        # its lookup() in so that DeltaComputer can prefer block-A
-        # bit-0 anchors over the legacy "most recent before event"
-        # heuristic (Commit 4 — shared cross-node anchor selection).
-        block_lookup = (
-            self._rds_decoder.lookup if self._rds_decoder is not None else None
+        # its ``find_a_bit0_anchor`` callable so DeltaComputer can match
+        # carrier events to block-A bit-0 SyncEvents.  See delta.py
+        # ``BlockAAnchorLookup`` docstring.
+        anchor_lookup = (
+            self._rds_decoder.find_a_bit0_anchor
+            if self._rds_decoder is not None
+            else None
         )
         self._delta = DeltaComputer(
             sample_rate_hz=c.sdr_rate_hz / c.sync_decimation,
             max_sync_age_samples=c.max_sync_age_samples,
             pps_anchored=pps_anchored,
             min_corr_peak=c.min_corr_peak,
-            block_context_lookup=block_lookup,
+            block_a_anchor_lookup=anchor_lookup,
         )
 
         # PPS detector (only used in two_sdr mode)
@@ -597,6 +599,11 @@ class NodePipeline:
         self._sync_det.reset()
         self._carrier_det.cancel_pending()
         self._delta.reset()
+        # Drop the RDS decoder's rolling buffer too — its 2-second window
+        # would otherwise carry stale pre-discontinuity audio for the next
+        # two seconds, producing garbled decodes during recovery.
+        if self._rds_decoder is not None:
+            self._rds_decoder.reset()
 
     def reset(self) -> None:
         """Reset all pipeline state."""
