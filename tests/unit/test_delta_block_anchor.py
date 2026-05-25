@@ -199,6 +199,25 @@ class TestBlockAAnchor:
         # Closest SyncEvent to A-anchor 9000 is the SyncEvent at sample 9000
         assert results[0].sync_sample == 9000
 
+    def test_match_with_timing_diag_enabled_no_crash(self, monkeypatch):
+        """Regression: TIMING_DIAG=1 must not raise NameError on a successful
+        match (a stale ``len(candidates)`` reference in the diagnostic block
+        was deployed in the c799fcf commit and crashed nodes when
+        BEAGLE_TIMING_DIAG was set in their environment).
+        """
+        import beagle_node.pipeline.delta as delta_mod
+        monkeypatch.setattr(delta_mod, "_TIMING_DIAG", True)
+
+        dc = DeltaComputer(
+            sample_rate_hz=256_000.0,
+            block_a_anchor_lookup=_anchor_lookup_at([3000.0]),
+        )
+        dc.feed_sync(_sync(3000))
+        results = dc.feed_onset(_onset(3500))
+        # Must complete without exception and emit one measurement
+        assert len(results) == 1
+        assert results[0].anchor_block_letter == "A"
+
     def test_anchor_outside_lookback_dropped(self):
         """An A-anchor too far back (beyond one group period) doesn't qualify."""
         # Anchor at sample 1000, but carrier at sample 100_000 — far beyond

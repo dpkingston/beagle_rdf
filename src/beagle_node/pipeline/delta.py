@@ -448,10 +448,15 @@ class DeltaComputer:
         )
         if best_ctx is None:
             self._anchor_no_a_in_window_dropped += 1
-            logger.warning(
+            # DEBUG: a sustained carrier in a BLER gap can produce one of
+            # these per plateau (every ~1-5 s).  The /health rds counters
+            # carry the cumulative rate for monitoring; per-event logging
+            # at WARNING is too chatty.  Bump to DEBUG with --log-level
+            # to investigate specific drops.
+            logger.debug(
                 "Dropping %s at sample %d: no decoded block-A bit-0 within "
-                "%d samples (≈1 group period) before carrier — RDS BLER gap "
-                "or decoder warmup",
+                "%d samples (about 1 group period) before carrier "
+                "(RDS BLER gap or decoder warmup)",
                 event_type, event.sample_index, self._anchor_lookback_samples,
             )
             return None
@@ -460,9 +465,9 @@ class DeltaComputer:
         # position.  This SyncEvent becomes the actual TDOA reference.
         if not self._sync_events:
             self._anchor_no_sync_near_a_dropped += 1
-            logger.warning(
-                "Dropping %s at sample %d: no SyncEvents in buffer (sync "
-                "detector still warming up or producing no events)",
+            logger.debug(
+                "Dropping %s at sample %d: no SyncEvents in buffer "
+                "(sync detector warming up or producing no events)",
                 event_type, event.sample_index,
             )
             return None
@@ -480,10 +485,10 @@ class DeltaComputer:
         # transient sync-stream gaps.
         if sync_to_anchor_distance > self._sync_to_anchor_tolerance_samples:
             self._anchor_no_sync_near_a_dropped += 1
-            logger.warning(
+            logger.debug(
                 "Dropping %s at sample %d: closest SyncEvent (sample %.1f) "
-                "is %d samples from decoded block-A bit-0 (sample %.1f) — "
-                "tolerance %d.  Sync stream gap?",
+                "is %d samples from decoded block-A bit-0 (sample %.1f), "
+                "tolerance %d (sync stream gap?)",
                 event_type, event.sample_index,
                 best.sample_index, int(sync_to_anchor_distance),
                 anchor_sample_demod, self._sync_to_anchor_tolerance_samples,
@@ -535,7 +540,15 @@ class DeltaComputer:
                     "sample_rate_correction": round(best.sample_rate_correction, 8),
                     "sync_to_snippet_start_ns": sync_to_snippet_start_ns,
                     "corr_peak": round(best.corr_peak, 4),
-                    "n_sync_candidates": len(candidates),
+                    # Commit 8 refactor: was `n_sync_candidates`.  The matcher
+                    # no longer iterates sync events to classify them; it
+                    # queries the decoder for the anchor and finds the
+                    # closest sync.  These two fields surface the new state.
+                    "anchor_sample_demod": round(anchor_sample_demod, 3),
+                    "sync_to_anchor_dist": int(sync_to_anchor_distance),
+                    "n_sync_in_buffer": len(self._sync_events),
+                    "anchor_group_pi": anchor_group_pi,
+                    "anchor_group_type": anchor_group_type,
                 }),
             )
 
