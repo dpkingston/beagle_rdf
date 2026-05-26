@@ -13,7 +13,15 @@ import re
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import field_validator, model_validator
+
+# Shadow pydantic.BaseModel with the project's warn-on-unknown-field base.
+# Every model in this file inherits its model_validator that logs a one-
+# shot warning per (model, field) when an unknown key is encountered.
+# Unknown fields are still dropped (fleet-safety preserved); operators
+# get visibility, and scripts/verify_config.py remains the strict
+# pre-deploy check.
+from beagle_node.utils.strict_model import WarnOnUnknownFieldsBase as BaseModel
 
 
 # ---------------------------------------------------------------------------
@@ -27,9 +35,10 @@ class NodeLocation(BaseModel):
     Beagle's TDOA solver is two-dimensional (lat/lon only); altitude
     contributes negligibly compared to the carrier-detector quantisation
     floor and was never read by any code path.  Older configs may still
-    include `altitude_m` and `uncertainty_m` fields -- Pydantic v2's
-    default `extra="ignore"` silently drops them, so legacy configs
-    continue to load without errors.
+    include `altitude_m` and `uncertainty_m` fields -- the runtime
+    accepts them (drops the value, doesn't fail) but logs a one-shot
+    WARNING via WarnOnUnknownFieldsBase.  Use scripts/verify_config.py
+    to batch-clean configs before deployment.
     """
     latitude_deg: float
     longitude_deg: float

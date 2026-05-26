@@ -13,15 +13,24 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
+
+# Shadow pydantic.BaseModel with the project's warn-on-unknown-field base.
+# Older nodes send events with retired fields (e.g. altitude_m, uncertainty_m);
+# the runtime continues to accept them, but logs a one-shot WARNING per
+# (model, field) so the operator can see which fields aren't going where
+# they think they're going.  See utils/strict_model.py.
+from beagle_node.utils.strict_model import WarnOnUnknownFieldsBase as BaseModel
 
 
 class NodeLocation(BaseModel):
     """Geographic location of a Beagle node, embedded in every CarrierEvent.
 
     Two-dimensional only -- the TDOA solver does not use altitude.
-    Pydantic v2's default `extra="ignore"` lets older event payloads
-    that still carry `altitude_m` / `uncertainty_m` deserialize cleanly.
+    Older event payloads that carry `altitude_m` / `uncertainty_m` still
+    deserialize cleanly via WarnOnUnknownFieldsBase, but those fields
+    trigger a one-shot WARNING in the log so the operator can see which
+    nodes are still running the older code that emits them.
     """
     latitude_deg: float
     longitude_deg: float

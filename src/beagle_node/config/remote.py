@@ -35,9 +35,9 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
-from pydantic import BaseModel
 
 from beagle_node.config.schema import NodeConfig
+from beagle_node.utils.strict_model import WarnOnUnknownFieldsBase as BaseModel
 
 logger = logging.getLogger(__name__)
 

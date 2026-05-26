@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
+
+# Shadow pydantic.BaseModel with the project's warn-on-unknown-field base.
+# Unknown fields in server config are dropped (legacy behavior) but logged
+# once so operators see typos.  See beagle_node/utils/strict_model.py.
+from beagle_node.utils.strict_model import WarnOnUnknownFieldsBase as BaseModel
 
 
 class ServerConfig(BaseModel):
