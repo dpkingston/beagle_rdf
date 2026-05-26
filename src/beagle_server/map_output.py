@@ -2071,13 +2071,13 @@ window._tdoaOpenDetail = function (nodeId) {
                 if (rds.anchor_emitted != null) {
                     html += '<div class="tp-row"><span class="tp-key">Emitted</span><span>' + rds.anchor_emitted + '</span></div>';
                 }
-                if (rds.anchor_dropped_no_a != null && rds.anchor_dropped_no_a > 0) {
-                    html += '<div class="tp-row"><span class="tp-key">Dropped (no A)</span>'
-                          + '<span style="color:#f39c12">' + rds.anchor_dropped_no_a + '</span></div>';
+                if (rds.anchor_aged_out != null && rds.anchor_aged_out > 0) {
+                    html += '<div class="tp-row"><span class="tp-key">Aged out</span>'
+                          + '<span style="color:#f39c12">' + rds.anchor_aged_out + '</span></div>';
                 }
-                if (rds.anchor_dropped_no_lookup != null && rds.anchor_dropped_no_lookup > 0) {
-                    html += '<div class="tp-row"><span class="tp-key">Dropped (no lookup)</span>'
-                          + '<span style="color:#e74c3c">' + rds.anchor_dropped_no_lookup + '</span></div>';
+                if (rds.anchor_match_attempts_failed != null && rds.anchor_match_attempts_failed > 0) {
+                    html += '<div class="tp-row"><span class="tp-key">Match retries</span>'
+                          + '<span style="color:#7a9bbf">' + rds.anchor_match_attempts_failed + '</span></div>';
                 }
                 html += '</div>';
             }

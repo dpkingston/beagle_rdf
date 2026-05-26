@@ -29,10 +29,10 @@ Response schema
     "group_period_hz":           11.418,   # theoretical RDS group rate (constant)
     "bler_mean":                  0.02,    # 0..1, mean over the rolling window
     "decode_ms":                  105.0,   # CPU time of last decode
-    "anchor_emitted":             1842,    # cumulative measurements with a block-A anchor
-    "anchor_dropped_no_lookup":      0,    # cumulative drops because no RDS context
-    "anchor_dropped_no_a":          17,    # cumulative drops because no A in ±half-group
-    "anchor_emit_fraction":      0.991     # emitted / (emitted+dropped); null until first onset
+    "anchor_emitted":             1842,    # per-event count of emitted measurements
+    "anchor_aged_out":              17,    # per-event count of pending events that never matched
+    "anchor_emit_fraction":      0.991,    # emitted / (emitted+aged_out); null until first event
+    "anchor_match_attempts_failed": 4350   # per-attempt sum (incl. transient retries); diagnostic
   },
   "sdr_mode":             "rspduo",           # present if configured
   "sample_rate_hz":       2048000.0,          # present if configured

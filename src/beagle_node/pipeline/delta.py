@@ -218,11 +218,23 @@ class DeltaComputer:
         # Legacy lookup parameter — accepted but not used.  Kept so that
         # existing test setups that pass it don't break.
         _ = block_context_lookup
-        # Telemetry: outcomes of anchor selection per _match() invocation.
-        self._anchor_chose_block_a: int = 0     # block-A anchor picked → measurement emitted
-        self._anchor_no_lookup_dropped: int = 0  # no anchor lookup configured → dropped
-        self._anchor_no_a_in_window_dropped: int = 0  # no block-A in lookback → dropped
-        self._anchor_no_sync_near_a_dropped: int = 0  # no SyncEvent close enough to anchor → dropped
+        # Telemetry: outcomes of anchor selection.
+        #
+        # ``_anchor_chose_block_a`` and ``_anchor_aged_out`` are **per-event**:
+        # each carrier event contributes at most one increment.  These are
+        # the right numbers for computing per-event success rate (emit
+        # fraction = chose_block_a / (chose_block_a + aged_out)).
+        #
+        # The three ``*_dropped`` counters are **per-_match()-call** — they
+        # increment every time the matcher fails for any reason, including
+        # transient failures of pending events that later succeed.  Useful
+        # for diagnostics ("how many retries did the matcher need on
+        # average?") but NOT a per-event success metric.
+        self._anchor_chose_block_a: int = 0     # per-event: block-A anchor picked → emitted
+        self._anchor_aged_out: int = 0          # per-event: pending event aged out without match
+        self._anchor_no_lookup_dropped: int = 0       # per-attempt diagnostic
+        self._anchor_no_a_in_window_dropped: int = 0  # per-attempt diagnostic
+        self._anchor_no_sync_near_a_dropped: int = 0  # per-attempt diagnostic
 
         # Recent sync events (kept until too old)
         self._sync_events: list[SyncEvent] = []
@@ -378,6 +390,8 @@ class DeltaComputer:
                 # decide whether to keep the event pending (waiting for more
                 # syncs / a future re-decode) or drop it for being too old.
                 if frontier - event.sample_index > self._max_age:
+                    # Per-event "gave up" tally — this event never matched.
+                    self._anchor_aged_out += 1
                     logger.debug(
                         "Aging out %s at sample %d (frontier %d, max_age %d) "
                         "after unsuccessful match",

@@ -731,6 +731,14 @@ def run(args: argparse.Namespace | None = None) -> int:
             sync_sample_index=m.sync_sample_index,
             sync_delta_samples=m.sync_delta_samples,
             sync_sample_rate_correction=m.sample_rate_correction,
+            # RDS block-A anchor metadata (schema 1.7) — populated by
+            # DeltaComputer when fail-closed anchor matching emits a
+            # measurement; None on older code paths.  Server uses these
+            # for cross-pair anchor-agreement validation.
+            anchor_block_letter=m.anchor_block_letter,
+            anchor_bit_in_block=m.anchor_bit_in_block,
+            anchor_group_pi=m.anchor_group_pi,
+            anchor_group_type=m.anchor_group_type,
             channel_sample_rate_hz=_target_sample_rate_hz,
         )
         if _TIMING_DIAG:

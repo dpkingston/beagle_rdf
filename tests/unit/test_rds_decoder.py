@@ -148,11 +148,11 @@ class TestPipelineIntegration:
         pipe = NodePipeline(config=cfg)
         snap = pipe.rds_health_snapshot()
         assert snap is not None
-        # Counters start at zero
+        # Per-event counters start at zero
         assert snap["anchor_emitted"] == 0
-        assert snap["anchor_dropped_no_lookup"] == 0
-        assert snap["anchor_dropped_no_a"] == 0
-        # No onsets yet → emit fraction is undefined
+        assert snap["anchor_aged_out"] == 0
+        assert snap["anchor_match_attempts_failed"] == 0
+        # No events yet → emit fraction is undefined
         assert snap["anchor_emit_fraction"] is None
         # No decodes yet → group count is zero, bler is None (NaN sentinel)
         assert snap["group_count"] == 0

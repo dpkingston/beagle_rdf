@@ -65,9 +65,19 @@ class CarrierEvent(BaseModel):
     window.  Plateau events flow through the same TDOA pipeline as
     onset/offset; they just give the server many more pair-samples per
     transmission for averaging.
+
+    Schema version '1.7': added the four ``anchor_*`` fields describing
+    which RDS block-A bit-0 the measurement was anchored to.  Enables
+    server-side cross-pair anchor-agreement validation: when two nodes
+    pair on a transmission, both their TDOAMeasurements should carry
+    the same ``anchor_group_pi`` and the same ``anchor_block_letter``
+    ("A") / ``anchor_bit_in_block`` (0), and their anchor wall-clock
+    times should agree within a half group period (44 ms).  Mismatches
+    indicate the two nodes locked to different RDS groups, which the
+    server can either correct (+/- 88 ms group-period offset) or drop.
     """
 
-    schema_version: str = "1.6"
+    schema_version: str = "1.7"
 
     event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     """Node-local unique identifier. Stable across amendment POSTs."""
@@ -161,6 +171,25 @@ class CarrierEvent(BaseModel):
 
     sync_sample_rate_correction: float = 1.0
     """Crystal calibration factor applied to sample rate for ns conversion."""
+
+    # RDS block-A anchor metadata (schema 1.7) — carries which RDS group's
+    # block-A bit-0 the matcher used as the TDOA reference.  All four
+    # fields are absent (None) on older-schema events and on measurements
+    # produced before fail-closed anchor matching shipped.
+    anchor_block_letter: str | None = None
+    """Block letter of the matched anchor; "A" when the new fail-closed
+    matcher emitted this measurement."""
+
+    anchor_bit_in_block: int | None = None
+    """0..25 bit position within the block; 0 for a proper A-bit-0 anchor."""
+
+    anchor_group_pi: int | None = None
+    """16-bit RDS Program Identification of the anchor group.
+    All nodes paired on the same FM station must report the same PI."""
+
+    anchor_group_type: str | None = None
+    """RDS group type string like "0A", "2A".  Diagnostic only; the
+    server doesn't need this to match pairs."""
 
     channel_sample_rate_hz: float
     """

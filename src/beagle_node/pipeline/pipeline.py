@@ -313,23 +313,29 @@ class NodePipeline:
           group_period_hz        - 11.4 (constant; for the server's reference)
           bler_mean              - 0..1, mean over the rolling window
           decode_ms              - most recent decode CPU time
-          anchor_emitted         - measurements emitted with a block-A anchor
-                                   (cumulative since pipeline start)
-          anchor_dropped_no_lookup
-                                 - measurements dropped because no RDS
-                                   context was available
-          anchor_dropped_no_a    - measurements dropped because no A-anchor
-                                   was in the ±half-group search window
-          anchor_emit_fraction   - emitted / (emitted + both dropped counts);
-                                   None until any onset has been seen
+          anchor_emitted         - **per-event** count of measurements emitted
+                                   with a block-A anchor
+          anchor_aged_out        - **per-event** count of carrier events that
+                                   never matched and aged out
+          anchor_emit_fraction   - emitted / (emitted + aged_out) — the real
+                                   per-event success rate.  None until any
+                                   carrier event has been seen.
+          anchor_match_attempts  - **per-attempt** sum of in-_match failures
+                                   (no_lookup + no_a + no_sync_near_a). Useful
+                                   for diagnosing matcher inefficiency; not a
+                                   success metric.
         """
         if self._rds_decoder is None:
             return None
         stats = self._rds_decoder.stats
         emitted = self._delta._anchor_chose_block_a
-        no_lookup = self._delta._anchor_no_lookup_dropped
-        no_a = self._delta._anchor_no_a_in_window_dropped
-        total = emitted + no_lookup + no_a
+        aged_out = self._delta._anchor_aged_out
+        match_attempts = (
+            self._delta._anchor_no_lookup_dropped
+            + self._delta._anchor_no_a_in_window_dropped
+            + self._delta._anchor_no_sync_near_a_dropped
+        )
+        total = emitted + aged_out
         emit_frac = (emitted / total) if total > 0 else None
         return {
             "group_count": stats.last_group_count,
@@ -341,11 +347,11 @@ class NodePipeline:
             ),
             "decode_ms": round(stats.last_decode_duration_ms, 1),
             "anchor_emitted": emitted,
-            "anchor_dropped_no_lookup": no_lookup,
-            "anchor_dropped_no_a": no_a,
+            "anchor_aged_out": aged_out,
             "anchor_emit_fraction": (
                 round(emit_frac, 3) if emit_frac is not None else None
             ),
+            "anchor_match_attempts_failed": match_attempts,
         }
 
     # ------------------------------------------------------------------
