@@ -1025,8 +1025,128 @@ def cross_correlate_coherent_phat(
 #   max_TDOA (~333 usec) < T_sync/2 (421 usec) -> unambiguous.
 _T_SYNC_NS: float = 1_000_000_000.0 / 1187.5  # 842,105.26 ns
 
+# RDS group period in nanoseconds (104 bits / 1187.5 Hz = 87.6 ms).
+# One RDS "group" = 4 blocks of 26 bits.  Every group starts on block A,
+# bit 0; the node-side anchor matcher (DeltaComputer / SyncEvent) locks
+# onto block-A bit-0 transitions.  When two nodes locked onto DIFFERENT
+# adjacent block-A bit-0 boundaries (off by one full group), the two
+# sync_to_snippet_start_ns values differ by approximately ±_GROUP_PERIOD_NS.
+# Because _GROUP_PERIOD_NS == 104 * _T_SYNC_NS exactly, the downstream
+# bit-period disambiguation at the combined step would absorb most of
+# the offset — but only when the inter-node knee refinement is small
+# (sub-bit-period).  With large knee-position differences in the snippet
+# the bit-period round() can pick the wrong n and corrupt the residual
+# by hundreds of µs.  ``_apply_group_period_snap`` snaps the raw delta
+# back to ≤ ½ group period BEFORE refinement, so the bit-period stage
+# only ever sees clean inputs.
+_GROUP_PERIOD_NS: float = 104.0 * _T_SYNC_NS  # 87,578,947.37 ns
+
+# Tolerance for accepting a group-period snap.  When |raw_ns| is within
+# ½ group period of a multiple of _GROUP_PERIOD_NS, the residual after
+# snapping must be within this window — otherwise the offset is not a
+# clean anchor mismatch and we leave raw_ns alone (and let the
+# bit-period disambiguation + plausibility check filter it out).
+# 20 ms covers realistic NTP wall-clock noise (±5 ms) plus baseline
+# TDOAs up to ~6000 km, while still cleanly separating a true 1-group
+# offset (87.6 ms) from a within-group mismatch.
+_GROUP_SNAP_TOLERANCE_NS: float = 20_000_000.0  # 20 ms
+
 # Speed of light in m/s - used to convert baseline distance to max TDOA.
 _C_M_PER_S: float = 299_792_458.0
+
+
+# Module-level counter (single-process server, no synchronisation needed).
+# Surfaced by ``get_group_snap_counters`` for /health reporting.
+_GROUP_SNAP_COUNTERS: dict[str, int] = {
+    "k_minus_1": 0,   # snapped by +1 group (raw_ns near -GROUP_PERIOD)
+    "k_plus_1":  0,   # snapped by -1 group (raw_ns near +GROUP_PERIOD)
+    "k_zero":    0,   # in-range, no snap needed (normal case)
+    "noise":     0,   # |raw_ns| beyond ½ group period but outside the
+                      # snap tolerance — left for downstream filters to drop
+    "out_of_range": 0,  # |k| > 1 — dropped here (would be > ~88 ms residual)
+}
+
+
+def reset_group_snap_counters() -> None:
+    """Zero out the snap counters (for tests / health-cycle resets)."""
+    for k in _GROUP_SNAP_COUNTERS:
+        _GROUP_SNAP_COUNTERS[k] = 0
+
+
+def get_group_snap_counters() -> dict[str, int]:
+    """Return a copy of the group-period-snap counters."""
+    return dict(_GROUP_SNAP_COUNTERS)
+
+
+def _apply_group_period_snap(
+    raw_ns: float,
+    node_a: str,
+    node_b: str,
+    event_type: str,
+) -> float | None:
+    """
+    Snap ``raw_ns`` to the nearest RDS-group-period multiple, with |k| ≤ 1.
+
+    When two nodes locked onto DIFFERENT block-A bit-0 anchors that are
+    separated by exactly one RDS group (~87.6 ms), the difference of their
+    ``sync_to_snippet_start_ns`` carries that 1-group bias.  This helper
+    detects that case and removes the bias before the downstream
+    refinement/correction/bit-period stages — those stages assume the raw
+    difference is at most a few hundred microseconds and can silently
+    corrupt the residual when fed a multi-bit-period offset combined with
+    a large knee refinement.
+
+    Returns
+    -------
+    float
+        The (possibly snapped) ``raw_ns``.  Same value when the snap is
+        not applicable.
+    None
+        When |k| > 1 (offset is two or more groups) — the pair is then
+        treated as cross-transmission noise and dropped by the caller.
+    """
+    k = round(raw_ns / _GROUP_PERIOD_NS)
+    if abs(k) > 1:
+        residual = raw_ns - k * _GROUP_PERIOD_NS
+        logger.warning(
+            "Group-period snap: |k|=%d > 1 for %s<->%s (%s); raw=%+.3f ms "
+            "residual_after_snap=%+.3f ms — pair dropped as cross-"
+            "transmission noise",
+            abs(k), node_a, node_b, event_type,
+            raw_ns / 1e6, residual / 1e6,
+        )
+        _GROUP_SNAP_COUNTERS["out_of_range"] += 1
+        return None
+
+    if k == 0:
+        _GROUP_SNAP_COUNTERS["k_zero"] += 1
+        return raw_ns
+
+    # |k| == 1.  Snap only if the residual is small (within tolerance) —
+    # otherwise the offset is not a clean 1-group mismatch and snapping
+    # would introduce a worse error than leaving it.
+    residual = raw_ns - k * _GROUP_PERIOD_NS
+    if abs(residual) > _GROUP_SNAP_TOLERANCE_NS:
+        logger.info(
+            "Group-period snap: residual %+.3f ms beyond ±%.0f ms tolerance "
+            "for %s<->%s (%s); raw=%+.3f ms left unsnapped",
+            residual / 1e6, _GROUP_SNAP_TOLERANCE_NS / 1e6,
+            node_a, node_b, event_type, raw_ns / 1e6,
+        )
+        _GROUP_SNAP_COUNTERS["noise"] += 1
+        return raw_ns
+
+    logger.info(
+        "Group-period snap %s<->%s (%s): k=%+d  raw=%+.3f ms -> "
+        "%+.3f ms (residual=%+.3f ms)",
+        node_a, node_b, event_type,
+        k, raw_ns / 1e6, residual / 1e6, residual / 1e6,
+    )
+    if k > 0:
+        _GROUP_SNAP_COUNTERS["k_plus_1"] += 1
+    else:
+        _GROUP_SNAP_COUNTERS["k_minus_1"] += 1
+    return raw_ns - k * _GROUP_PERIOD_NS
 
 
 def compute_tdoa_s(
@@ -1052,6 +1172,12 @@ def compute_tdoa_s(
     1. Compute raw_ns = sync_to_snippet_start_a - sync_to_snippet_start_b
        (difference in the node-side sync -> snippet-start time).
     2. Apply per-pair grid calibration (removes node-pair pilot phase offset).
+    2.5. Group-period snap: when raw_ns is within ~half a group period of
+       ±_GROUP_PERIOD_NS (one RDS group ≈ 87.6 ms), snap it back to the
+       residual.  Removes the ±1-group anchor bias caused by two nodes
+       locking onto different adjacent block-A bit-0 boundaries, before
+       the bit-period stage can mis-disambiguate.  |k|>1 pairs are
+       dropped here as cross-transmission noise.
     3. Find the inter-node knee offset (per ``tdoa_method``):
          "xcorr" (function default): inter-node cross-correlation on the
            second derivative of each snippet's power envelope.
@@ -1203,6 +1329,19 @@ def compute_tdoa_s(
             node_a, node_b, event_type,
             grid_correction_ns, raw_ns + grid_correction_ns, raw_ns,
         )
+
+    # --- RDS-group-period anchor snap ---
+    # When two nodes locked onto block-A bit-0 anchors that are exactly
+    # one full RDS group apart (~87.6 ms), the difference of their
+    # sync_to_snippet_start_ns carries that bias.  Snap it out BEFORE
+    # refinement and the bit-period disambiguation: those stages assume
+    # a clean sub-bit-period raw delta and can mis-disambiguate when
+    # combined with a multi-bit knee refinement.
+    snapped = _apply_group_period_snap(raw_ns, node_a, node_b, event_type)
+    if snapped is None:
+        # |k| > 1 — pair dropped as cross-transmission noise.
+        return None
+    raw_ns = snapped
 
     correction_ns = path_delay_correction_ns(
         sync_tx_lat=event_a["sync_tx_lat"],

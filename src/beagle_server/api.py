@@ -1166,6 +1166,10 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         fix_count = await db_module.count_fixes(database)
         last_fix_age = await db_module.fetch_last_fix_age_s(database)
         pairer: EventPairer = request.app.state.pairer
+        # Group-period anchor-snap counters: surfaces how often the server
+        # had to correct ±1-group anchor mismatches between paired nodes.
+        # See ``_apply_group_period_snap`` in tdoa.py.
+        from beagle_server.tdoa import get_group_snap_counters
         return {
             "status": "ok",
             "uptime_s": round(uptime_s, 1),
@@ -1173,6 +1177,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             "fix_count": fix_count,
             "last_fix_age_s": round(last_fix_age, 1) if last_fix_age is not None else None,
             "pending_groups": pairer.pending_group_count(),
+            "group_snap_counters": get_group_snap_counters(),
         }
 
     # -------------------------------------------------------------------

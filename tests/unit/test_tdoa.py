@@ -1594,3 +1594,165 @@ def test_calibration_collapses_known_bias():
     )
     assert t_calibrated is not None
     assert t_calibrated == pytest.approx(t_truth, abs=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Group-period anchor snap (Commit 13)
+# ---------------------------------------------------------------------------
+
+from beagle_server.tdoa import (
+    _GROUP_PERIOD_NS,
+    _GROUP_SNAP_TOLERANCE_NS,
+    _apply_group_period_snap,
+    get_group_snap_counters,
+    reset_group_snap_counters,
+)
+
+
+@pytest.fixture(autouse=False)
+def _clean_snap_counters():
+    reset_group_snap_counters()
+    yield
+    reset_group_snap_counters()
+
+
+def test_group_snap_zero_passthrough(_clean_snap_counters):
+    """Small raw_ns (within a bit period) is returned unchanged with k=0
+    counted."""
+    out = _apply_group_period_snap(123_456.0, "a", "b", "onset")
+    assert out == 123_456.0
+    counters = get_group_snap_counters()
+    assert counters["k_zero"] == 1
+    assert counters["k_plus_1"] == 0
+    assert counters["k_minus_1"] == 0
+    assert counters["noise"] == 0
+    assert counters["out_of_range"] == 0
+
+
+def test_group_snap_plus_one(_clean_snap_counters):
+    """raw_ns = +1 group period + small residual snaps to the residual."""
+    residual = 250_000.0  # +250 µs real TDOA
+    raw = _GROUP_PERIOD_NS + residual
+    out = _apply_group_period_snap(raw, "a", "b", "onset")
+    assert out == pytest.approx(residual, abs=1e-6)
+    assert get_group_snap_counters()["k_plus_1"] == 1
+
+
+def test_group_snap_minus_one(_clean_snap_counters):
+    """raw_ns = -1 group period + small residual snaps to the residual."""
+    residual = -180_000.0
+    raw = -_GROUP_PERIOD_NS + residual
+    out = _apply_group_period_snap(raw, "a", "b", "onset")
+    assert out == pytest.approx(residual, abs=1e-6)
+    assert get_group_snap_counters()["k_minus_1"] == 1
+
+
+def test_group_snap_residual_outside_tolerance_left_unsnapped(_clean_snap_counters):
+    """When k=±1 rounding leaves a residual beyond ``_GROUP_SNAP_TOLERANCE_NS``,
+    we deem the offset 'not a clean 1-group mismatch' and leave raw_ns
+    alone — the bit-period stage / plausibility filter handle it."""
+    # Residual = ~40 ms (well outside ±20 ms tolerance) when k=1.
+    bad_residual = 40_000_000.0  # 40 ms
+    raw = _GROUP_PERIOD_NS + bad_residual  # ~127 ms
+    out = _apply_group_period_snap(raw, "a", "b", "onset")
+    assert out == raw
+    counters = get_group_snap_counters()
+    assert counters["noise"] == 1
+    assert counters["k_plus_1"] == 0
+    assert counters["k_minus_1"] == 0
+
+
+def test_group_snap_k_two_returns_none_and_counts(_clean_snap_counters):
+    """raw_ns at ~2 group periods returns None (pair dropped) and counts
+    out_of_range."""
+    raw = 2.0 * _GROUP_PERIOD_NS + 100_000.0
+    out = _apply_group_period_snap(raw, "a", "b", "onset")
+    assert out is None
+    assert get_group_snap_counters()["out_of_range"] == 1
+
+
+def test_group_snap_k_minus_two_returns_none(_clean_snap_counters):
+    raw = -2.0 * _GROUP_PERIOD_NS
+    out = _apply_group_period_snap(raw, "a", "b", "onset")
+    assert out is None
+    assert get_group_snap_counters()["out_of_range"] == 1
+
+
+def test_group_snap_tolerance_boundary(_clean_snap_counters):
+    """A residual exactly at the tolerance boundary snaps (≤ comparison)."""
+    raw = _GROUP_PERIOD_NS + _GROUP_SNAP_TOLERANCE_NS  # exact boundary
+    out = _apply_group_period_snap(raw, "a", "b", "onset")
+    assert out == pytest.approx(_GROUP_SNAP_TOLERANCE_NS, abs=1e-6)
+    assert get_group_snap_counters()["k_plus_1"] == 1
+
+
+def test_group_snap_counters_accumulate(_clean_snap_counters):
+    """Counters accumulate across multiple calls."""
+    _apply_group_period_snap(0.0, "a", "b", "onset")          # k_zero
+    _apply_group_period_snap(_GROUP_PERIOD_NS, "a", "b", "onset")   # k_plus_1
+    _apply_group_period_snap(_GROUP_PERIOD_NS, "a", "b", "onset")   # k_plus_1
+    _apply_group_period_snap(-_GROUP_PERIOD_NS, "a", "b", "onset")  # k_minus_1
+    c = get_group_snap_counters()
+    assert c["k_zero"] == 1
+    assert c["k_plus_1"] == 2
+    assert c["k_minus_1"] == 1
+
+
+def test_compute_tdoa_snaps_group_offset_to_clean_residual(_clean_snap_counters):
+    """End-to-end via ``compute_tdoa_s``: with two nodes equidistant from
+    the sync transmitter (so path correction is ~0) and identical real-data
+    snippets (so refinement is small), injecting a +1-group offset into
+    one node's sync_to_snippet_start_ns must produce essentially the same
+    TDOA as without the offset — the snap removes the bias before the
+    bit-period stage."""
+    # Equidistant geometry → sync-path correction ≈ 0.
+    ev_a_clean = _make_event(47.7, -122.3, sync_to_snippet_start_ns=0,
+                             sync_tx_lat=47.6, sync_tx_lon=-122.3)
+    ev_a_clean["node_id"] = "a"
+    ev_b = _make_event(47.5, -122.3, sync_to_snippet_start_ns=0,
+                       sync_tx_lat=47.6, sync_tx_lon=-122.3)
+    ev_b["node_id"] = "b"
+    t_clean = compute_tdoa_s(ev_a_clean, ev_b, tdoa_method="xcorr",
+                             min_xcorr_snr=0.0)
+    assert t_clean is not None
+
+    # Inject a +1-group offset into A's sync_to_snippet_start_ns.
+    ev_a_offset = {**ev_a_clean,
+                   "sync_to_snippet_start_ns":
+                   ev_a_clean["sync_to_snippet_start_ns"]
+                   + int(_GROUP_PERIOD_NS)}
+    t_snapped = compute_tdoa_s(ev_a_offset, ev_b, tdoa_method="xcorr",
+                               min_xcorr_snr=0.0)
+    assert t_snapped is not None
+    # The snap should recover the clean value within sub-µs (residual
+    # comes from float vs int rounding of _GROUP_PERIOD_NS).
+    assert abs(t_snapped - t_clean) < 1e-6, (
+        f"snap failed to recover clean TDOA: "
+        f"clean={t_clean*1e9:.1f} ns, snapped={t_snapped*1e9:.1f} ns"
+    )
+    # And the counter should reflect that a +1 snap happened.
+    assert get_group_snap_counters()["k_plus_1"] == 1
+
+
+def test_compute_tdoa_drops_two_group_offset(_clean_snap_counters):
+    """A +2-group offset is treated as cross-transmission noise: pair
+    dropped (compute_tdoa_s returns None) and ``out_of_range`` is counted."""
+    ev_a = _make_event(47.7, -122.3, sync_to_snippet_start_ns=int(2 * _GROUP_PERIOD_NS),
+                       sync_tx_lat=47.6, sync_tx_lon=-122.3)
+    ev_a["node_id"] = "a"
+    ev_b = _make_event(47.5, -122.3, sync_to_snippet_start_ns=0,
+                       sync_tx_lat=47.6, sync_tx_lon=-122.3)
+    ev_b["node_id"] = "b"
+    result = compute_tdoa_s(ev_a, ev_b, tdoa_method="knee")
+    assert result is None
+    assert get_group_snap_counters()["out_of_range"] == 1
+
+
+def test_reset_group_snap_counters_zeroes_all_keys():
+    """``reset_group_snap_counters`` returns all keys to 0 even after
+    accumulation."""
+    _apply_group_period_snap(_GROUP_PERIOD_NS, "a", "b", "onset")
+    _apply_group_period_snap(0.0, "a", "b", "onset")
+    assert sum(get_group_snap_counters().values()) >= 2
+    reset_group_snap_counters()
+    assert all(v == 0 for v in get_group_snap_counters().values())
