@@ -17,7 +17,7 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 
 ```json
 {
-  "schema_version": "1.4",
+  "schema_version": "1.7",
   "event_id":       "550e8400-e29b-41d4-a716-446655440000",
 
   "node_id":        "seattle-north-01",
@@ -30,8 +30,8 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 
   "sync_to_snippet_start_ns":  12345678,
   "sync_transmitter": {
-    "station_id":     "KISW_99.9",
-    "frequency_hz":   99900000.0,
+    "station_id":     "KUOW_94.9",
+    "frequency_hz":   94900000.0,
     "latitude_deg":   47.6253,
     "longitude_deg": -122.3563
   },
@@ -55,9 +55,30 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
   "iq_snippet_b64":        "<base64-encoded int8 IQ>",
   "channel_sample_rate_hz": 250000.0,
   "transition_start":       3840,
-  "transition_end":         4352
+  "transition_end":         4352,
+
+  "sync_pilot_phase_rad":         1.2347,
+  "sync_sample_index":            12345678.0,
+  "sync_delta_samples":            3098.41,
+  "sync_sample_rate_correction":  1.000_010_4,
+
+  "anchor_block_letter": "A",
+  "anchor_bit_in_block": 0,
+  "anchor_group_pi":     0x6228,
+  "anchor_group_type":   "0A"
 }
 ```
+
+### Schema version history
+
+| Version | Date | Change |
+|---------|------|--------|
+| `1.4` | pre-2026-04 | Original schema with `sync_delta_ns` |
+| `1.5` | 2026-04-22 | Renamed `sync_delta_ns` → `sync_to_snippet_start_ns`.  The timing reference in the stream is now the first sample of the shipped IQ snippet (a stable sample boundary) rather than the transient detection point. |
+| `1.6` | 2026-05 | Added `"plateau"` `event_type` for periodic snippets emitted while a carrier is sustained.  Plateau events anchor to a sync-pilot bit boundary so independent nodes' plateaus cover the same physical time window. |
+| `1.7` | 2026-05 | Added the four `anchor_*` fields recording which RDS block-A bit-0 the measurement was anchored to.  Enables server-side cross-pair anchor-agreement validation and group-period snap correction. |
+
+Older-schema events still parse: the server's `WarnOnUnknownFieldsBase` drops unknown fields and logs a one-shot WARNING per `(model, field)` pair, so legacy nodes shipping `altitude_m`, `uncertainty_m`, or the v1.4 `sync_delta_ns` still flow through (with the operator notified).
 
 ### Field reference
 
@@ -65,7 +86,7 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | string | Schema version; currently `"1.4"` |
+| `schema_version` | string | Schema version; currently `"1.7"` (see history table above) |
 | `event_id` | UUID string | Node-local unique ID.  Stable if the same event is re-POSTed for amendment. |
 | `node_id` | string | Node identifier from config (`[a-z0-9][a-z0-9-]*`) |
 
@@ -87,7 +108,7 @@ It is serialised with `model_dump_json()` and sent as a JSON object.
 | `sync_transmitter.longitude_deg` | float | FCC-documented transmitter longitude |
 | `sdr_mode` | enum | `"freq_hop"`, `"rspduo"`, `"two_sdr"`, `"single_sdr"` |
 | `pps_anchored` | bool | `true` if GPS 1PPS injection was used to align two SDR streams |
-| `event_type` | enum | `"onset"` (rising edge) or `"offset"` (falling edge) |
+| `event_type` | enum | `"onset"` (rising edge), `"offset"` (falling edge), or `"plateau"` (periodic sustained-carrier snapshot, schema 1.6+). Server must pair onset-with-onset, offset-with-offset, and plateau-with-plateau across nodes. |
 | `channel_frequency_hz` | float | Nominal LMR channel center frequency (Hz) |
 
 #### Absolute timing (event association only)
@@ -125,6 +146,39 @@ detection point and extends forward a few power windows; for offset events
 it extends backward from the detection point.  The zone is wider than the
 actual PA edge so the server has headroom to locate the knee under varying
 ramp shapes.
+
+#### Sync-event diagnostics
+
+Sent so the server can verify that all paired nodes used the same RDS bit
+boundary for a given transmission event.  All fields are sample-counted, not
+wall-clock-derived, so they are immune to NTP noise.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sync_pilot_phase_rad` | float | Pilot phase (radians) at the matched SyncEvent.  Useful for diagnosing per-node pilot-tracker drift. |
+| `sync_sample_index` | float | Absolute sample index of the matched SyncEvent in the sync-decimated stream.  Used by the server's `SyncCalibrator` to measure the per-pair fractional-bit grid offset purely from sample counting. |
+| `sync_delta_samples` | float | Raw sample difference (`snippet_start_sample − sync_sample`) before ns conversion. |
+| `sync_sample_rate_correction` | float | Crystal calibration factor applied to convert sample-domain timing to ns.  Typically `1.000_010` ± a few ppm. |
+
+#### RDS block-A anchor metadata (schema 1.7)
+
+Records which RDS group's block-A bit-0 the node-side matcher used as the
+TDOA reference.  All four fields are absent (`null`) on older-schema events
+and on measurements produced before fail-closed anchor matching shipped.
+
+The server uses these for cross-pair anchor-agreement validation: when two
+nodes pair on a transmission, both their `TDOAMeasurements` should carry
+the same `anchor_group_pi` and the same `anchor_block_letter` (`"A"`) /
+`anchor_bit_in_block` (`0`).  Mismatches indicate the two nodes locked to
+different RDS groups, which the server's group-period snap can correct
+(±1 group ≈ ±87.6 ms) or drop (|k| > 1).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `anchor_block_letter` | string or null | Block letter of the matched anchor; `"A"` when the fail-closed matcher emitted this measurement. |
+| `anchor_bit_in_block` | int or null | 0–25 bit position within the block; `0` for a proper A-bit-0 anchor. |
+| `anchor_group_pi` | int or null | 16-bit RDS Program Identification of the anchor group.  All nodes paired on the same FM station must report the same PI. |
+| `anchor_group_type` | string or null | RDS group type like `"0A"`, `"2A"`.  Diagnostic only; the server does not need this to match pairs. |
 
 ---
 
@@ -211,9 +265,13 @@ Authorization: Bearer <token>    (if configured)
 | `GET` | `/api/v1/events` | List recent events (query: `limit`, `node_id`, `channel_hz`) |
 | `GET` | `/api/v1/fixes` | List computed position fixes (query: `limit`, `max_age_s`) |
 | `GET` | `/api/v1/fixes/{id}` | Get a specific fix with full detail |
-| `GET` | `/health` | Server health: uptime, event count, fix count, last fix age |
-| `GET` | `/map` | Folium interactive HTML map (query: `max_age_s=3600`) |
-| `GET` | `/maps/{filename}` | Serve static per-fix Folium HTML snapshots |
+| `DELETE` | `/api/v1/fixes` | Delete all fixes + heatmap (admin-auth) |
+| `DELETE` | `/api/v1/heatmap` | Clear heatmap cells; preserve fix history (admin-auth) |
+| `GET` | `/health` | Server health: uptime, event/fix counts, pending groups, `group_snap_counters` |
+| `GET` | `/map` | Leaflet map page with live SSE updates |
+| `GET` | `/map/heatmap` | JSON `{cells: [[lat, lon, weight], ...]}` for client-side heat layer |
+| `GET` | `/map/data` | GeoJSON FeatureCollection for the dynamic fix layer (query: `max_age_s`) |
+| `GET` | `/nodes` | Per-node detail page exposing the full node `/health` (RDS, anchor, etc.) |
 
 Write endpoints (`POST /api/v1/events`) require authentication if
 `server.auth_token` is set in the server config.  Read/map endpoints are
@@ -235,12 +293,52 @@ summary of pipeline state.  Relevant fields:
   "events_submitted":    148,
   "events_dropped":      0,
   "queue_depth":         0,
-  "sdr_overflows":       0
+  "sdr_overflows":       0,
+
+  "rds_blocks_decoded":      48720,
+  "rds_blocks_per_s":         13.5,
+  "rds_block_a_per_s":         3.4,
+  "anchor_emit_fraction":     0.97,
+  "anchor_mismatch_count":       2,
+  "biphase_polarity":          "+",
+  "biphase_polarity_flips":      0
 }
 ```
 
-Monitor `events_dropped` (persistent queue overflow -> server unreachable) and
-`sdr_overflows` (USB bandwidth exhaustion) in production.
+Monitor `events_dropped` (persistent queue overflow → server unreachable) and
+`sdr_overflows` (USB bandwidth exhaustion) in production.  The RDS / anchor
+fields surface the new RDS-anchor subsystem (see `docs/design/04-sync-signal.md`):
+`anchor_emit_fraction` should stay near 1.0; `anchor_mismatch_count`
+incrementing indicates the fail-closed matcher dropped a measurement because
+no in-window block-A bit-0 candidate was available.
+
+### Server health endpoint
+
+The server `/health` returns a JSON summary including the group-period
+anchor-snap counters added in 2026-05:
+
+```json
+{
+  "status":            "ok",
+  "uptime_s":          86400.0,
+  "event_count":       12345,
+  "fix_count":           312,
+  "last_fix_age_s":     45.2,
+  "pending_groups":       2,
+  "group_snap_counters": {
+    "k_zero":       1820,
+    "k_plus_1":       47,
+    "k_minus_1":      52,
+    "noise":           8,
+    "out_of_range":    1
+  }
+}
+```
+
+A non-zero `k_plus_1` + `k_minus_1` is normal and shows the server
+corrected ±1-group anchor mismatches between paired nodes.  `out_of_range`
+should stay near zero; rising values point at a clock or matcher
+disagreement larger than one group.
 
 ### Log fields
 

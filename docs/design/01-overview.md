@@ -44,10 +44,11 @@ Beagle is a Time Difference of Arrival (TDOA) radio direction finding system usi
 2. **Decimation** - Band-pass filter + downsample to working rate (250/256 kHz sync, ~250 kHz target)
 3. **FM demodulation** - Discriminator demod on the sync channel (FM station)
 4. **RDS sync extraction** - Lock onto the 19 kHz FM stereo pilot via a narrowband complex correlator, track the unwrapped pilot phase, and derive RDS bit boundaries at `pilot/16 = 1187.5 Hz` (phase-locked by the IEC 62106 / NRSC-4-B standard).  One `SyncEvent` is emitted per bit boundary (~842 µs apart).  An earlier Mueller-Muller timing-recovery + Costas chain was replaced by this pilot-phase derivation because M&M would not lock reliably on a typical FM signal.
-5. **Carrier detection** - Hysteresis state machine on the target channel with **auto-tracked thresholds**: the detector continuously measures the idle noise floor (EMA) and sets `onset = floor + 12 dB`, `offset = floor + 6 dB` so detection follows changing noise conditions without operator intervention.  Produces `CarrierOnset` / `CarrierOffset` events.
-6. **Delta computation** - `sync_to_snippet_start_ns = (target_onset_sample - sync_event_sample) * 1e9 / sample_rate`
-7. **Event reporting** - Serialize `CarrierEvent` (including the raw IQ snippet and reported `transition_start` / `transition_end` bounds for server-side knee finding) -> HTTP POST to aggregation server
-8. **Server-side TDOA refinement** - The server finds the ramp-to-plateau knee in each snippet via `argmin` of the Savitzky-Golay second derivative of the power envelope, and uses a `SyncCalibrator` to track and subtract the per-pair pilot-phase grid offset before pilot-period disambiguation.
+4b. **RDS block sync + block-A anchor matching** — pure-Python RDS subcarrier demodulator + hysteretic biphase polarity + (26,16) cyclic-code FEC block sync + `DeltaComputer` block-A bit-0 anchor matcher.  The matcher is **fail-closed**: events with no in-window block-A bit-0 candidate are dropped (`anchor_mismatch_count` increments).  Successful matches ship `anchor_block_letter` / `anchor_bit_in_block` / `anchor_group_pi` / `anchor_group_type` alongside the measurement so the server can validate cross-pair anchor agreement.  See [04-sync-signal.md](04-sync-signal.md).
+5. **Carrier detection** - Hysteresis state machine on the target channel with **auto-tracked thresholds**: the detector continuously measures the idle noise floor (EMA) and sets `onset = floor + 12 dB`, `offset = floor + 6 dB` so detection follows changing noise conditions without operator intervention.  Produces `CarrierOnset`, `CarrierOffset`, and (schema 1.6+) `Plateau` events.  Snippet size is 16 384 samples (~65 ms at 250 kHz) in production to give downstream coherent IQ correlation enough post-knee plateau material.
+6. **Delta computation** - `sync_to_snippet_start_ns = (snippet_first_sample - matched_block_A_bit_0_sample) * 1e9 / sample_rate`
+7. **Event reporting** - Serialize `CarrierEvent` (schema 1.7: including the IQ snippet, `transition_start` / `transition_end` bounds, sync-event diagnostics, and the four `anchor_*` fields) → HTTP POST to aggregation server.  Unknown / retired fields parse cleanly with a one-shot operator WARNING (`WarnOnUnknownFieldsBase`).
+8. **Server-side TDOA refinement** - The server applies a group-period anchor-snap (±87.6 ms) to remove cross-node ±1-group anchor mismatches, then refines TDOA via the configured `tdoa_method` (`xcorr` / `phat` / `audio_phat` / `knee`).  PHAT-on-IQ is recommended for production; PHAT-on-audio gives ~30× tighter per-event MAD on voice-modulated plateaus.  After bit-period disambiguation, per-pair / per-node calibration removes residual bias, and a multistart-guarded L-BFGS-B solver with boundary-clamp / `seed_stuck` / `node_stuck` suppression produces the final fix.
 
 ## TDOA Measurement Model
 
@@ -64,9 +65,13 @@ Both sample indices are from **the same continuous ADC clock**. This eliminates 
 ### What the server computes
 
 ```
-TDOA_AB = sync_delta_A - sync_delta_B
-
-TDOA_AB_corrected = TDOA_AB - (dist(sync_tx, node_A) - dist(sync_tx, node_B)) / c
+raw_ns          = sync_to_snippet_start_A - sync_to_snippet_start_B
+raw_ns         -= group-period snap (collapses ±1-group anchor mismatch)
+refinement_ns   = tdoa_method(IQ_snippet_A, IQ_snippet_B)
+correction_ns   = (dist(sync_tx, A) - dist(sync_tx, B)) / c
+combined_ns     = raw_ns + refinement_ns + correction_ns
+combined_ns    -= n * 842 µs   (bit-period disambiguation)
+TDOA_AB         = combined_ns - calibration_ns
 ```
 
 The path-delay correction accounts for the FM station's signal arriving at different times at each node (due to different distances). With FCC-documented transmitter coordinates (accuracy ~100 m), this correction is accurate to <1 usec across Seattle metro.

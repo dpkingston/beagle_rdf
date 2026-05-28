@@ -161,43 +161,104 @@ Even though `sync_to_snippet_start_ns` is the precise TDOA measurement, we still
 
 ## Error Budget
 
-For `rspduo` mode (the production deployment as of 2026-04):
+For `rspduo` mode (the production deployment as of 2026-05):
 
 | Error source | Magnitude | Notes |
 |-------------|-----------|-------|
-| RDS bit-transition timing (M&M loop) | < 0.1 usec | Measured ~0.06 usec on KUOW 94.9 |
+| RDS bit-transition timing (pilot-phase derived) | < 0.1 usec | Measured ~0.06 usec on KUOW 94.9 |
 | Crystal calibration residual | < 0.1 usec | RSPduo TCXO at <10 ppm before correction |
-| Carrier detector window quantisation | ~290 usec per node, ~410 usec for the difference | Dominant error in current production |
+| Inter-node knee position (coherent IQ GCC-PHAT) | ~50 µs typical, ~190 µs pooled median on Magnolia corpus | Replaced the 290 µs window-quantisation floor; primary error source in current production |
+| RDS group-anchor mismatch (±1 group) | 0 after server-side snap; was ~30 % of pairs on Capitol Hill 2 m corpus | Snap correction in `compute_tdoa_s` removes ±87.6 ms anchor mismatches before refinement |
+| Per-pair calibration residual | ~1–3 µs after fit | Per-pair `pair_offsets_s` removes the dominant per-pair bias on a known target |
 | RSPduo interleave offset | Deterministic; subtracted by `pipeline_offset_ns` | ~250 ns at 2 MSPS, calibrated empirically |
-| Cross-node sync_delta std (observed) | **~256 usec** | Live measurement, 2026-04-06 colocated_pair_test |
-| **Position uncertainty (250 km^2 search)** | **~80 km radius worst case** | Currently dominated by carrier detector; sub-100 m would require improving carrier onset timing |
+| **Position uncertainty (Capitol Hill 2 m corpus, post-snap pre-calibration)** | **p50 ~11 km, p75 ~15 km, p90 ~54 km** | Simulation; Commit 14 auto-calibration is the next reduction step |
 
-The headline number from the live colocated pair test on dpk-tdoa1 vs.
-dpk-tdoa2 (RSPduo, KUOW 94.9 sync, 2026-04-06): mean +70 usec, std 256 usec
-on the onset path; mean +20 usec, std 228 usec on the offset path.  This is
-~14x better than the earlier pilot-based system (which scattered by ~3500
-usec from the cross-node ambiguity).
+The headline result from the offline replay of the Capitol Hill 2 m
+corpus (dpk-tdoa1 / dpk-tdoa2 / kb7ryy / n7jmv-tdoa-qth, KUOW 94.9 sync,
+2026-05): without group-period snap, p75 = 187 km and p90 = 992 km
+(diagonal SSW–NNE outlier smear caused by 26–30 % of pairs anchored to
+different RDS groups).  Adding the snap collapses outliers to
+p75 ≈ 15 km / p90 ≈ 54 km.  Auto-calibration (Commit 14) is expected
+to drag the median into the ~1 km regime.
 
 For `freq_hop` mode (RTL-SDR with `librtlsdr-2freq`):
 
-> Status as of 2026-04: the RDS sync detector requires continuous M&M timing
-> recovery, which is incompatible with the gap-handling needed for freq_hop's
-> alternating sync/target blocks (~16 ms each, where the sync block is too
-> short to converge the M&M loop from cold).  freq_hop mode has been left in
-> the codebase but does not currently produce reliable RDS sync events; see
-> the discussion in [docs/research/rds-sync-implementation-plan.md](../research/rds-sync-implementation-plan.md)
-> for the proposed pilot-locked-bit-prediction approach that would restore it.
+> Status as of 2026-05: the RDS sync subsystem (pilot-phase
+> derivation + block sync + block-A anchor matcher) is in principle
+> compatible with freq_hop's alternating sync/target blocks, because the
+> short-gap partial reset preserves pilot-phase state across retunes
+> (`02-signal-processing.md` Stage 3).  Block sync and anchor matching
+> have not yet been exercised in freq_hop mode end-to-end, so freq_hop
+> remains in the codebase but is not yet a supported production
+> configuration; expect `anchor_emit_fraction` to be lower than in
+> rspduo mode until block sync re-locks after each sync-block.
 
-For `two_sdr` + 1PPS injection (legacy mode, untested with RDS):
+For `two_sdr` + 1PPS injection (legacy mode, not currently exercised):
 
 | Error source | Magnitude |
 |-------------|-----------|
 | GPS 1PPS jitter | <100 ns |
-| 1PPS spike detection | ~0.5 usec at 2 MSPS |
-| RDS bit-transition timing | < 0.1 usec |
-| Crystal calibration residual | < 0.1 usec |
-| Carrier detector window quantisation | ~290 usec |
-| **Total** | dominated by carrier detector (~290 usec) |
+| 1PPS spike detection | ~0.5 µs at 2 MSPS |
+| RDS bit-transition timing | < 0.1 µs |
+| Crystal calibration residual | < 0.1 µs |
+| Inter-node knee position (coherent IQ GCC-PHAT) | ~50 µs typical |
+| **Total** | dominated by knee position (~50 µs) |
+
+## Group-period anchor-snap correction
+
+RDS-group-anchor mismatches are the dominant source of large outliers in
+production fixes.  The RDS bit period (842 µs) is exactly 1/104 of the
+RDS group period (87.6 ms), and the node-side `DeltaComputer`
+matcher anchors to a specific block-A bit-0 transition within the
+±half-group window of the carrier edge.  Under fades or boot-time
+misalignment, two paired nodes can pick block-A bit-0 transitions from
+adjacent RDS groups — their `sync_to_snippet_start_ns` then differ by
+exactly one group period (±87.6 ms) more than the true TDOA.
+
+### Why bit-period disambiguation alone isn't enough
+
+`compute_tdoa_s` historically disambiguated by rounding the combined
+TDOA to the nearest bit period.  Because the group period is an exact
+integer multiple of the bit period, a ±1-group offset rounds *near* the
+correct bit count.  But the disambiguation operates on
+`combined_ns = raw_ns + refinement_ns + correction_ns`, and the
+refinement (inter-node knee position) can itself reach tens of ms in a
+16 384-sample snippet.  A multi-bit knee shift combined with an 87.6 ms
+raw offset can push the bit-period rounder to pick the wrong `n` and
+corrupt the residual by hundreds of µs.
+
+### The snap
+
+`_apply_group_period_snap(raw_ns)` in `beagle_server/tdoa.py` snaps
+`raw_ns` *before* refinement:
+
+```
+k = round(raw_ns / GROUP_PERIOD_NS)
+|k| > 1            → drop pair (cross-transmission noise)
+|k| == 1 + |residual| ≤ 20 ms → raw_ns -= k * GROUP_PERIOD_NS  (snap)
+|k| == 1 + |residual|  > 20 ms → leave raw_ns alone, count as 'noise'
+k == 0              → pass through unchanged
+```
+
+Counters `k_zero` / `k_plus_1` / `k_minus_1` / `noise` / `out_of_range`
+are surfaced on the server's `/health`.
+
+After the snap, the existing bit-period disambiguation (step 6 below)
+only ever sees clean sub-millisecond inputs, so its `round()` choice is
+unambiguous.
+
+### Disambiguation cascade
+
+The full disambiguation order in `compute_tdoa_s` is now:
+
+1. Compute `raw_ns = sync_to_snippet_start_A − sync_to_snippet_start_B`.
+2. Apply `SyncCalibrator` per-pair grid correction (sub-bit).
+3. **Group-period snap** (this section): collapse ±87.6 ms mismatches.
+4. Apply sync-path geometry correction.
+5. Refine via `tdoa_method` (`xcorr` / `phat` / `audio_phat` / `knee`).
+6. **Bit-period disambiguation**: `n = round(combined_ns / 842 µs)`.
+7. Apply per-pair / per-node TDOA calibration.
+8. Geometric plausibility check vs `max_xcorr_baseline_km`.
 
 ## Node-Server Measurement Contract
 

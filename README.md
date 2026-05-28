@@ -96,18 +96,26 @@ station identifies the **same** bit transition as the same physical event --
 the fundamental ambiguity of pilot zero-crossings (which are all identical and
 indistinguishable across nodes) is eliminated.
 
-When a land mobile radio (LMR) carrier is detected, the node records
-`sync_delta_ns = target_onset_sample - sync_event_sample`, expressed in
-nanoseconds on the local sample clock.  Because both measurements use the same
-unbroken ADC clock, the absolute clock offset cancels out entirely -- only the
-interval between two events on that clock matters.
+When a land mobile radio (LMR) carrier is detected, the node packages a short
+IQ snippet centred on the transition and records
+`sync_to_snippet_start_ns = snippet_first_sample - sync_event_sample`,
+expressed in nanoseconds on the local sample clock.  Because both measurements
+use the same unbroken ADC clock, the absolute clock offset cancels out entirely
+-- only the interval between two events on that clock matters.  The shipped
+snippet (production default 16 384 samples ≈ 65 ms at 250 kHz) carries the
+modulated plateau so the server can refine timing with coherent
+cross-correlation, not just the node-side detection point.
 
-The aggregation server collects `sync_delta_ns` reports from all nodes,
-corrects for the known FM transmitter-to-node propagation delay (computed from
-FCC-documented station coordinates), and computes
-`TDOA_AB = sync_delta_A - sync_delta_B`.  A scipy L-BFGS-B solver minimises
-the squared residuals across all node pairs to produce a latitude/longitude fix,
-which is logged to SQLite and displayed on a live Folium map.
+The aggregation server collects `sync_to_snippet_start_ns` reports plus the
+matching IQ snippet from each node, applies group-period anchor-snap
+correction (±87.6 ms RDS-group offsets between paired anchors), runs a
+configurable refinement method (`xcorr` / `phat` / `audio_phat` / `knee`) on
+the snippets, corrects for the known FM transmitter-to-node propagation delay
+(computed from FCC-documented station coordinates), and computes
+`TDOA_AB = sync_to_snippet_start_A - sync_to_snippet_start_B + refinement +
+correction`.  A scipy L-BFGS-B solver minimises the squared residuals
+across all node pairs to produce a latitude/longitude fix, which is logged
+to SQLite and displayed on a live Leaflet map with a fading heatmap layer.
 
 ```
    FM broadcast station                           LMR transmitter
@@ -119,24 +127,40 @@ which is logged to SQLite and displayed on a live Folium map.
    RDSSyncDetector                                CarrierDetector
    (FM demod -> 19 kHz pilot phase lock                  |
     -> derive RDS bit boundaries at                      |
-    pilot/16 = 1187.5 Hz; auto-tracked                   |
-    onset/offset thresholds)                             |
+    pilot/16 = 1187.5 Hz)                                |
+            |                                             |
+            v                                             |
+   RDSDecoderService                                      |
+   (BPSK biphase decode -> hysteretic                     |
+    polarity -> (26,16) block sync + FEC                  |
+    -> emit block_letter, group_pi, ...)                  |
+            |                                             |
+            v                                             |
+   DeltaComputer (block-A bit-0 anchor matcher,           |
+   fail-closed ±half-group window)                        |
             |                                             |
             |  SyncEvent (every ~842 usec,                |  CarrierOnset /
-            |  one per RDS bit transition)                |  CarrierOffset
-            +---------------> DeltaComputer <-------------+
+            |  carries anchor metadata)                   |  CarrierOffset / Plateau
+            +-----------------------> Pipeline <----------+
                                     |
                                     v
-                       sync_delta_ns = target_onset - sync_event
-                            (same ADC clock - offset cancels)
+                       sync_to_snippet_start_ns = snippet_first_sample
+                                          - matched_sync_sample
+                            (same ADC clock — offset cancels)
+                       + anchor_block_letter/bit_in_block/group_pi
                                     |
                                     v
                             EventReporter  -->  HTTP POST /api/v1/events
                                                           |
                                                           v
                                               Aggregation Server
-                                         pair events * correct path delay
-                                         solve hyperbolic fix * update map
+                                  group-period snap (±87.6 ms anchor mismatch)
+                                  -> tdoa_method refinement on IQ snippets
+                                  -> sync-transmitter path-delay correction
+                                  -> bit-period disambiguation
+                                  -> per-pair / per-node calibration
+                                  -> L-BFGS-B solver with multistart guard
+                                  -> SQLite + Leaflet heatmap + SSE updates
 ```
 
 **Why RDS instead of just the pilot tone?**  Earlier versions of Beagle used
@@ -435,9 +459,26 @@ curl http://localhost:8080/health
   "events_submitted": 7,
   "sync_events": 49832,
   "sync_corr_peak": 0.7042,
-  "crystal_correction": 1.0000098
+  "crystal_correction": 1.0000098,
+
+  "rds_blocks_decoded":      48720,
+  "rds_blocks_per_s":         13.5,
+  "rds_block_a_per_s":         3.4,
+  "anchor_emit_fraction":     0.97,
+  "anchor_mismatch_count":       2,
+  "biphase_polarity":          "+",
+  "biphase_polarity_flips":      0
 }
 ```
+
+The `rds_*` and `anchor_*` fields surface the RDS-based sync-anchor subsystem
+(see [docs/design/04-sync-signal.md](docs/design/04-sync-signal.md)).
+`anchor_emit_fraction` should stay near 1.0; `anchor_mismatch_count`
+increments when the fail-closed matcher drops an event because no
+in-window block-A bit-0 anchor was available.  A growing
+`biphase_polarity_flips` value indicates a fade or noisy demod —
+single-digit counts over hours are normal, frequent flips warrant
+investigation.
 
 For a live, formatted view that polls the endpoint each second and shows
 derived metrics (sync event rate, deltas), use `watch_node_health.py`:
@@ -461,8 +502,9 @@ Press Ctrl-C to exit.  See the `scripts/watch_node_health.py` entry under
 ## Aggregation Server
 
 The aggregation server receives events from all nodes, pairs them, computes
-hyperbolic fixes, and serves a live Folium map.  It can run on any machine
-reachable by the nodes - a laptop, a Pi, or a cloud VM.
+hyperbolic fixes, and serves a live Leaflet map with a fading heatmap layer.
+It can run on any machine reachable by the nodes — a laptop, a Pi, or a cloud
+VM.
 
 ### 1 - Install server extras
 
@@ -486,11 +528,26 @@ The only fields you must change before first use:
 |-------|---------|-------------|
 | `solver.search_center_lat` | 47.7 | Latitude of the centre of your deployment area |
 | `solver.search_center_lon` | -122.3 | Longitude of the centre of your deployment area |
+| `solver.tdoa_method` | `xcorr` | TDOA refinement method on the IQ snippet: `xcorr` / `phat` / `audio_phat` / `knee` — see below |
 | `server.auth_token` | (empty) | A secret string, or leave empty during development |
 | `server.node_auth` | `token` | How nodes authenticate event POSTs: `none`, `token` (default), `nodedb` (per-node secrets) |
 | `server.user_auth` | `token` | How humans access the UI: `none`, `token` (default), `userdb` (per-user accounts) |
 
 All other defaults are reasonable for a first run.
+
+**TDOA refinement methods** (`solver.tdoa_method`):
+
+| Method | When to use |
+|--------|-------------|
+| `xcorr` (default) | Inter-node cross-correlation on the second derivative of the power envelope.  Works at small snippet sizes (e.g. 1280 samples) and is the function default for backward-compatibility with older fixtures. |
+| `phat` | Coherent complex-IQ GCC-PHAT on the post-knee plateau after per-node residual-LO-offset removal.  Recommended for production with large snippets (`carrier.snippet_samples` ≥ 16 384 at 250 kHz ≈ 65 ms).  Empirically best on the 2026-04-24 Magnolia corpus: pooled median \|err\| 188 µs at 89 % yield. |
+| `audio_phat` | GCC-PHAT applied to FM-demodulated audio rather than complex IQ.  Empirically ~30× tighter per-event MAD than `phat` on voice-modulated plateaus by removing per-receiver LO-offset ambiguity before correlation.  Use with cooperative cooperative voice traffic; combine with per-pair calibration for absolute accuracy on a known target. |
+| `knee` | Per-node Savgol-smoothed second-derivative knee finder, differenced across nodes.  Retained for comparison and the 1280-sample test fixtures. |
+
+The server applies group-period anchor-snap (±87.6 ms) **before** the
+refinement step so a node-to-node block-A anchor mismatch can't corrupt
+the refinement window.  See `_apply_group_period_snap` in
+`src/beagle_server/tdoa.py`.
 
 ### 3 - Start the server
 
@@ -551,9 +608,23 @@ curl http://localhost:8765/health
   "event_count": 0,
   "fix_count": 0,
   "last_fix_age_s": null,
-  "pending_groups": 0
+  "pending_groups": 0,
+  "group_snap_counters": {
+    "k_zero":       0,
+    "k_plus_1":     0,
+    "k_minus_1":    0,
+    "noise":        0,
+    "out_of_range": 0
+  }
 }
 ```
+
+`group_snap_counters` reports how often the server corrected ±1-group
+(~87.6 ms) anchor mismatches between paired nodes: `k_zero` is the normal
+in-range case, `k_plus_1`/`k_minus_1` count successful snaps, and
+`out_of_range` (|k| > 1) counts pairs dropped as cross-transmission noise.
+See [docs/design/03-timing-model.md](docs/design/03-timing-model.md) for
+context.
 
 ### 6 - Open the live map
 
@@ -1137,6 +1208,35 @@ All scripts accept `--help` for full option descriptions.
 
 ### Signal verification
 
+#### `scripts/verify_config.py`
+Pre-deploy config-validation tool.  Loads a `node.yaml` or `server.yaml`
+through the pydantic schema with `WarnOnUnknownFieldsBase`, surfaces every
+unknown / renamed field as a WARNING, and confirms the file parses cleanly
+into the runtime models.  Run before pushing config changes to a fleet to
+catch typos and stale field names that would otherwise be silently dropped
+on the node:
+
+```bash
+env/bin/python scripts/verify_config.py config/node.yaml
+env/bin/python scripts/verify_config.py config/server.yaml
+```
+
+Exit status is non-zero on hard schema errors; warnings are informational
+(legacy/retired fields still load successfully).
+
+---
+
+#### `scripts/fit_tdoa_calibration.py`
+Fits per-pair (or per-node, see `--mode`) TDOA bias offsets from recorded
+events against a known calibration target.  Produces the
+`solver.tdoa_calibration.pair_offsets_s` / `node_offsets_s` block that the
+server consumes (`solver.tdoa_calibration` in `server.yaml`).  Uses a
+median-based estimator with per-pair MAD outlier rejection (see
+`feat(server): median-based calibration + per-pair MAD outlier rejector`
+in `git log`).
+
+---
+
 #### `scripts/verify_rds_sync.py`
 Live RDS sync detection display, using the same `RDSSyncDetector` class the
 production node pipeline runs.  Reports event rate, internal pilot correlation
@@ -1691,7 +1791,7 @@ python3 scripts/verify_freq_hop.py \
 ```
 
 The script prints each `TDOAMeasurement` as it arrives with columns:
-`sync_delta_ns`, `corr_peak`, `onset_power_db`.
+`sync_to_snippet_start_ns`, `corr_peak`, `onset_power_db`.
 
 **Pass criteria (all modes):**
 - SyncEvents appear continuously at **>= 10 events/s** (ideally ~100/s)
@@ -1755,7 +1855,7 @@ config and watch the logs for `TDOAMeasurement` lines.]*
 **Record result:**
 ```
 Mode: freq_hop / rspduo / two_sdr / single_sdr
-First measurement sync_delta_ns: _____ ns
+First measurement sync_to_snippet_start_ns: _____ ns
 corr_peak (typical): _____
 onset_power_db: _____ dBFS
 ```
@@ -1770,7 +1870,9 @@ is pure noise in the timing pipeline.
 
 **Why this matters:** The co-located pair test is the only single-site check
 that directly measures what the TDOA system actually delivers.
-`TDOA_AB = sync_delta_A - sync_delta_B` for a co-located pair should be 0 ns;
+`TDOA_AB = sync_to_snippet_start_A - sync_to_snippet_start_B` (plus the
+server-side refinement and path-delay correction) for a co-located pair
+should be 0 ns;
 the standard deviation of that distribution tells you the timing noise floor,
 which sets the position accuracy limit for the whole network.  Onset and offset
 are measured separately because the rising and falling edges of a carrier have
@@ -1936,7 +2038,7 @@ Step 3 - Carrier Detection Thresholds
 
 Step 4 - End-to-End Pipeline Test
   Script used: verify_freq_hop.py / verify_rspduo.py / main.py
-  First measurement sync_delta_ns: _____ ns
+  First measurement sync_to_snippet_start_ns: _____ ns
   corr_peak: _____  onset_power_db: _____ dBFS
   Overflows (rspduo): _____
 

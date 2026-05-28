@@ -125,6 +125,63 @@ budget).
 
 ---
 
+## RDS subcarrier demodulation and block-A anchor matching
+
+Pilot-derived bit boundaries (above) place the bit *grid* — they don't
+tell us which RDS *bit* we're looking at.  Without anchor identification,
+two nodes can lock onto different bit edges within the same RDS group and
+emit `sync_to_snippet_start_ns` values that disagree by integer multiples
+of the 842 µs bit period (or, more disruptively, the 87.6 ms group
+period).  Beagle's RDS-anchor subsystem (added 2026-05) makes the
+anchor explicit and identical across nodes.
+
+### Subsystem stages
+
+1. **Pure-Python RDS subcarrier demodulator** (`RDSDemodulator` in
+   `beagle_node.rds.demodulator`).  Translates the 57 kHz BPSK
+   subcarrier — coherent with the 19 kHz pilot at a 3× ratio — into a
+   symbol stream at 1187.5 Hz (`pilot/16`).
+2. **Hysteretic biphase decoder with fade-guard.**  Differential biphase
+   produces a sign-ambiguous bit stream; the decoder maintains a sticky
+   polarity that flips only after sustained disagreement.  Mid-stream
+   flips during fades or noise spikes are explicitly avoided so
+   downstream block sync doesn't lose lock.  `biphase_polarity_flips` is
+   surfaced via `/health`.
+3. **Block sync with (26,16) cyclic-code FEC** (`RDSBlockSync`).
+   Implements the standard RDS sliding-window block detector: 16-bit
+   information + 10-bit syndrome per block, four blocks (A/B/C/D)
+   per group, with single-bit error correction inside the FEC window.
+4. **`RDSDecoderService` in the pipeline** (visibility-only when first
+   introduced; `f7a00c3`, `1d980f4`).  Per-decoded-block events flow
+   through the pipeline so downstream stages can consume them.
+5. **`DeltaComputer` block-A bit-0 anchor matcher.**  Selects the
+   block-A bit-0 transition nearest the carrier edge as the TDOA
+   anchor.  The matcher is **fail-closed**: if no candidate falls within
+   a ±half-group window of the carrier edge, the event is dropped and
+   `anchor_mismatch_count` increments.  Reported via `anchor_emit_fraction`.
+6. **`anchor_*` fields shipped in the CarrierEvent** (schema 1.7):
+   `anchor_block_letter` (`"A"`), `anchor_bit_in_block` (`0`),
+   `anchor_group_pi` (16-bit RDS PI), `anchor_group_type` (e.g. `"0A"`).
+   All nodes paired on the same FM station must report identical PI and
+   matching letter/bit.
+
+### Why this matters
+
+Two nodes can now disagree on the chosen anchor only by an integer
+number of *groups* (87.6 ms), not bits (842 µs) or arbitrary pilot
+cycles.  The server-side group-period anchor-snap correction
+(`_apply_group_period_snap` in `beagle_server.tdoa`) detects ±1-group
+mismatches and snaps them out before refinement; |k| > 1 pairs are
+dropped as cross-transmission noise.  Counters
+(`group_snap_counters.k_plus_1`/`k_minus_1`/`out_of_range`) surface on
+the server's `/health`.
+
+See [03-timing-model.md](03-timing-model.md) for the anchor-snap math
+and the timing-budget impact, and [05-event-reporting.md](05-event-reporting.md)
+for the wire format.
+
+---
+
 ## Seattle FM Stations
 
 The sync station is configured per-node in `node.yaml` under `sync_signal:`.
@@ -334,11 +391,18 @@ In either case, select a different station.
 
 ### Startup latency
 
-On startup, the RDS sync detector takes ~50 ms (50 symbols * 842 usec) for
-the M&M timing loop to converge before it begins emitting SyncEvents.  This
-warmup is configurable via the `RDSSyncDetector(warmup_symbols=...)`
-constructor argument; the default of 50 is generous for typical signal
-quality.
+On startup, the RDS sync detector takes ~50 ms (50 symbols × 842 µs)
+for the pilot phase-lock to converge and a few stable bit-grid samples to
+accumulate before it begins emitting SyncEvents.  (Earlier versions cited
+this as "the M&M timing loop to converge"; the M&M loop no longer exists
+— current warmup is purely pilot-phase convergence.)  Warmup is
+configurable via the `RDSSyncDetector(warmup_symbols=...)` constructor
+argument; the default of 50 is generous for typical signal quality.
+
+Downstream, the RDS block-sync / FEC and the block-A anchor matcher
+each need a few additional groups (~hundreds of ms) before they
+emit anchored measurements with `anchor_block_letter="A"` populated;
+`anchor_emit_fraction` will read low until that has settled.
 
 In parallel, the internal pilot extraction path runs from the very first
 audio buffer.  However, the first sync event has no prior phase

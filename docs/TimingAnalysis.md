@@ -1,41 +1,61 @@
 # TDOA Timing Accuracy Analysis
 
-_Last substantive pipeline updates reflected here: 2026-04-19 (rev 3)._
+_Last substantive pipeline updates reflected here: 2026-05-28 (rev 4)._
 _Earlier sections retained for archaeological context; see the Status banner below._
 
-## Status as of 2026-04-19
+## Status as of 2026-05-28 (rev 4)
 
-Several of the stages described below were replaced or substantially rewritten
-after the 2026-03-19 baseline:
+Further pipeline rewrites since rev 3 (2026-04-19):
 
-- **RDS sync extraction** -- replaced Mueller-Muller timing recovery + Costas
-  with **pilot-phase-derived bit boundaries**.  Cross-node onset spread
-  dropped from ~250 µs (M&M era) to ~105 ns (pilot-derived era) over the same
-  fixture.  See [docs/design/04-sync-signal.md](design/04-sync-signal.md).
-- **Target channel rate** -- raised from 62.5 kHz (/32 decimation) to ~250 kHz
-  (/8), so per-sample resolution is 4 µs instead of 16 µs.  Snippet size
-  raised from 1280 samples (20 ms) to 5120 samples (20.5 ms).
-- **Carrier timing** -- replaced envelope-xcorr / derivative-peak
-  `sample_index` with **server-side argmin(d2) knee finding** (Savgol second
-  derivative of the power envelope, default 360 µs window).  Nodes emit a
-  larger IQ snippet + `transition_start` / `transition_end` zone bounds; the
-  server does the Savgol work.  Real-corpus median |err| is ~59 µs on
-  onset pairs.
-- **Auto-tracked carrier thresholds** -- onset/offset now track the
-  noise-floor EMA continuously (`onset = floor + 12 dB`, `offset = floor + 6 dB`).
-  Static `onset_db`/`offset_db` only apply during noise-floor warmup.
-- **SyncCalibrator** -- new server-side per-pair grid calibration that
-  removes the inter-node pilot-phase grid offset before pilot-period
-  disambiguation.
+- **RDS block-A anchor matcher** — `DeltaComputer` now selects a specific
+  block-A bit-0 transition as the TDOA anchor rather than an arbitrary
+  pilot-derived bit edge.  The matcher is **fail-closed**: no in-window
+  block-A bit-0 candidate → no event emitted (`anchor_mismatch_count`
+  increments).  Powered by a pure-Python RDS subcarrier demodulator,
+  (26,16) cyclic-code FEC block sync, and hysteretic biphase polarity
+  tracking with a fade-guard.  See
+  [docs/design/04-sync-signal.md](design/04-sync-signal.md).
+- **anchor_* fields shipped in CarrierEvent** — schema 1.7 adds
+  `anchor_block_letter` / `anchor_bit_in_block` / `anchor_group_pi` /
+  `anchor_group_type` so the server can verify cross-pair anchor
+  agreement and apply group-period snap correction.
+- **Group-period anchor-snap correction (server-side)** — `compute_tdoa_s`
+  snaps `raw_ns` to the nearest RDS-group multiple (≈87.6 ms) with
+  |k| ≤ 1 before refinement, then drops pairs at |k| > 1 as
+  cross-transmission noise.  Counters surfaced via `/health`.
+- **TDOA refinement method switch** — `solver.tdoa_method`
+  (`xcorr` / `phat` / `audio_phat` / `knee`).  `phat` is coherent
+  complex-IQ GCC-PHAT on the post-knee plateau; `audio_phat` runs
+  GCC-PHAT on FM-demodulated audio (~30× tighter per-event MAD on
+  voice-modulated plateaus).  Default snippet size raised to **16 384
+  samples (~65 ms at 250 kHz)** to give the PHAT plateau enough material
+  to correlate against.
+- **Plateau events (schema 1.6)** — periodic snapshots emitted while a
+  carrier is sustained, anchored to a sync-pilot bit boundary so paired
+  nodes cover the same physical time window.  Three-phase emission
+  (initial burst → slow trickle → cap) bounds per-active-period traffic.
+- **Per-pair / per-node TDOA bias calibration** — server applies a
+  configurable `solver.tdoa_calibration.pair_offsets_s` (preferred) or
+  `node_offsets_s` (fallback) before the plausibility check.  A
+  median-based estimator with per-pair MAD outlier rejection
+  (`scripts/fit_tdoa_calibration.py`) produces these from a known target.
+- **Solver safety** — boundary-clamp and multistart-ambiguity suppression
+  flag fixes whose true minimum lies outside the search area; cost
+  function rescaled to ns² with `seed_stuck` / `node_stuck` detection
+  for node-attractor fixes.
+- **Warn-on-unknown-field for all pydantic models** — node and server now
+  use `WarnOnUnknownFieldsBase`: unknown fields drop with a one-shot
+  WARNING, so legacy `altitude_m` / `uncertainty_m` / `sync_delta_ns`
+  still parse but the operator is told.
 
-Stages 7-12 (delta computation, onset_time_ns, network, grouping,
-disambiguation, final TDOA) are substantively unchanged.  The improvement
-table at the end still captures the arc correctly, but the specific
-numbers in Stage 6 and the Measured-baseline section reflect the
-pre-2026-04 pipeline.
+Stages 7–12 (delta computation, onset_time_ns, network, grouping,
+disambiguation, final TDOA) are substantively unchanged from rev 3, but
+disambiguation now happens in two stages: the group-period snap at
+±87.6 ms followed by the existing bit-period round at ±842 µs.
 
-This document traces every stage of the TDOA measurement pipeline, identifies variance
-contributions at each step, and summarises the current noise floor and improvement paths.
+This document traces every stage of the TDOA measurement pipeline,
+identifies variance contributions at each step, and summarises the
+current noise floor and improvement paths.
 
 ---
 
@@ -54,24 +74,44 @@ FM demodulation + 19 kHz pilot phase lock (sub-sample)
         v
 RDS bit boundaries derived from pilot phase
         v
+RDS subcarrier demod (BPSK biphase, hysteretic polarity)
+        v
+RDS block sync + (26,16) cyclic-code FEC
+        v
+DeltaComputer block-A bit-0 anchor matcher (fail-closed,
+        ±half-group window; emits anchor_block_letter/bit_in_block/
+        group_pi/group_type alongside the SyncEvent)
+        v
 Target-domain decimation /8 -> ~250 kHz
         v
 Carrier detection (auto-tracked onset/offset from noise floor;
-                   IQ snippet + transition bounds emitted)
+                   16 384-sample IQ snippet + transition bounds emitted;
+                   plateau events for sustained carriers)
         v
-sync_to_snippet_start_ns = (target_sample - sync_sample) / rate
+sync_to_snippet_start_ns = (snippet_first_sample - matched_sync_sample) / rate
         v
 onset_time_ns = buf_wall_ns + within-buffer offset
         v
-HTTP POST to server
+HTTP POST /api/v1/events  (CarrierEvent schema 1.7)
         v
-Server-side Savgol d2 knee finding + per-pair SyncCalibrator
+Server pairing (group by channel, event_type, sync_tx, T_sync)
         v
-Event grouping by T_sync
+compute_tdoa_s:
+  raw_ns = sync_to_snippet_A - sync_to_snippet_B
+  raw_ns -= SyncCalibrator grid correction
+  GROUP-PERIOD SNAP: k = round(raw_ns / 87.6 ms),
+                     snap if |k| <= 1 and residual <= 20 ms
+                     drop pair if |k| > 1
+  add sync-path correction (geometry)
+  refine via tdoa_method (xcorr | phat | audio_phat | knee)
+  bit-period disambiguation (round on 842 µs)
+  apply per-pair / per-node calibration
+  plausibility check vs max baseline
         v
-Bit-period disambiguation (n = round((raw_ns + path_correction) / 842 us))
+L-BFGS-B solver with multistart guard + boundary clamp +
+       seed_stuck / node_stuck suppression
         v
-TDOA = sync_delta_A - sync_delta_B - n * 842 us + path_correction
+SQLite + Leaflet heatmap + SSE updates
 ```
 
 ---
@@ -537,6 +577,21 @@ more than adequate - false grouping of successive transmissions requires two key
 within the same 200 ms window on the same channel, which is rare in practice.
 
 **Conclusion: not a useful improvement for any currently planned environment.**
+
+---
+
+---
+
+# 📁 Archive — pre-2026-04 measurements
+
+The sections below were captured against the pre-RDS-anchor pipeline (M&M
+timing, 62.5 kHz target rate, 1280-sample snippets, pilot-period
+disambiguation only).  Numeric values and `sync_delta_ns` field names
+predate schema 1.5 / 1.6 / 1.7.  Retained for historical comparison —
+**do not use as a current performance reference**.  Current performance
+numbers live in `git log` commit messages for the relevant feature
+commits and in the per-corpus analyses under
+`/Users/dpk/tmp/claude/` (operator's scratch).
 
 ---
 

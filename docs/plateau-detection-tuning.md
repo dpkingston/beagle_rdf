@@ -4,13 +4,20 @@ This doc describes the server-side timing-refinement step (run inside
 `compute_tdoa_s()` in `src/beagle_server/tdoa.py`) and the two parameters
 that matter for field tuning.
 
-> **Note (2026-04-21):** The server default is now `tdoa_method="xcorr"`
-> (inter-node cross-correlation on `d²(power envelope)` — see
-> `cross_correlate_snippets`). On the 2026-04-21 Magnolia corpus xcorr
-> matches or beats the Savgol knee finder on per-pair std, has full event
-> yield, and works for offsets (where per-snippet knee SNR is typically
-> < 1). The Savgol-knee algorithm documented below is the `tdoa_method="knee"`
-> path — still supported and test-covered, but no longer the default.
+> **Note (2026-05):** `compute_tdoa_s` now supports four refinement
+> methods selected by `solver.tdoa_method` in `server.yaml`:
+>
+> | Method | When to use |
+> |--------|-------------|
+> | `xcorr` (function default) | Inter-node cross-correlation on `d²(power envelope)`.  Works at small snippet sizes (1280 samples) and remains the function default for backward compat with 62.5 kHz fixtures.  See `cross_correlate_snippets`. |
+> | `phat` | **Recommended for production.**  Coherent complex-IQ GCC-PHAT on the post-knee plateau after per-node residual-LO-offset removal.  Requires snippets sized for ~30 ms of post-knee plateau (production `carrier.snippet_samples=16384` at 250 kHz ≈ 65 ms).  Pooled median \|err\| 188 µs at 89 % yield on the 2026-04-24 Magnolia corpus. |
+> | `audio_phat` | GCC-PHAT on FM-demodulated audio rather than complex IQ.  Empirically ~30× tighter per-event MAD than `phat` on cooperative (voice-modulated) plateau signals.  Per-target bias drift is unchanged from `phat`; combine with the per-pair calibration framework for absolute accuracy on a known target. |
+> | `knee` | The Savgol-second-derivative algorithm documented in this file.  Retained for comparison / tests and for small-snippet deployments. |
+>
+> The Savgol-knee algorithm documented below is `tdoa_method="knee"`.
+> The `transition_start` / `transition_end` ramp bracket and the
+> `savgol_window_us` smoothing parameter are also used by `phat` to
+> locate the ramp mid-point that bounds the plateau segment.
 
 ## Algorithm
 
@@ -83,9 +90,8 @@ rejecting noise-only snippets.
 1. Run the server long enough to collect ≥30 paired events from a known
    geometry (e.g., a co-located pair or a known-position repeater like
    Magnolia).
-2. Run `scripts/analyze_xcorr_tdoa.py` (or the ad-hoc analyser in
-   `/private/tmp/analyze_new_corpus.py`) on the saved events; it pairs by
-   `onset_time_ns` and reports median/p75 per window size.
+2. Run `scripts/analyze_xcorr_tdoa.py` on the saved events; it pairs by
+   `onset_time_ns` and reports median / p75 per window size.
 3. If median |err| is > 100 µs, try 240 µs and 720 µs Savgol windows to
    confirm 360 µs is still the sweet spot for your signals.  A different
    transmitter class (much slower PA ramps, or pre-emphasis rollover) may

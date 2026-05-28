@@ -154,7 +154,7 @@ Extract precise timing pulses from the **RDS** (Radio Data System) BPSK data
 stream modulated on the FM stereo subcarrier at 57 kHz.  One `SyncEvent` is
 emitted per recovered RDS bit transition (~1188 per second, exactly
 **pilot/16 = 1187.5 Hz**), carrying a sample index accurate to better than
-0.1 usec via the M&M timing loop's sub-sample interpolation.
+0.1 µs via sub-sample pilot-phase unwrapping.
 
 ### Why the RDS bit clock?
 
@@ -230,24 +230,26 @@ same fixture.
 
 ### Buffer management and gap handling
 
-The `RDSSyncDetector` keeps an internal `mm_buf` of decimated samples between
-calls so that the M&M loop can reach across `process()` boundaries without
-restarting.  Two invariants:
+The `RDSSyncDetector` keeps an internal decimated-sample buffer between
+calls so that the pilot phase-unwrap state can carry across `process()`
+boundaries without restarting.  Two invariants:
 
-1. The buffer always retains at least 2 samples after each trim, so the M&M
-   loop's "outstanding advance" past the current buffer end is preserved for
-   the next call.  Violating this invariant caused a periodic 20-sample
-   backward jump in early development; see commit `54b2f5f` for the fix.
+1. The buffer always retains at least 2 samples after each trim, so the
+   pilot-phase tracker's "outstanding advance" past the current buffer
+   end is preserved for the next call.  Violating this invariant caused
+   a periodic 20-sample backward jump in early development; see commit
+   `54b2f5f` for the fix.
 
 2. **Long gaps** (`start_sample` jumps more than 1 second ahead of the
    expected next sample) trigger a full state reset including warmup.
 
-3. **Short gaps** (typical of `freq_hop` mode where the SDR retunes between
-   sync blocks) trigger only a partial reset: the LPF / decimation / M&M
-   buffers are flushed (because the audio between blocks is from a different
-   frequency and is meaningless) but M&M timing state, Costas lock, warmup
-   counter, and crystal calibration are **preserved**.  The `-57 kHz`
-   oscillator phase is also advanced across the gap so it stays coherent.
+3. **Short gaps** (typical of `freq_hop` mode where the SDR retunes
+   between sync blocks) trigger only a partial reset: the LPF /
+   decimation buffers are flushed (because the audio between blocks is
+   from a different frequency and is meaningless) but the pilot-phase
+   tracker, bit-grid offset, warmup counter, and crystal calibration
+   are **preserved**.  The `-57 kHz` oscillator phase is also advanced
+   across the gap so it stays coherent.
 
 ### Disambiguation period
 
@@ -257,6 +259,66 @@ for a 100 km baseline is `100 km / c = 333 usec`, comfortably less than
 counts via `n = round((raw_ns + path_correction_ns) / 842,105)` without
 ambiguity.  This is implemented in `beagle_server/tdoa.py` -- see
 [03-timing-model.md](03-timing-model.md) for the full derivation.
+
+---
+
+## Stage 3b: RDS Decoder + Block-A Anchor Matching (`pipeline/rds_decoder.py` + `pipeline/delta.py`)
+
+### Purpose
+
+Bit boundaries from Stage 3 tell us *when* an RDS bit edge happens, but
+not *which* bit (RDS data is a continuous block-A / B / C / D group
+cycle).  Without anchor identification, two nodes can latch onto
+different bits within the same RDS group and emit
+`sync_to_snippet_start_ns` values that disagree by integer multiples
+of the 842 µs bit period — or, by one full group, of 87.6 ms.
+
+### Chain
+
+1. **`RDSDemodulator`** — extracts the 57 kHz BPSK subcarrier (coherent
+   with the 19 kHz pilot at a 3× ratio), demodulates to a hard-symbol
+   stream at 1187.5 Hz.
+2. **Hysteretic biphase decoder with fade-guard** — recovers
+   differentially-encoded bits.  Polarity is sticky: it only flips after
+   sustained disagreement to avoid mid-stream flips during fades or
+   noise spikes.  Flip count surfaces via `/health`
+   (`biphase_polarity_flips`).
+3. **`RDSBlockSync` with (26,16) cyclic-code FEC** — standard sliding
+   window block detector with 16-bit information + 10-bit syndrome per
+   block, four blocks (A/B/C/D) per group, single-bit error correction
+   in the FEC window.  Identifies the block letter and group type
+   (e.g. `0A`, `2A`) and decodes the 16-bit PI (Program Identification).
+4. **`RDSDecoderService`** in the pipeline — emits a `RDSBlockEvent`
+   per decoded block.  Feed-only; downstream stages consume it.
+5. **`DeltaComputer` block-A bit-0 anchor matcher** — when a
+   `CarrierOnset` / `CarrierOffset` / `Plateau` arrives, the matcher
+   walks recent block-A bit-0 events and picks the one closest to the
+   carrier edge within a ±half-group window.  **Fail-closed**: if no
+   candidate is in window, the carrier event is *dropped* (counter:
+   `anchor_mismatch_count`).  Successful matches emit a
+   `TDOAMeasurement` with `anchor_block_letter="A"`, `anchor_bit_in_block=0`,
+   `anchor_group_pi=<PI>`, and `anchor_group_type=<"0A"/"2A"/...>`
+   attached.
+
+### Why fail-closed
+
+A relaxed "best guess" anchor would let two nodes silently lock onto
+different RDS groups during signal fades or boot-time misalignment.
+The cost is a small `anchor_mismatch` rate that the operator can
+monitor; the gain is that surviving events are guaranteed to be
+anchor-comparable across nodes.
+
+The fraction of carrier events that successfully match is surfaced as
+`anchor_emit_fraction` on the node `/health` endpoint.  Operational
+target: ≥ 0.95 under normal sky-wave-free conditions.
+
+### Cross-node validation at the server
+
+The shipped `anchor_*` fields let the server check that paired nodes
+agree on (PI, block letter, bit-in-block) before solving.  Group-period
+mismatches (rare; ≤30 % on the Capitol Hill 2 m corpus before snap
+correction was added) are corrected by the group-period snap in
+`compute_tdoa_s` (see [03-timing-model.md](03-timing-model.md)).
 
 ---
 
