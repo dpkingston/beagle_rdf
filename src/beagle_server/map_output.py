@@ -854,12 +854,28 @@ function loadFixes(maxAgeS) {
                         'Nodes (' + p.node_count + '): ' + p.nodes.join(', ') + '<br>' +
                         'Channel: ' + (p.channel_hz / 1e6).toFixed(4) + ' MHz<br>' +
                         'Type: ' + p.event_type;
+                    /* Tooltip text is recomputed live on each hover from
+                       f.properties.computed_at so the "Ns ago" string
+                       reflects the current wall-clock age, not the age
+                       baked in when /map/data was first fetched.
+                       Leaflet calls this function each time the tooltip
+                       is about to be shown.  The IIFE captures fix_id
+                       and computed_at in a fresh scope so the closure
+                       doesn't pick up the loop-variable ``f`` (this code
+                       uses ``var``, which is function-scoped, so a naked
+                       reference would resolve to the LAST iteration's
+                       value). */
                     layer = L.circleMarker(
                         [f.geometry.coordinates[1], f.geometry.coordinates[0]],
                         { radius: 6, color: color, fillColor: color,
                           fillOpacity: 0.85, weight: 1 }
                     ).bindPopup(popupHtml, { maxWidth: 320 })
-                     .bindTooltip(f.properties.tooltip);
+                     .bindTooltip((function (fixId, fixTs) {
+                         return function () {
+                             return 'Fix ' + fixId + ' - ' +
+                                    fmtAge(Date.now() / 1000 - fixTs);
+                         };
+                     })(f.properties.fix_id, f.properties.computed_at));
                     layer._beagleComputedAt = f.properties.computed_at;
                     layer.addTo(leafletMap);
                     _fixLayers.push(layer);
