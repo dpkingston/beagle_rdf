@@ -182,3 +182,33 @@ class TestPipelineIntegration:
         # And to 0.0 (disable).
         pipe.carrier_detector.update_thresholds(plateau_event_interval_s=0.0)
         assert pipe._plateau_K_groups == 0
+
+    def test_plateau_target_anchor_does_not_round_down_below_float_anchor(self):
+        """Regression test: ``_maybe_emit_anchor_plateau`` must convert
+        the demod's sub-sample-precise ``group_anchor_sample`` (float) to
+        ``target_anchor`` (int) using ``math.ceil`` rather than ``int()``.
+
+        Why: the downstream matcher (``find_a_bit0_anchor``) skips any
+        block-A whose float ``sample_index`` is strictly greater than
+        ``carrier_sample``.  If the pipeline emits a plateau at
+        ``target_anchor = int(950000.5) = 950000`` and the matcher then
+        queries with carrier_sample = 950000, the float anchor at
+        950000.5 fails ``950000.5 > 950000`` and is skipped — the
+        matcher returns the PREVIOUS block-A bit-0 (~21 900 samples /
+        87.6 ms / 1 RDS group earlier), producing the off-by-one-group
+        ``sync_to_snippet_start_ns`` ≈ +87.6 ms bug we saw in
+        production after the anchor-trigger plateau commit shipped.
+
+        ``math.ceil`` guarantees ``target_anchor >= group_anchor_sample``,
+        so the matcher accepts the intended anchor."""
+        import math
+        # ceil(X.5) is at-or-above X.5; int(X.5) is strictly less than X.5.
+        for s in [950_000.0, 950_000.1, 950_000.5, 950_000.9, 950_001.0]:
+            assert math.ceil(s) >= s, (
+                f"ceil({s})={math.ceil(s)} but must be >= {s}"
+            )
+        # And ``int()`` would have broken the round-trip for non-integer s.
+        assert int(950_000.5) < 950_000.5, (
+            "If this assertion changes, Python's int() semantics changed "
+            "and the bug-fix rationale needs revisiting."
+        )

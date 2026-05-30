@@ -36,6 +36,7 @@ and target-channel buffers to process_buffer(role='target').
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -687,7 +688,21 @@ class NodePipeline:
             return None
 
         # Map the demod-derived anchor sample back to target domain.
-        target_anchor = int(best_ctx.group_anchor_sample) * sd // td
+        #
+        # CRITICAL: use ``math.ceil`` rather than ``int()`` here.  The
+        # demod's ``group_anchor_sample`` is sub-sample-precise (a
+        # float like 950000.5).  We must emit ``target_anchor`` >=
+        # that float, otherwise the downstream
+        # ``find_a_bit0_anchor(event.sample_index, ...)`` query — which
+        # compares ``blk_a.sample_index (float) > carrier_sample
+        # (rounded int)`` — will skip THIS group's anchor and return
+        # the PREVIOUS group's anchor, ~21 900 samples earlier.  That
+        # would produce a systematic ``sync_to_snippet_start_ns`` of
+        # +87.6 ms (exactly one RDS group period) on every plateau
+        # event, defeating the whole point of anchor-triggered emission.
+        # ``ceil`` introduces ≤ 1 sample (≤ 4 µs at 250 kHz) of snippet
+        # offset, which is well below our sub-µs timing target.
+        target_anchor = math.ceil(best_ctx.group_anchor_sample) * sd // td
 
         # K-groups cadence: only emit if we're at least K groups past the
         # previously-emitted anchor in this active period.
