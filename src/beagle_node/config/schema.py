@@ -323,24 +323,39 @@ class CarrierDetectConfig(BaseModel):
     plateau_event_interval_s: float = 0.0
     """Periodic plateau-snapshot emission interval, in seconds.  0 = disabled.
 
-    When > 0, the carrier detector emits a CarrierPlateau (event_type =
-    "plateau") every N seconds of wall-clock time while the detector is
-    in the active state.  Each plateau snippet covers the most recent
-    ``snippet_samples`` of IQ at emission time.  These give the server
-    many additional pair-TDOA samples per sustained transmission, which
-    can be averaged with the corresponding onset and offset measurements
-    to reduce the per-fix error roughly as 1/sqrt(N).
+    When > 0, the pipeline emits a CarrierPlateau (event_type =
+    "plateau") roughly every N seconds while the detector is in the
+    active state.  The actual cadence is quantised to the RDS group
+    period (87.6 ms): ``K = max(1, round(N / 0.0876))`` groups between
+    emissions, so paired nodes' snippets land at the SAME RDS block-A
+    bit-0 anchor (cross-node-deterministic by construction).  These
+    give the server many additional pair-TDOA samples per sustained
+    transmission, which can be averaged via the per-pair median+MAD
+    estimator to reduce per-fix error roughly as 1/sqrt(N).
 
-    Cross-node alignment depends only on NTP-synchronised wall clocks
-    (~10 ms typical).  Plateau snippets between nodes overlap by
-    ``snippet_duration - NTP_skew`` -- e.g. ~64 ms out of 65 ms with the
-    standard 16384-sample / 250 kHz snippets -- which is more than enough
-    for the server's coherent cross-correlator to lock on the modulation
-    content (CTCSS tone, audio).
+    Cross-node alignment is *sample-deterministic* (modulo propagation
+    delay), not NTP-grade.  Each node's snippet first sample equals
+    the same RDS group's block-A bit-0 sample, so
+    ``sync_to_snippet_start_ns`` is ≈ 0 on every plateau measurement.
+    Live-reloadable (no node restart needed).
 
-    Recommended values: 1.0 - 2.0 seconds for typical PTT transmissions
-    of 5-30 s duration.  Lower values produce more samples per
-    transmission but more bandwidth; higher values produce fewer samples."""
+    Tuning profiles:
+
+    * **Long-key-up repeater / continuous beacon** (15–30 min keys,
+      what we test against now):  ``1.0`` for high pair-sample density,
+      paired with ``plateau_max_per_active`` raised proportionally
+      (see below) so the safety cap doesn't clip legitimate long
+      transmissions.
+    * **Intermittent PTT / interference targets** (5–30 s keys):
+      ``1.0`` is usually fine; the burst+slow scheme below can give
+      you both rapid fix-convergence at key-down and a lighter
+      trickle of measurements during sustained voice.
+    * **Bandwidth-constrained nodes / many channels**:  ``2.0`` or
+      ``3.0`` halves the data volume at the cost of √2 / √3 less
+      averaging gain.
+
+    Lower values produce more samples per transmission but more
+    bandwidth; higher values produce fewer samples."""
     plateau_max_per_active: int = 30
     """Maximum plateau emissions allowed in a single active period, before
     the emitter mutes itself until the next state -> idle -> active cycle.
@@ -351,17 +366,27 @@ class CarrierDetectConfig(BaseModel):
     cap, plateau emissions continue indefinitely, exhausting journal disk
     on resource-constrained hosts (Raspberry Pi).
 
-    At the recommended ``plateau_event_interval_s = 1.0``, a cap of 30
-    corresponds to 30 s of continuous plateaus -- comfortably above 95th-
-    percentile voice-traffic key-down length, and far below a stuck-
-    active failure (which typically runs for many minutes).
+    Pick the cap to match the *longest legitimate transmission you
+    expect*, plus a safety margin.  At ``plateau_event_interval_s =
+    1.0``:
+
+    * **30** ≈ 30 s of continuous plateaus — above 95th-percentile
+      voice-traffic key-down length.  Default; appropriate for
+      intermittent-PTT deployments.
+    * **2000** ≈ 33 minutes — comfortably covers long repeater
+      sessions (typical FM/VHF amateur repeater hold-times of 15–
+      20 minutes).  Use this on deployments tracking a repeater or
+      continuous beacon.
+    * **0** = no cap.  Safe only if you fully trust the carrier
+      detector's idle transition (no noise-floor drift, no stuck-
+      active history).
 
     A WARNING is logged once when the cap is hit so it shows up
     prominently in production logs.  Plateaus resume on the next idle ->
     active transition (i.e. after a normal offset/onset cycle).
 
-    With ``plateau_slow_interval_s`` enabled, you can often set this to
-    0 (no cap) because slow-mode already bounds long-active disk usage.
+    With ``plateau_slow_interval_s`` enabled, you can often set this
+    lower because slow-mode already bounds long-active disk usage.
 
     0 = no cap (legacy behaviour; emit plateaus indefinitely while active).
     """

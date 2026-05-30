@@ -290,14 +290,13 @@ class NodePipeline:
         self._plateau_group_period_target_samples: int = max(
             1, round(target_rate / (1187.5 / 104.0)),
         )
-        # K = number of groups between successive plateau emissions.
-        # interval / group_period rounded to the nearest integer; ≥ 1.
-        if c.carrier_plateau_event_interval_s > 0.0:
-            self._plateau_K_groups: int = max(
-                1, round(c.carrier_plateau_event_interval_s / (104.0 / 1187.5)),
-            )
-        else:
-            self._plateau_K_groups = 0  # disabled
+        # K (number of groups between successive plateau emissions) is
+        # derived at use time from the carrier_detect's current
+        # ``_plateau_interval_s`` so live config reloads of
+        # ``carrier.plateau_event_interval_s`` (via
+        # ``CarrierDetector.update_thresholds``) take effect immediately
+        # without needing a parallel pipeline-level update.  See
+        # ``_plateau_K_groups``.
 
         # Latest sync detector telemetry (updated each time process_sync_buffer
         # produces an event).  Exposed for health reporting.
@@ -336,6 +335,24 @@ class NodePipeline:
     def rds_decoder(self) -> RDSDecoderService | None:
         """The RDS block decoder service (visibility / future block-A anchor lookup)."""
         return self._rds_decoder
+
+    @property
+    def _plateau_K_groups(self) -> int:
+        """Number of RDS groups between successive anchor-triggered plateau
+        emissions (≥ 1).  0 means plateau emission is disabled.
+
+        Derived dynamically from the carrier_detect's current
+        ``_plateau_interval_s`` so live config reloads of
+        ``carrier.plateau_event_interval_s`` (via
+        ``CarrierDetector.update_thresholds``) take effect on the next
+        ``process_target_buffer`` call without needing the pipeline to
+        be reconstructed.
+        """
+        interval_s = self._carrier_det._plateau_interval_s
+        if interval_s <= 0.0:
+            return 0
+        # 104.0 / 1187.5 = one RDS group period in seconds (~87.6 ms).
+        return max(1, round(interval_s / (104.0 / 1187.5)))
 
     def rds_health_snapshot(self) -> dict | None:
         """
@@ -639,7 +656,8 @@ class NodePipeline:
         # 0, or when the detector is idle.
         if self._rds_decoder is None:
             return None
-        if self._plateau_K_groups == 0:
+        K = self._plateau_K_groups
+        if K == 0:
             return None
         if self._carrier_det.state != "active":
             return None
@@ -676,7 +694,7 @@ class NodePipeline:
         if (
             self._last_plateau_target_anchor is not None
             and target_anchor - self._last_plateau_target_anchor
-                < self._plateau_K_groups * self._plateau_group_period_target_samples
+                < K * self._plateau_group_period_target_samples
         ):
             return None
 

@@ -168,31 +168,36 @@ carrier:
   plateau_event_interval_s: 0.0   # Periodic-snapshot interval (seconds) while the
                                   # carrier is sustained.  0 = disabled (default,
                                   # only onset/offset events emitted).
-                                  # When > 0, the detector emits a CarrierPlateau
-                                  # every N seconds during active state, giving
-                                  # the server many additional pair-TDOA samples
-                                  # per transmission for averaging.  Recommended:
-                                  # 1.0-2.0 s for typical PTT-radio transmissions
-                                  # of 5-30 s duration.
-                                  # The FIRST plateau in each active period fires
-                                  # as soon as the IQ ring clears the onset edge
-                                  # (snippet_duration ms after onset, e.g. ~65 ms
-                                  # at 16384 samples / 250 kHz), guaranteeing at
-                                  # least one plateau even for transmissions much
-                                  # shorter than the configured interval.  All
-                                  # SUBSEQUENT plateaus phase-lock to the wall-
-                                  # clock interval grid (floor(now/interval)*
-                                  # interval), so cross-node snippets overlap to
-                                  # within NTP precision (~10 ms) for PHAT.
+                                  # When > 0, the pipeline emits a CarrierPlateau
+                                  # roughly every N seconds during active state,
+                                  # snapped to the next RDS group boundary so
+                                  # paired nodes' snippets cover the SAME physical
+                                  # time window (sync_to_snippet_start_ns ≈ 0).
+                                  # See "Tuning profiles" in carrier.plateau_*
+                                  # docstrings.  The FIRST plateau in each active
+                                  # period fires as soon as the IQ ring clears the
+                                  # onset edge.  Live-reloadable.
+                                  #
+                                  # Tuning profile examples (Capitol Hill 2 m
+                                  # repeater testing — long key-ups):
+                                  #   plateau_event_interval_s: 1.0
+                                  #   plateau_max_per_active: 2000   # ~33 min
+                                  # Tuning profile examples (interference targets
+                                  # — short bursts of seconds to a minute):
+                                  #   plateau_event_interval_s: 1.0
+                                  #   plateau_max_per_active: 90     # ~90 s
+                                  #   plateau_burst_count: 10        # see below
+                                  #   plateau_slow_interval_s: 5.0   # see below
   plateau_max_per_active: 30      # Safety cap: max plateau emissions during a
                                   # single active period before muting until the
                                   # next idle->active cycle (offset+onset).
-                                  # At plateau_event_interval_s=1.0, 30 = 30 s of
-                                  # continuous plateaus -- well above 95th-percentile
-                                  # voice key-down length, but bounded so a "stuck
-                                  # active" state machine cannot exhaust journal
-                                  # disk on resource-constrained hosts.  A WARN logs
-                                  # once when the cap trips.  0 = no cap (legacy).
+                                  # At plateau_event_interval_s=1.0:
+                                  #   30   = 30 s  (default; intermittent PTT)
+                                  #   2000 = ~33 min (long-key-up repeater)
+                                  #   0    = no cap (only safe with a stable
+                                  #          idle transition; can blast forever
+                                  #          on stuck-active failure modes).
+                                  # A WARN logs once when the cap trips.
   # ring_lookback_windows: null  # Depth of the IQ ring buffer in detector windows.
                                   # Auto-sized (default: 3 x snippet_windows, or the
                                   # minimum needed to fill snippet_samples, whichever

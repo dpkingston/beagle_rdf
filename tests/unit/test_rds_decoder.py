@@ -159,3 +159,26 @@ class TestPipelineIntegration:
         assert snap["bler_mean"] is None or snap["bler_mean"] == 0.0
         # group_period_hz is the constant for the server's reference
         assert snap["group_period_hz"] == pytest.approx(11.418, abs=0.01)
+
+    def test_plateau_K_groups_follows_live_interval_reload(self):
+        """Live reload of ``carrier.plateau_event_interval_s`` (via
+        ``CarrierDetector.update_thresholds``) must immediately change
+        the pipeline's K-groups cadence.  Regression test for the bug
+        where ``_plateau_K_groups`` was captured at pipeline init and
+        wouldn't follow the carrier_detect's live updates."""
+        from beagle_node.pipeline.pipeline import NodePipeline, PipelineConfig
+        cfg = PipelineConfig(
+            sync_mode="rds",
+            carrier_plateau_event_interval_s=1.0,
+        )
+        pipe = NodePipeline(config=cfg)
+        # 1.0 s ÷ 0.0876 s/group ≈ 11.42 → K = 11
+        assert pipe._plateau_K_groups == 11
+
+        # Live reload to 2.0 s (intermittent-PTT tuning).
+        pipe.carrier_detector.update_thresholds(plateau_event_interval_s=2.0)
+        assert pipe._plateau_K_groups == 23  # round(2.0 / 0.0876) = 23
+
+        # And to 0.0 (disable).
+        pipe.carrier_detector.update_thresholds(plateau_event_interval_s=0.0)
+        assert pipe._plateau_K_groups == 0
