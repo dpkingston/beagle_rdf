@@ -239,6 +239,23 @@ class EventPairer:
         channel_bucket = round(event["channel_hz"] / self._freq_tol)
         return (channel_bucket, event["event_type"], event["sync_tx_id"])
 
+    # Maximum |n| accepted by the sync-period disambiguation below.  The
+    # legitimate use case is small bit-grid offsets from cross-node clock
+    # skew, which is at most a few bit periods (5 * 842 µs ≈ 4.2 ms is
+    # already well above realistic NTP error).  An unbounded |n| was a
+    # latent bug: for ANY ``delta`` longer than the direct-match window
+    # the pigeon-hole principle guarantees ``round(delta / 842 µs)`` has
+    # a residual ≤ ±421 µs, so unbounded disambiguation would falsely
+    # merge cross-transmission events that happen to land within 100 ms
+    # of an integer multiple of the bit period — i.e. essentially ALL
+    # cross-transmission pairs.  See diagnostic note 2026-05-30:
+    # observed plateau pairs with ``n = 200..6500+`` (180 ms – 5500 ms
+    # of wall-clock gap) all "pairing", producing the bogus +36 km fix
+    # cluster.  Plateau events from phase-misaligned nodes need the
+    # node-side phase-lock fix; this bound prevents the server from
+    # papering over the misalignment by silently fusing unrelated events.
+    _SYNC_PERIOD_DISAMBIG_MAX_N: int = 5
+
     def _find_group(self, base_key: tuple, t_sync_ns: int, node_id: str) -> _Group | None:
         """
         Return the first group whose base_key matches and whose T_sync anchor
@@ -246,14 +263,22 @@ class EventPairer:
 
         Also tries pilot-period disambiguation: if the T_sync difference
         exceeds the direct-match window but is approximately an integer
-        multiple of _T_SYNC_NS (RDS bit period ~842 usec), the event joins the
-        group - provided the incoming node is not already in the group.
+        multiple of _T_SYNC_NS (RDS bit period ~842 usec), the event joins
+        the group — provided the incoming node is not already in the group
+        AND the bit-period multiple is small (|n| ≤
+        ``_SYNC_PERIOD_DISAMBIG_MAX_N``).
 
         The per-node guard is essential: because any time difference is within
-        3.5 ms of *some* multiple of 7 ms, omitting the guard would cause
+        421 µs of *some* multiple of 842 µs, omitting the guard would cause
         different-transmission events from the same node to be falsely merged.
         The guard is safe for event amendments (same event_id, tiny T_sync
         delta) because amendments always pass the direct-match check first.
+
+        The |n| bound is essential for plateau events from nodes whose
+        emission phases aren't yet aligned: a 700 ms wall-clock gap looks
+        like n ≈ 831 to the bit-period rounder, with residual well under
+        the half-window.  Without the bound, the pairer would happily
+        merge completely unrelated plateau snippets.
 
         Returns None if no such group exists.
         """
@@ -271,7 +296,11 @@ class EventPairer:
             )
             if not node_in_group:
                 n = round(delta / _T_SYNC_NS)
-                if n != 0 and abs(delta - n * _T_SYNC_NS) <= self._half_window_ns:
+                if (
+                    n != 0
+                    and abs(n) <= self._SYNC_PERIOD_DISAMBIG_MAX_N
+                    and abs(delta - n * _T_SYNC_NS) <= self._half_window_ns
+                ):
                     logger.debug(
                         "Sync-period disambiguation: node=%s joining "
                         "group [%s] (existing nodes=%s) with n=%+d "

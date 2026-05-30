@@ -277,49 +277,103 @@ async def test_freq_hop_sync_delta_groups_with_rspduo():
 
 
 @pytest.mark.asyncio
-async def test_cross_node_clock_offset_paired_via_pilot_disambiguation():
+async def test_cross_node_small_clock_offset_paired_via_bit_period_disambiguation():
     """
-    A freq_hop node (accurate NTP) and an RSPduo node whose HAS_TIME anchor
-    was captured when NTP was ~315 ms ahead (45 x 7 ms) must be grouped for
-    the same transmission via pilot-period disambiguation.
+    Two nodes whose T_sync values differ by a small integer number of
+    bit periods (within ``_SYNC_PERIOD_DISAMBIG_MAX_N``) must be grouped
+    for the same transmission via bit-period disambiguation.
 
-    After sync_delta mod-7ms reduction the T_sync values differ by ~315 ms --
-    outside the 250 ms half-window for direct matching - but are within 3.5 ms
-    of 45 x 7 ms, so disambiguation succeeds.
+    Models the legitimate use case: cross-node clock skew of a few bit
+    periods (842 µs each) from NTP variation or per-node grid offset.
 
-    freq_hop  sync_delta = 32_600_000 ns  ->  reduced = 4_600_000 ns (4.6 ms)
-    RSPduo    sync_delta =  5_000_000 ns  ->  reduced = 5_000_000 ns (5.0 ms)
-    RSPduo clock offset  = +315_000_000 ns  (= 45 x 7_000_000 ns exactly)
-
-    Expected T_sync delta = 315_000_000 - (5_000_000 - 4_600_000)
-                           = 314_600_000 ns  ~ 314.6 ms
-    n = round(314.6 / 7) = 45,  residual = |314.6 - 315| = 0.4 ms  OK
+    Replaces an earlier test that exercised |n| = 374 (315 ms of NTP
+    skew via the legacy pilot-period scheme).  The unbounded
+    disambiguation that allowed that case also caused the production
+    bug where plateau events from phase-misaligned nodes (200 ms – 5 s
+    of wall-clock gap) were falsely paired — see
+    ``test_plateau_phase_misalignment_not_paired_by_disambiguation``
+    below.
     """
     received_groups: list[list] = []
 
     async def cb(events):
         received_groups.append(events)
 
-    pairer = EventPairer(cb, delivery_buffer_s=0.01, correlation_window_s=0.5,
+    pairer = EventPairer(cb, delivery_buffer_s=0.01, correlation_window_s=0.04,
                          min_nodes=2)
 
-    # freq_hop node: accurate NTP
-    await pairer.add_event(make_event("rtlsdr-server", event_id="fh-1",
+    # 3 × bit period of cross-node T_sync skew  (~2.5 ms) — within the
+    # ``_SYNC_PERIOD_DISAMBIG_MAX_N = 5`` bound, outside the 20 ms
+    # half-window for direct matching.
+    bit_ns = 1_000_000_000 / 1187.5
+    delta_t_sync_ns = int(round(3 * bit_ns))  # 2 526 316 ns ≈ 2.5 ms
+    await pairer.add_event(make_event("node-A", event_id="a-1",
                                       onset_time_ns=_NOW_NS,
-                                      sync_to_snippet_start_ns=32_600_000))
-    # RSPduo node: HAS_TIME anchor captured when NTP was 315 ms ahead
-    await pairer.add_event(make_event("rspduo-node", event_id="rsp-1",
-                                      onset_time_ns=_NOW_NS + 315_000_000,
-                                      sync_to_snippet_start_ns=5_000_000))
+                                      sync_to_snippet_start_ns=0))
+    await pairer.add_event(make_event("node-B", event_id="b-1",
+                                      onset_time_ns=_NOW_NS + delta_t_sync_ns,
+                                      sync_to_snippet_start_ns=0))
 
     await asyncio.sleep(0.05)
 
     assert len(received_groups) == 1, (
-        f"Expected 1 merged group (freq_hop + RSPduo with ~315 ms clock offset "
-        f"= 45x7ms, should pair via pilot disambiguation); got {len(received_groups)}"
+        f"Expected 1 merged group (cross-node T_sync skew of 3 bit periods, "
+        f"within MAX_N bound); got {len(received_groups)}"
     )
     node_ids = {e["node_id"] for e in received_groups[0]}
-    assert node_ids == {"rtlsdr-server", "rspduo-node"}
+    assert node_ids == {"node-A", "node-B"}
+
+
+@pytest.mark.asyncio
+async def test_plateau_phase_misalignment_not_paired_by_disambiguation():
+    """Regression: two nodes whose plateau emissions are phase-misaligned
+    by hundreds of milliseconds (200 ms – multiple seconds) must NOT
+    pair via the bit-period disambiguation.
+
+    Failure mode this protects against (observed in production
+    2026-05-30, fix audit at fix id 7 / 12):  the legacy disambiguation
+    had no upper bound on |n|.  Any ``delta_T_sync`` longer than the
+    direct-match window had a bit-period residual within ±421 µs by the
+    pigeon-hole principle, so unbounded disambiguation merged events
+    seconds apart in wall-clock as if they were the same broadcast
+    event.  Cross-node IQ snippets covered different physical times,
+    xcorr lag was random, and the solver fit garbage TDOAs to positions
+    outside the node convex hull (the +36 km bogus fix cluster).
+    """
+    received_groups: list[list] = []
+
+    async def cb(events):
+        received_groups.append(events)
+
+    pairer = EventPairer(cb, delivery_buffer_s=0.01, correlation_window_s=0.2,
+                         min_nodes=2)
+
+    bit_ns = 1_000_000_000 / 1187.5
+
+    # 200 ms of wall-clock gap == 237 bit periods exactly to 0.2 ms
+    # (residual = 200_000_000 - 237 * bit_ns ≈ +201 µs, within
+    # half-window).  Without the |n| ≤ 5 bound, the disambiguation
+    # would falsely merge these.
+    n_bit_periods = 237  # > MAX_N = 5
+    delta_ns = int(round(n_bit_periods * bit_ns))
+    await pairer.add_event(make_event("node-A", event_id="a-1",
+                                      onset_time_ns=_NOW_NS,
+                                      sync_to_snippet_start_ns=0))
+    await pairer.add_event(make_event("node-B", event_id="b-1",
+                                      onset_time_ns=_NOW_NS + delta_ns,
+                                      sync_to_snippet_start_ns=0))
+
+    await asyncio.sleep(0.05)
+
+    # Both should remain SEPARATE — each event in its own group; only
+    # one of those groups has the min 2-node count we set, so neither
+    # fires the callback (single-node groups are dropped silently).
+    assert len(received_groups) == 0, (
+        f"Expected NO merged groups (200 ms wall-clock gap, 237 bit "
+        f"periods, must NOT pair via disambiguation); "
+        f"got {len(received_groups)} groups, "
+        f"nodes={[{e['node_id'] for e in g} for g in received_groups]}"
+    )
 
 
 @pytest.mark.asyncio
