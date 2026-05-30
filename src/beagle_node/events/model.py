@@ -68,12 +68,18 @@ class CarrierEvent(BaseModel):
     ``transition_end`` as the knee-search hint.
 
     Schema version '1.6': added ``"plateau"`` event_type for periodic
-    snippets emitted while a carrier is sustained.  A plateau event is
-    anchored to a sync-pilot bit boundary (sync_to_snippet_start_ns ≈ 0)
-    so independent nodes' plateau snippets cover the same physical time
-    window.  Plateau events flow through the same TDOA pipeline as
-    onset/offset; they just give the server many more pair-samples per
-    transmission for averaging.
+    snippets emitted while a carrier is sustained.  Plateau events flow
+    through the same TDOA pipeline as onset/offset; they give the server
+    many more pair-samples per transmission for averaging.  Until the
+    anchor-triggered emitter shipped (2026-05), the plateau snippet
+    first sample was set by a per-node wall-clock timer; cross-node
+    snippets therefore drifted through the RDS group cycle
+    independently and ``sync_to_snippet_start_ns`` spanned the full
+    0–87.6 ms group range.  The current implementation snaps the
+    snippet first sample to an RDS block-A bit-0 anchor (in target
+    sample space), so paired nodes' plateau snippets cover the same
+    physical time window and ``sync_to_snippet_start_ns ≈ 0`` (modulo
+    sub-µs propagation delay and the matched-SyncEvent grid offset).
 
     Schema version '1.7': added the four ``anchor_*`` fields describing
     which RDS block-A bit-0 the measurement was anchored to.  Enables

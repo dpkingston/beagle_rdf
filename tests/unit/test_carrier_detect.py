@@ -2206,3 +2206,152 @@ class TestCarrierPlateauEmission:
             f"plateau_max_per_active=4 should cap at ≤ 4 emissions; "
             f"got {len(plateaus)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Anchor-triggered plateau emission (Commit 14: RDS-group-aligned snippets)
+# ---------------------------------------------------------------------------
+
+class TestTryEmitPlateauAtAnchor:
+    """The new ``try_emit_plateau_at`` method snaps the plateau snippet
+    first sample to a caller-supplied target-domain anchor.  This is the
+    primitive the pipeline uses to align snippets to RDS block-A bit-0
+    anchors across nodes.  Tests here verify the snippet-positioning,
+    ring-availability, and gate logic in isolation."""
+
+    def _make_active_detector(
+        self,
+        snippet_samples: int = 1024,
+        window: int = 64,
+        rate: float = 48_000.0,
+    ):
+        """Build a detector in the ``active`` state with a full IQ ring.
+
+        Returns ``(det, cumulative_sample)`` so the caller can compute
+        legal anchor sample indices.
+        """
+        det = make_detector(
+            sample_rate_hz=rate,
+            window_samples=window,
+            snippet_samples=snippet_samples,
+            snippet_post_windows=2,
+            ring_lookback_windows=max(20, snippet_samples // window + 5),
+            # Legacy emission disabled so we test the new path cleanly.
+            enable_legacy_plateau_emission=False,
+        )
+        chunk = int(0.1 * rate)
+        sample = 0
+        carrier_iq = _carrier(chunk, power_db=-10.0)
+        # 5 chunks = 500 ms — plenty to enter active state and fill ring.
+        for _ in range(5):
+            det.process(carrier_iq, start_sample=sample)
+            sample += chunk
+        assert det.state == "active", f"detector should be active, is {det.state}"
+        return det, sample
+
+    def test_emits_at_specified_anchor(self):
+        """Snippet first sample equals the requested anchor exactly."""
+        det, cum = self._make_active_detector()
+        # Pick a legal anchor: snippet must fit between anchor and cum.
+        anchor = cum - det.snippet_samples
+        ev = det.try_emit_plateau_at(anchor)
+        assert ev is not None
+        assert ev.sample_index == anchor
+
+    def test_returns_none_when_idle(self):
+        """Idle state must refuse plateau emission."""
+        det = make_detector(
+            sample_rate_hz=48_000.0,
+            window_samples=64,
+            snippet_samples=1024,
+            ring_lookback_windows=25,
+            enable_legacy_plateau_emission=False,
+        )
+        assert det.state == "idle"
+        assert det.try_emit_plateau_at(0) is None
+
+    def test_returns_none_when_snippet_falls_outside_ring(self):
+        """Anchor too far in the past (snippet falls off the ring) → None."""
+        det, cum = self._make_active_detector()
+        far_back = cum - det.snippet_samples * 100  # well before the ring
+        assert det.try_emit_plateau_at(far_back) is None
+
+    def test_returns_none_when_anchor_in_future(self):
+        """Anchor + snippet_samples beyond the most recent processed sample → None."""
+        det, cum = self._make_active_detector()
+        # anchor itself is valid (in the ring) but snippet would run off the
+        # tail past cum.
+        anchor = cum - det.snippet_samples // 2
+        assert det.try_emit_plateau_at(anchor) is None
+
+    def test_returns_none_during_onset_edge_clearance(self):
+        """Anchor inside the edge-clearance window past the rising edge → None."""
+        det, _ = self._make_active_detector()
+        # Force a fresh active period so active_onset_sample is recent.
+        assert det.active_onset_sample is not None
+        edge_clearance = 64 * 4  # _window * 4 in the implementation
+        anchor_in_clearance = det.active_onset_sample + 1
+        assert det.try_emit_plateau_at(anchor_in_clearance) is None
+        # An anchor just past the clearance is OK *if* the snippet fits;
+        # we don't assert on that branch (depends on ring state) — the
+        # "None inside clearance" case is what we need to lock in.
+
+    def test_stuck_active_cap_blocks_after_n_emissions(self):
+        """``plateau_max_per_active`` cap blocks further emissions in a
+        single active period."""
+        det = make_detector(
+            sample_rate_hz=48_000.0,
+            window_samples=64,
+            snippet_samples=1024,
+            snippet_post_windows=2,
+            ring_lookback_windows=25,
+            plateau_max_per_active=2,
+            enable_legacy_plateau_emission=False,
+        )
+        chunk = int(0.1 * 48_000.0)
+        sample = 0
+        carrier_iq = _carrier(chunk, power_db=-10.0)
+        for _ in range(5):
+            det.process(carrier_iq, start_sample=sample)
+            sample += chunk
+        anchor = sample - det.snippet_samples
+        ev1 = det.try_emit_plateau_at(anchor)
+        # Re-feed so we can pick a different (valid) anchor.
+        det.process(carrier_iq, start_sample=sample)
+        sample += chunk
+        ev2 = det.try_emit_plateau_at(sample - det.snippet_samples)
+        det.process(carrier_iq, start_sample=sample)
+        sample += chunk
+        ev3 = det.try_emit_plateau_at(sample - det.snippet_samples)
+        assert ev1 is not None
+        assert ev2 is not None
+        # Cap=2: the third emission attempt must be blocked.
+        assert ev3 is None
+
+    def test_emits_correct_snippet_size(self):
+        """Snippet payload size is exactly ``snippet_samples * 2`` bytes."""
+        det, cum = self._make_active_detector(snippet_samples=2048)
+        anchor = cum - det.snippet_samples
+        ev = det.try_emit_plateau_at(anchor)
+        assert ev is not None
+        assert len(ev.iq_snippet) == 2048 * 2
+
+    def test_cross_node_anchor_equality(self):
+        """Two detectors handed the SAME target-anchor produce snippets
+        with identical ``sample_index``.
+
+        This is the cross-node-deterministic property that fixes the
+        plateau-mismatch bug we observed in production: paired nodes
+        ship snippets covering the same physical time window because
+        their snippet_first_sample is set from the same RDS block-A
+        bit-0 anchor (in target space), not from per-node wall-clock
+        timer drift."""
+        det_a, cum_a = self._make_active_detector()
+        det_b, cum_b = self._make_active_detector()
+        # The "shared" anchor we pick must lie in both rings.  Use the
+        # smaller cumulative position so it's legal for both.
+        anchor = min(cum_a, cum_b) - max(det_a.snippet_samples, det_b.snippet_samples)
+        ev_a = det_a.try_emit_plateau_at(anchor)
+        ev_b = det_b.try_emit_plateau_at(anchor)
+        assert ev_a is not None and ev_b is not None
+        assert ev_a.sample_index == ev_b.sample_index == anchor

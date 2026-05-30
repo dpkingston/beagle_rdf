@@ -151,6 +151,7 @@ class CarrierDetector:
         plateau_max_per_active: int = 0,
         plateau_burst_count: int = 0,
         plateau_slow_interval_s: float = 0.0,
+        enable_legacy_plateau_emission: bool = True,
     ) -> None:
         if plateau_max_per_active < 0:
             raise ValueError(
@@ -246,6 +247,17 @@ class CarrierDetector:
         self._plateau_burst_count: int = int(plateau_burst_count)
         self._plateau_slow_interval_s: float = float(plateau_slow_interval_s)
         self._plateau_slow_phase_logged: bool = False
+
+        # When True, ``process()`` calls the legacy wall-clock-driven
+        # ``_maybe_emit_plateau``.  When False, plateau emission is
+        # entirely the pipeline's responsibility via
+        # ``try_emit_plateau_at`` (the anchor-triggered scheduler in
+        # ``pipeline.py``).  The pipeline sets this to ``False`` when an
+        # RDS decoder is configured; standalone carrier_detect tests
+        # default to ``True`` for behavioural backward-compat.
+        self._enable_legacy_plateau_emission: bool = bool(
+            enable_legacy_plateau_emission
+        )
 
         # Onset-edge tracker for first-plateau-of-active-period coverage.
         # Records the absolute target-stream sample at which the carrier
@@ -452,6 +464,144 @@ class CarrierDetector:
     def noise_floor_db(self) -> float:
         """Current noise floor estimate (EMA of idle-state power)."""
         return self._noise_floor_db
+
+    @property
+    def active_onset_sample(self) -> int | None:
+        """Absolute target-stream sample of the most recent idle→active
+        transition, or ``None`` while idle.
+
+        Used by the pipeline-side plateau scheduler to enforce the
+        onset-edge clearance before emitting the first plateau of an
+        active period.
+        """
+        return self._active_onset_sample
+
+    @property
+    def cumulative_sample(self) -> int:
+        """Total target-domain samples processed since startup / last reset.
+
+        Equals ``start_sample + len(iq)`` after the most recent
+        ``process()`` call.  The IQ ring contains the most recent
+        windows ending at this sample.
+        """
+        return self._cumulative_sample
+
+    @property
+    def snippet_samples(self) -> int:
+        """Configured target-domain snippet length."""
+        return self._snippet_samples
+
+    # ------------------------------------------------------------------
+    # Pipeline-driven plateau emission
+    # ------------------------------------------------------------------
+
+    def try_emit_plateau_at(
+        self, target_anchor_sample: int,
+    ) -> "CarrierPlateau | None":
+        """Build a plateau snippet starting at ``target_anchor_sample``.
+
+        Pipeline calls this once per process_target_buffer with the
+        target-domain sample index of an RDS block-A bit-0 anchor that
+        is at least ``snippet_samples`` behind the most recent processed
+        sample.  When all the gates pass, returns a ``CarrierPlateau``
+        whose ``sample_index`` equals ``target_anchor_sample`` exactly,
+        so that two nodes paired on the same broadcast both ship
+        snippets covering the *same physical time window* — making
+        their ``sync_to_snippet_start_ns`` agree within propagation
+        delay.
+
+        Gates:
+          - state must be ``"active"`` (caller checks too but we verify)
+          - no onset/offset deferred-emit currently pending
+          - stuck-active cap not exceeded
+          - the snippet ``[anchor, anchor + snippet_samples)`` must lie
+            entirely within the IQ ring, AND
+          - the anchor must be past ``active_onset_sample + edge_clearance``
+            (the same onset-edge-clearance check the legacy emitter
+            applied) — protects against snippets that straddle the
+            rising-edge transient.
+
+        Returns ``None`` (with telemetry incrementing the appropriate
+        stuck-cap WARNING-once flag) when any gate fails.  The pipeline
+        treats ``None`` as "no plateau this group", increments its
+        groups-since-emission counter, and tries again at the next
+        anchor.
+        """
+        if self._state != "active":
+            return None
+        if self._pending_event_type is not None:
+            return None
+
+        # Stuck-active cap.  Identical semantics to legacy emitter; the
+        # WARN-once flag re-arms on the next idle→active transition.
+        if (
+            self._plateau_max_per_active > 0
+            and self._plateau_count_this_active >= self._plateau_max_per_active
+        ):
+            if not self._plateau_cap_warned:
+                logger.warning(
+                    "Plateau cap reached at N=%d emissions during a single "
+                    "active period; stuck-active suspected, emissions paused "
+                    "until next idle->active cycle (offset+onset).",
+                    self._plateau_max_per_active,
+                )
+                self._plateau_cap_warned = True
+            return None
+
+        # Onset-edge clearance: the anchor must be past the rising-edge
+        # transient.  ``edge_clearance`` matches the legacy emitter so
+        # behaviour is consistent.
+        edge_clearance = self._window * 4
+        if (
+            self._active_onset_sample is not None
+            and target_anchor_sample < self._active_onset_sample + edge_clearance
+        ):
+            return None
+
+        # Ring availability: the ring holds the most recent
+        # ``ring_total_samples`` samples ending at ``cumulative_sample``.
+        # The snippet we want is ``[anchor, anchor + snippet_samples)``.
+        ring_total_samples = sum(len(w) for w in self._iq_ring)
+        if ring_total_samples < self._snippet_samples:
+            return None
+        oldest_sample_in_ring = self._cumulative_sample - ring_total_samples
+        newest_sample_in_ring = self._cumulative_sample  # exclusive end
+        snippet_lo = int(target_anchor_sample)
+        snippet_hi = snippet_lo + self._snippet_samples
+        if snippet_lo < oldest_sample_in_ring or snippet_hi > newest_sample_in_ring:
+            return None
+
+        # Extract the snippet from the ring.  The ring is a sequence of
+        # window-sized numpy arrays; concatenate-then-slice is simple
+        # and correct (ring stays at most ~snippet_samples + group_period
+        # in size).
+        iq_cat = np.concatenate(list(self._iq_ring))
+        # iq_cat[0] is at oldest_sample_in_ring.
+        offset_in_ring = snippet_lo - oldest_sample_in_ring
+        iq_trim = iq_cat[offset_in_ring : offset_in_ring + self._snippet_samples]
+        if len(iq_trim) != self._snippet_samples:
+            # Defensive — should not happen given the bounds checks above.
+            return None
+        scale = float(np.max(np.abs(iq_trim))) + 1e-30
+        normed = iq_trim / scale
+        int8_ri = np.empty(len(normed) * 2, dtype=np.int8)
+        int8_ri[0::2] = np.clip(np.round(normed.real * 127), -127, 127).astype(np.int8)
+        int8_ri[1::2] = np.clip(np.round(normed.imag * 127), -127, 127).astype(np.int8)
+
+        ev = CarrierPlateau(
+            sample_index=snippet_lo,
+            power_db=self._noise_floor_db + 20.0,  # rough; not used downstream
+            iq_snippet=int8_ri.tobytes(),
+            transition_start=0,
+            transition_end=self._snippet_samples,
+        )
+        self._plateau_count_this_active += 1
+        logger.debug(
+            "CarrierPlateau (anchor-triggered) emitted at sample %d "
+            "(count %d this active period)",
+            snippet_lo, self._plateau_count_this_active,
+        )
+        return ev
 
     # ------------------------------------------------------------------
     # Live threshold updates
@@ -1131,12 +1281,17 @@ class CarrierDetector:
             events = validated
         self._validate_snippets = False
 
-        # Plateau emission: while the carrier is sustained, periodically
-        # snap a snippet of the recent IQ for cross-node averaging.  Done
-        # after the FSM run so we don't interleave with onset/offset
-        # state transitions; only fires while in active state and not
-        # currently pending an onset/offset deferred emission.
-        self._maybe_emit_plateau(events, start_sample, n_windows)
+        # Plateau emission: when ``enable_legacy_plateau_emission`` is
+        # True (the default, for backward compat with carrier_detect
+        # unit tests) the wall-clock-driven ``_maybe_emit_plateau`` runs
+        # here.  When False (pipeline sets this when an RDS decoder is
+        # configured) plateau emission is driven externally by the
+        # pipeline via ``try_emit_plateau_at`` so snippets land at RDS
+        # block-A bit-0 anchor samples (cross-node-deterministic), not
+        # at wall-clock interval boundaries (which drift through the
+        # RDS group cycle independently per node).
+        if self._enable_legacy_plateau_emission:
+            self._maybe_emit_plateau(events, start_sample, n_windows)
 
         return events
 

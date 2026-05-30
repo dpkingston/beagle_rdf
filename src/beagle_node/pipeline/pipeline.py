@@ -233,6 +233,13 @@ class NodePipeline:
             plateau_max_per_active=c.carrier_plateau_max_per_active,
             plateau_burst_count=c.carrier_plateau_burst_count,
             plateau_slow_interval_s=c.carrier_plateau_slow_interval_s,
+            # When an RDS decoder is configured, plateau emission is
+            # driven by the pipeline's anchor-triggered scheduler (see
+            # ``_maybe_emit_anchor_plateau``).  Disable the legacy
+            # wall-clock-driven path inside carrier_detect so we don't
+            # double-emit (or emit at the wrong, group-misaligned
+            # position).
+            enable_legacy_plateau_emission=(self._rds_decoder is None),
         )
 
         # Delta computer.  When the RDS decoder service is active, pass
@@ -263,6 +270,34 @@ class NodePipeline:
         self._sync_sample_count: int = 0
         self._target_sample_count: int = 0
         self.sync_event_count: int = 0   # total SyncEvents detected
+
+        # Anchor-triggered plateau scheduler state.  Plateau emission no
+        # longer fires on a wall-clock interval grid inside carrier_detect;
+        # the pipeline schedules emissions at RDS block-A bit-0 anchors
+        # so paired nodes' snippets cover the same physical time window
+        # (sync_to_snippet_start_ns ≈ 0).  See ``try_emit_plateau_at`` in
+        # carrier_detect.py.
+        #
+        # ``_last_plateau_target_anchor`` is the target-domain sample of
+        # the most recent plateau we emitted in the current active
+        # period.  Cleared back to None on idle→active so the first
+        # plateau of each active period fires at the soonest in-ring
+        # anchor.
+        self._last_plateau_target_anchor: int | None = None
+        self._prev_carrier_state: str = "idle"
+        # Group period at the target rate (RDS group = 104 bits / 1187.5 Hz).
+        target_rate = c.sdr_rate_hz / c.target_decimation
+        self._plateau_group_period_target_samples: int = max(
+            1, round(target_rate / (1187.5 / 104.0)),
+        )
+        # K = number of groups between successive plateau emissions.
+        # interval / group_period rounded to the nearest integer; ≥ 1.
+        if c.carrier_plateau_event_interval_s > 0.0:
+            self._plateau_K_groups: int = max(
+                1, round(c.carrier_plateau_event_interval_s / (104.0 / 1187.5)),
+            )
+        else:
+            self._plateau_K_groups = 0  # disabled
 
         # Latest sync detector telemetry (updated each time process_sync_buffer
         # produces an event).  Exposed for health reporting.
@@ -550,8 +585,110 @@ class NodePipeline:
                     self._on_measurement(m)
                 measurements.extend(new)
 
+        # Anchor-triggered plateau emission.  Replaces the legacy
+        # wall-clock-driven emitter in carrier_detect (which was
+        # producing snippets at arbitrary positions within the RDS group
+        # cycle — independent per node — so paired snippets covered
+        # different physical times and TDOAs were dominated by the
+        # mis-alignment, not by signal arrival differences).
+        plateau_ev = self._maybe_emit_anchor_plateau()
+        if plateau_ev is not None:
+            mapped = CarrierPlateau(
+                sample_index=(
+                    plateau_ev.sample_index * self._cfg.target_decimation
+                    // self._cfg.sync_decimation
+                ),
+                power_db=plateau_ev.power_db,
+                iq_snippet=plateau_ev.iq_snippet,
+                transition_start=plateau_ev.transition_start,
+                transition_end=plateau_ev.transition_end,
+            )
+            new = self._delta.feed_plateau(mapped)
+            for m in new:
+                self._on_measurement(m)
+            measurements.extend(new)
+
+        # Track state for idle→active reset of the plateau-anchor pointer.
+        new_state = self._carrier_det.state
+        if self._prev_carrier_state != "active" and new_state == "active":
+            # Active period just started — clear the last-anchor pointer so
+            # the first plateau of this period can fire at the soonest
+            # in-ring anchor (rather than wait K groups after the previous
+            # active period's last anchor).
+            self._last_plateau_target_anchor = None
+        self._prev_carrier_state = new_state
+
         self._target_sample_count = raw_start + len(iq)
         return measurements
+
+    # ------------------------------------------------------------------
+    # Anchor-triggered plateau scheduler
+    # ------------------------------------------------------------------
+
+    def _maybe_emit_anchor_plateau(self):
+        """Return a CarrierPlateau snapped to a block-A bit-0 anchor, or None.
+
+        Called once per ``process_target_buffer`` after the carrier
+        detector has run.  Looks up the most recent block-A bit-0 anchor
+        within reach of the IQ ring, gates emission on the configured
+        K-groups cadence, and asks ``carrier_det.try_emit_plateau_at``
+        to build the snippet.  All emission/gate conditions live in
+        ``try_emit_plateau_at``; here we only do the scheduling.
+        """
+        # Disabled when there's no RDS decoder, when the interval knob is
+        # 0, or when the detector is idle.
+        if self._rds_decoder is None:
+            return None
+        if self._plateau_K_groups == 0:
+            return None
+        if self._carrier_det.state != "active":
+            return None
+
+        target_now = self._carrier_det.cumulative_sample
+        snippet_samples = self._carrier_det.snippet_samples
+        # The latest legal anchor sample is one snippet behind the newest
+        # sample we've processed — the snippet runs forward from the
+        # anchor, so it must fit entirely within already-received data.
+        latest_target_anchor = target_now - snippet_samples
+        if latest_target_anchor < 0:
+            return None
+
+        # Look up the most recent block-A bit-0 anchor at or before that
+        # point, in sync-domain sample coordinates (the RDS decoder
+        # speaks sync space).  Allow 2 group periods of lookback so we
+        # catch anchors that landed just before the snippet horizon.
+        td = self._cfg.target_decimation
+        sd = self._cfg.sync_decimation
+        sync_at_latest_anchor = latest_target_anchor * td // sd
+        sync_lookback = 2 * self._plateau_group_period_target_samples * td // sd
+
+        best_ctx = self._rds_decoder.find_a_bit0_anchor(
+            float(sync_at_latest_anchor), float(sync_lookback),
+        )
+        if best_ctx is None:
+            return None
+
+        # Map the demod-derived anchor sample back to target domain.
+        target_anchor = int(best_ctx.group_anchor_sample) * sd // td
+
+        # K-groups cadence: only emit if we're at least K groups past the
+        # previously-emitted anchor in this active period.
+        if (
+            self._last_plateau_target_anchor is not None
+            and target_anchor - self._last_plateau_target_anchor
+                < self._plateau_K_groups * self._plateau_group_period_target_samples
+        ):
+            return None
+
+        plateau = self._carrier_det.try_emit_plateau_at(target_anchor)
+        if plateau is None:
+            # Gate inside try_emit failed (cap reached, edge-clearance,
+            # ring shortfall).  Don't record this anchor as emitted so we
+            # retry on the next process() call.
+            return None
+
+        self._last_plateau_target_anchor = target_anchor
+        return plateau
 
     # ------------------------------------------------------------------
     # PPS (two_sdr mode)
@@ -622,3 +759,6 @@ class NodePipeline:
         self._pps_det.reset()
         self._sync_sample_count = 0
         self._target_sample_count = 0
+        # Reset anchor-plateau scheduler state too.
+        self._last_plateau_target_anchor = None
+        self._prev_carrier_state = "idle"
