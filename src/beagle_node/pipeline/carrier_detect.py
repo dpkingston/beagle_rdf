@@ -495,6 +495,27 @@ class CarrierDetector:
     # Pipeline-driven plateau emission
     # ------------------------------------------------------------------
 
+    def plateau_snippet_available(self, target_anchor_sample: int) -> bool:
+        """True if a ``snippet_samples``-long snippet starting at
+        ``target_anchor_sample`` lies entirely within the current IQ ring.
+
+        Lets the pipeline's global-K-slot emitter
+        (``_maybe_emit_anchor_plateau``, step 3) pre-filter candidate
+        anchors to those it can actually extract, so it can march the
+        global slot grid and auto-skip slots whose audio has already
+        aged out of the ring — without relying on a ``try_emit_plateau_at``
+        failure to discover that.  ``try_emit_plateau_at`` re-checks the
+        same bounds, so this is purely an advisory pre-filter (single
+        source of truth for the ring geometry stays here).
+        """
+        ring_total = sum(len(w) for w in self._iq_ring)
+        if ring_total < self._snippet_samples:
+            return False
+        oldest = self._cumulative_sample - ring_total
+        newest = self._cumulative_sample  # exclusive end
+        lo = int(target_anchor_sample)
+        return lo >= oldest and lo + self._snippet_samples <= newest
+
     def try_emit_plateau_at(
         self, target_anchor_sample: int,
     ) -> "CarrierPlateau | None":

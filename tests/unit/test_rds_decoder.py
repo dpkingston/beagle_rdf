@@ -327,3 +327,167 @@ class TestPipelineIntegration:
         epoch_off_grid = epoch_on_grid + 3
         assert epoch_on_grid % K == 0
         assert epoch_off_grid % K != 0
+
+
+class _FakeCarrierDet:
+    """Minimal carrier detector for driving ``_maybe_emit_anchor_plateau``
+    in isolation (Step 3 tests)."""
+
+    def __init__(self, interval_s, snippet_samples, cumulative_sample):
+        self._plateau_interval_s = interval_s
+        self.state = "active"
+        self.snippet_samples = snippet_samples
+        self.cumulative_sample = cumulative_sample
+        self.emitted_at: list[int] = []
+
+    def plateau_snippet_available(self, ta):  # big ring → always available
+        return True
+
+    def try_emit_plateau_at(self, ta):
+        self.emitted_at.append(int(ta))
+        # Return a sentinel truthy object with the attributes the caller
+        # reads downstream (it only forwards them).
+        from beagle_node.pipeline.carrier_detect import CarrierPlateau
+        return CarrierPlateau(
+            sample_index=int(ta), power_db=0.0, iq_snippet=b"",
+            transition_start=0, transition_end=0,
+        )
+
+
+class _FakeDecoder:
+    def __init__(self, anchors):
+        self._anchors = list(anchors)
+
+    def block_a_bit0_anchors(self):
+        return list(self._anchors)
+
+
+class TestStep3GlobalSlotMarch:
+    """Step 3: the emitter marches the global K-slot grid so all nodes
+    emit on the identical epochs."""
+
+    def _make_pipe(self, *, interval_s=1.0):
+        from beagle_node.pipeline.pipeline import NodePipeline, PipelineConfig
+        cfg = PipelineConfig(
+            sync_mode="rds", carrier_plateau_event_interval_s=interval_s,
+        )
+        return NodePipeline(config=cfg), cfg
+
+    def _sync_anchor_for_epoch(self, pipe, cfg, base_wall_ns, base_sample, epoch):
+        """Return the sync-domain block-A bit-0 sample whose global epoch
+        is ``epoch`` for a node anchored at (base_wall_ns, base_sample)."""
+        # Place the anchor at the centre of epoch E's window so round()
+        # recovers exactly E.
+        anchor_wall = epoch * pipe._group_period_ns
+        ta = base_sample + round(
+            (anchor_wall - base_wall_ns) * pipe._target_rate_hz / 1e9
+        )
+        # Invert ta = ceil(s) * sd // td  →  s ≈ ta * td / sd.
+        return ta * cfg.target_decimation / cfg.sync_decimation
+
+    def test_first_emission_picks_newest_kslot_and_it_is_a_multiple_of_K(self):
+        pipe, cfg = self._make_pipe()
+        K = pipe._plateau_K_groups
+        assert K == 11
+        base_wall = 1_780_000_000_000_000_000
+        base_sample = 5_000_000
+        # A contiguous run of 30 groups around two K-multiples.
+        e0 = (base_wall // pipe._group_period_ns) + 5
+        epochs = list(range(e0, e0 + 30))
+        anchors = [
+            self._sync_anchor_for_epoch(pipe, cfg, base_wall, base_sample, e)
+            for e in epochs
+        ]
+        # Cumulative sample far ahead so every anchor's snippet fits.
+        max_ta = base_sample + round(
+            (max(epochs) * pipe._group_period_ns - base_wall)
+            * pipe._target_rate_hz / 1e9
+        )
+        pipe._carrier_det = _FakeCarrierDet(
+            interval_s=1.0, snippet_samples=16384,
+            cumulative_sample=max_ta + 16384 + 1000,
+        )
+        pipe._rds_decoder = _FakeDecoder(anchors)
+        pipe._buf_anchor_wall_ns = base_wall
+        pipe._buf_anchor_target_sample = base_sample
+
+        plateau = pipe._maybe_emit_anchor_plateau()
+        assert plateau is not None
+        chosen = pipe._last_emitted_global_epoch
+        assert chosen % K == 0, f"chosen epoch {chosen} not a K-multiple"
+        # Fresh start → newest available K-slot in the run.
+        kslots = [e for e in epochs if e % K == 0]
+        assert chosen == max(kslots)
+
+    def test_two_nodes_with_clock_skew_pick_the_same_epoch(self):
+        """The cross-node invariant: two nodes seeing the same broadcast
+        groups, whose hardware wall-clocks differ by NTP-grade skew, must
+        select the IDENTICAL global K-slot epoch — so their plateaus pair."""
+        K = 11
+        base_wall = 1_780_000_000_000_000_000
+        chosen = []
+        for skew_ms in (0, +20, -20, +30):
+            pipe, cfg = self._make_pipe()
+            base_sample = 5_000_000
+            e0 = (base_wall // pipe._group_period_ns) + 5
+            epochs = list(range(e0, e0 + 30))
+            # Node sees the SAME physical groups (same true wall-clocks),
+            # but its own hardware-timestamp anchor is skewed by skew_ms.
+            node_base_wall = base_wall + skew_ms * 1_000_000
+            anchors = [
+                self._sync_anchor_for_epoch(
+                    pipe, cfg, node_base_wall, base_sample, e)
+                for e in epochs
+            ]
+            max_ta = base_sample + round(
+                (max(epochs) * pipe._group_period_ns - node_base_wall)
+                * pipe._target_rate_hz / 1e9
+            )
+            pipe._carrier_det = _FakeCarrierDet(
+                interval_s=1.0, snippet_samples=16384,
+                cumulative_sample=max_ta + 16384 + 1000,
+            )
+            pipe._rds_decoder = _FakeDecoder(anchors)
+            pipe._buf_anchor_wall_ns = node_base_wall
+            pipe._buf_anchor_target_sample = base_sample
+            assert pipe._maybe_emit_anchor_plateau() is not None
+            chosen.append(pipe._last_emitted_global_epoch)
+
+        assert len(set(chosen)) == 1, (
+            f"nodes with skew picked different epochs: {chosen} — "
+            f"cross-node plateau sync would be broken"
+        )
+        assert chosen[0] % K == 0
+
+    def test_march_emits_next_kslot_in_order(self):
+        """After emitting slot E, the next emission is E+K (the grid
+        marches in order, no skips)."""
+        pipe, cfg = self._make_pipe()
+        K = pipe._plateau_K_groups
+        base_wall = 1_780_000_000_000_000_000
+        base_sample = 5_000_000
+        e0 = (base_wall // pipe._group_period_ns) + 5
+        epochs = list(range(e0, e0 + 40))
+        anchors = [
+            self._sync_anchor_for_epoch(pipe, cfg, base_wall, base_sample, e)
+            for e in epochs
+        ]
+        max_ta = base_sample + round(
+            (max(epochs) * pipe._group_period_ns - base_wall)
+            * pipe._target_rate_hz / 1e9
+        )
+        pipe._carrier_det = _FakeCarrierDet(
+            interval_s=1.0, snippet_samples=16384,
+            cumulative_sample=max_ta + 16384 + 1000,
+        )
+        pipe._rds_decoder = _FakeDecoder(anchors)
+        pipe._buf_anchor_wall_ns = base_wall
+        pipe._buf_anchor_target_sample = base_sample
+
+        # Pre-seed last_emitted to the OLDEST K-slot so the march has room.
+        kslots = sorted(e for e in epochs if e % K == 0)
+        assert len(kslots) >= 2
+        pipe._last_emitted_global_epoch = kslots[0]
+        assert pipe._maybe_emit_anchor_plateau() is not None
+        # Catch-up branch picks the oldest unemitted K-slot → kslots[1].
+        assert pipe._last_emitted_global_epoch == kslots[1]

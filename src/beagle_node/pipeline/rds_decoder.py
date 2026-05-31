@@ -231,6 +231,33 @@ class RDSDecoderService:
                 )
         return best_ctx
 
+    def block_a_bit0_anchors(self) -> list[float]:
+        """All decoded block-A bit-0 sample positions in the current
+        rolling-buffer decode, ascending (MPX-sample coordinates).
+
+        Used by the pipeline's global-K-slot plateau emitter
+        (``_maybe_emit_anchor_plateau``, step 3) to enumerate every
+        candidate block-A bit-0 in the decode window, compute each
+        one's global epoch, and emit the one(s) that land on a shared
+        K-multiple slot.  Differs from ``find_a_bit0_anchor`` (which
+        returns only the single most-recent anchor at-or-before a query
+        point) by returning the whole set so the emitter can target a
+        *specific* epoch rather than reacting to the newest anchor.
+
+        Float values carry the demodulator's sub-sample precision; the
+        caller is responsible for the ``ceil``-to-int conversion that
+        keeps the downstream matcher from regressing one group (see the
+        ``math.ceil`` rationale in ``_maybe_emit_anchor_plateau``).
+        """
+        out: list[float] = []
+        for g in self._latest_groups:
+            blk_a = g.blocks[0]
+            if blk_a is None or not blk_a.is_received or math.isnan(blk_a.sample_index):
+                continue
+            out.append(blk_a.sample_index)
+        out.sort()
+        return out
+
     def lookup(self, sample_index: float) -> Optional[BlockContext]:
         """
         Find the block context for an MPX sample position.

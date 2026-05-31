@@ -750,14 +750,34 @@ class NodePipeline:
     # ------------------------------------------------------------------
 
     def _maybe_emit_anchor_plateau(self):
-        """Return a CarrierPlateau snapped to a block-A bit-0 anchor, or None.
+        """Return a CarrierPlateau on a GLOBAL K-slot epoch, or None.
 
-        Called once per ``process_target_buffer`` after the carrier
-        detector has run.  Looks up the most recent block-A bit-0 anchor
-        within reach of the IQ ring, gates emission on the configured
-        K-groups cadence, and asks ``carrier_det.try_emit_plateau_at``
-        to build the snippet.  All emission/gate conditions live in
-        ``try_emit_plateau_at``; here we only do the scheduling.
+        Step 3 of the plateau cross-node-sync fix.  Instead of reacting
+        to "the most recent anchor near the horizon, if its epoch happens
+        to be a K-multiple" (which is phase-dependent and unsynchronized
+        across nodes — production showed ~90 % skip_not_kslot and zero
+        cross-node coincidence), this **marches the global K-slot grid**:
+
+          - enumerate every decoded block-A bit-0 anchor in the decode
+            window (``block_a_bit0_anchors``);
+          - compute each one's GLOBAL epoch
+            ``round(anchor_wall_ns / GROUP_PERIOD_NS)`` from the SDR
+            hardware timestamp, which is identical (sub-ms) on every node
+            for the same broadcast group;
+          - keep the K-multiple epochs that are not yet emitted and whose
+            snippet is still in the ring;
+          - emit *that epoch's* real decoded anchor.
+
+        Because the epoch is a pure function of wall-clock and the
+        hardware timestamps coincide across nodes, every active node
+        targets the IDENTICAL global slots ``{…, 0, K, 2K, …}`` and so
+        emits snippets covering the same physical window → the server
+        pairs them.
+
+        On idle→active (no ``_last_emitted_global_epoch``) we start at the
+        most-recent available slot (fresh, low-latency); thereafter we
+        emit the OLDEST unemitted in-ring slot, which marches the grid in
+        order and auto-skips any slot whose audio has aged out.
         """
         # Disabled when there's no RDS decoder, when the interval knob is
         # 0, or when the detector is idle.
@@ -781,108 +801,112 @@ class NodePipeline:
         # Past the disabled/idle/warmup gates: this is a real emit attempt.
         self._plateau_emit_counters["attempts"] += 1
 
-        # Look up the most recent block-A bit-0 anchor at or before that
-        # point, in sync-domain sample coordinates (the RDS decoder
-        # speaks sync space).
-        #
-        # Step 2 (plateau cross-node-sync fix): widen the lookback from
-        # 2 group periods (~175 ms) to the full RDS decode window
-        # (``rds_decoder_window_seconds``, ~2 s).  Production telemetry
-        # showed skip_no_anchor=81%: the old 2-group window only found a
-        # decoded block-A in the ~175-240 ms right after each 1 s decode,
-        # so 4 attempts in 5 returned None.  Widening to the decode window
-        # lets find() return the most recent decoded block-A even when the
-        # decode is up to ~1 decode-interval stale — and the enlarged ring
-        # (above) keeps that older anchor's snippet extractable.
         td = self._cfg.target_decimation
         sd = self._cfg.sync_decimation
+
+        # Non-HAS_TIME callers / tests don't supply a hardware timestamp,
+        # so the global-epoch grid can't be computed.  Fall back to the
+        # legacy per-node "K groups since previous emission" scheduling.
+        if self._buf_anchor_wall_ns is None:
+            return self._emit_plateau_legacy_fallback(K, latest_target_anchor, td, sd)
+
+        # Enumerate every decoded block-A bit-0 anchor in the window and
+        # find the emittable global K-slots among them.
+        sync_anchors = self._rds_decoder.block_a_bit0_anchors()
+        if not sync_anchors:
+            self._plateau_emit_counters["skip_no_anchor"] += 1
+            return None
+
+        last_emitted = self._last_emitted_global_epoch
+        oldest_fresh: tuple[int, int] | None = None   # (epoch, target_anchor)
+        newest_fresh: tuple[int, int] | None = None
+        saw_fresh_kslot = False  # a K-slot > last_emitted existed but wasn't in-ring
+        for s in sync_anchors:
+            # ``math.ceil`` (not int) so target_anchor >= the sub-sample
+            # float anchor; otherwise DeltaComputer's re-match regresses
+            # one full RDS group (the +87.6 ms bug).  See git 5f8e310.
+            ta = math.ceil(s) * sd // td
+            if ta > latest_target_anchor:
+                continue  # snippet would run past received data
+            anchor_wall_ns = self._buf_anchor_wall_ns + int(
+                (ta - self._buf_anchor_target_sample) * 1e9 / self._target_rate_hz
+            )
+            # ``round`` (not floor) → symmetric ±half-group (44 ms) margin
+            # against cross-node clock skew; two nodes within 44 ms round
+            # to the SAME epoch.
+            epoch = int(round(anchor_wall_ns / self._group_period_ns))
+            if epoch % K != 0:
+                continue
+            if last_emitted is not None and epoch <= last_emitted:
+                continue
+            saw_fresh_kslot = True
+            if not self._carrier_det.plateau_snippet_available(ta):
+                continue
+            if oldest_fresh is None or epoch < oldest_fresh[0]:
+                oldest_fresh = (epoch, ta)
+            if newest_fresh is None or epoch > newest_fresh[0]:
+                newest_fresh = (epoch, ta)
+
+        if oldest_fresh is None:
+            # No emittable fresh K-slot this call.
+            if saw_fresh_kslot:
+                # A fresh K-slot existed but its snippet had aged out of
+                # the ring — a genuine ring-capacity miss.
+                self._plateau_emit_counters["skip_try_emit"] += 1
+            else:
+                # All in-window K-slots already emitted: the normal
+                # "waiting for the horizon to reveal the next slot" state.
+                self._plateau_emit_counters["skip_already_emitted"] += 1
+            return None
+
+        # Fresh start → newest slot (low latency); catch-up → oldest
+        # unemitted slot (marches the global grid in order).
+        target_epoch, target_anchor = (
+            newest_fresh if last_emitted is None else oldest_fresh
+        )
+        plateau = self._carrier_det.try_emit_plateau_at(target_anchor)
+        if plateau is None:
+            self._plateau_emit_counters["skip_try_emit"] += 1
+            return None
+
+        self._plateau_emit_counters["ok"] += 1
+        self._last_plateau_target_anchor = target_anchor
+        self._last_emitted_global_epoch = target_epoch
+        return plateau
+
+    def _emit_plateau_legacy_fallback(self, K, latest_target_anchor, td, sd):
+        """Legacy plateau scheduling for callers without a hardware
+        timestamp (single_sdr / mock / tests that don't pass ``time_ns``).
+
+        Reacts to the most recent decoded block-A anchor and emits once
+        per K-groups since the previous emission.  No cross-node global
+        epoch (none is computable without a shared wall-clock), so this
+        path does NOT provide cross-node sync — it only preserves the
+        original behavior for non-RSPduo/test paths.
+        """
         sync_rate_hz = self._cfg.sdr_rate_hz / sd
         sync_at_latest_anchor = latest_target_anchor * td // sd
         sync_lookback = int(self._cfg.rds_decoder_window_seconds * sync_rate_hz)
-
         best_ctx = self._rds_decoder.find_a_bit0_anchor(
             float(sync_at_latest_anchor), float(sync_lookback),
         )
         if best_ctx is None:
             self._plateau_emit_counters["skip_no_anchor"] += 1
             return None
-
-        # Map the demod-derived anchor sample back to target domain.
-        #
-        # CRITICAL: use ``math.ceil`` rather than ``int()`` here.  The
-        # demod's ``group_anchor_sample`` is sub-sample-precise (a
-        # float like 950000.5).  We must emit ``target_anchor`` >=
-        # that float, otherwise the downstream
-        # ``find_a_bit0_anchor(event.sample_index, ...)`` query — which
-        # compares ``blk_a.sample_index (float) > carrier_sample
-        # (rounded int)`` — will skip THIS group's anchor and return
-        # the PREVIOUS group's anchor, ~21 900 samples earlier.  That
-        # would produce a systematic ``sync_to_snippet_start_ns`` of
-        # +87.6 ms (exactly one RDS group period) on every plateau
-        # event, defeating the whole point of anchor-triggered emission.
-        # ``ceil`` introduces ≤ 1 sample (≤ 4 µs at 250 kHz) of snippet
-        # offset, which is well below our sub-µs timing target.
         target_anchor = math.ceil(best_ctx.group_anchor_sample) * sd // td
-
-        # Cross-node phase-locked cadence.  Convert the anchor sample to
-        # wall-clock time and compute a globally-shared group epoch
-        # number.  All NTP-synced nodes observing the same broadcast
-        # group will compute the same epoch (since NTP error ≪
-        # GROUP_PERIOD = 88 ms).  Emitting only on epochs that are
-        # multiples of K makes every node fire its plateau on the same
-        # RDS group, so paired snippets cover the same physical time
-        # window.
-        #
-        # Falls back to the per-node "K groups since previous emission"
-        # rule only when ``_buf_anchor_wall_ns`` is unset (the very first
-        # buffer / tests that don't drive the pipeline through
-        # ``process_target_buffer``).
-        if self._buf_anchor_wall_ns is None:
-            if (
-                self._last_plateau_target_anchor is not None
-                and target_anchor - self._last_plateau_target_anchor
-                    < K * self._plateau_group_period_target_samples
-            ):
-                self._plateau_emit_counters["skip_already_emitted"] += 1
-                return None
-            global_epoch_for_log: int | None = None
-        else:
-            sample_delta = target_anchor - self._buf_anchor_target_sample
-            anchor_wall_ns = self._buf_anchor_wall_ns + int(
-                sample_delta * 1e9 / self._target_rate_hz
-            )
-            # NOTE: ``round`` not ``//`` (floor).  Rounding gives a
-            # symmetric ±half-group safety margin (44 ms) against NTP
-            # skew + propagation between nodes — much more robust than
-            # floor's sharp boundary at each group multiple.  Two nodes
-            # whose anchor wall-clocks differ by up to 44 ms (well above
-            # NTP error) will round to the SAME epoch.
-            global_epoch = int(round(anchor_wall_ns / self._group_period_ns))
-            global_epoch_for_log = global_epoch
-            # Phase-locked: emit only when epoch % K == 0 (same residue
-            # all nodes agree on), and never twice for the same epoch.
-            if (
-                self._last_emitted_global_epoch is not None
-                and global_epoch <= self._last_emitted_global_epoch
-            ):
-                self._plateau_emit_counters["skip_already_emitted"] += 1
-                return None
-            if global_epoch % K != 0:
-                self._plateau_emit_counters["skip_not_kslot"] += 1
-                return None
-
+        if (
+            self._last_plateau_target_anchor is not None
+            and target_anchor - self._last_plateau_target_anchor
+                < K * self._plateau_group_period_target_samples
+        ):
+            self._plateau_emit_counters["skip_already_emitted"] += 1
+            return None
         plateau = self._carrier_det.try_emit_plateau_at(target_anchor)
         if plateau is None:
-            # Gate inside try_emit failed (cap reached, edge-clearance,
-            # ring shortfall).  Don't record this anchor / epoch as
-            # emitted so we retry on the next process() call.
             self._plateau_emit_counters["skip_try_emit"] += 1
             return None
-
         self._plateau_emit_counters["ok"] += 1
         self._last_plateau_target_anchor = target_anchor
-        if global_epoch_for_log is not None:
-            self._last_emitted_global_epoch = global_epoch_for_log
         return plateau
 
     # ------------------------------------------------------------------
