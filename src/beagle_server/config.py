@@ -440,6 +440,39 @@ class TdoaCalibrationConfig(BaseModel):
     """Apply the calibration corrections.  Default False so that an
     unfitted calibration table doesn't silently bias output."""
 
+    auto_calibrate: bool = False
+    """Live per-pair auto-calibration against a known-position target.
+
+    When True (and ``calibration_target_*`` set), the server learns the
+    per-pair TDOA biases continuously from plateau measurements on the
+    target channel and applies the rolling median estimate — no manual
+    offline fit (``scripts/fit_tdoa_calibration.py``) and paste required.
+    Implies the corrections are applied (you do not also need ``enabled``).
+    The live estimate OVERRIDES the static ``pair_offsets_s`` / ``node_
+    offsets_s`` tables.  Default False.
+
+    Assumes the calibration-target channel carries only the known target
+    (e.g. a single repeater, no simplex traffic).  See
+    ``beagle_server.target_calibration.TargetCalibrator``."""
+
+    calibration_target_lat: float = 0.0
+    calibration_target_lon: float = 0.0
+    """WGS-84 position of the known calibration transmitter (used to compute
+    the geometric-expected TDOA the live bias is measured against)."""
+
+    calibration_target_channel_hz: float = 0.0
+    """Channel the calibration target transmits on.  Only plateau events
+    within ``calibration_channel_tol_hz`` of this are used for the fit."""
+
+    calibration_channel_tol_hz: float = 1000.0
+    """Half-width (Hz) of the calibration-target channel match window."""
+
+    auto_window: int = 200
+    """Rolling window (most-recent observations per pair) for the live fit."""
+
+    auto_min_samples: int = 20
+    """Minimum observations before a pair's live offset is published."""
+
     node_offsets_s: dict[str, float] = Field(default_factory=dict)
     """
     Per-node δ in **seconds**, relative to the chosen reference node.

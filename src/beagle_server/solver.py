@@ -476,6 +476,7 @@ def solve_fix(
     phat_max_lag_us: float = 0.0,
     node_offsets_s: dict[str, float] | None = None,
     pair_offsets_s: dict[str, float] | None = None,
+    target_calibrator: Any = None,
     boundary_clamp_km: float = 2.0,
     multistart_disagreement_km: float = 5.0,
     pair_outlier_k_mad: float = 0.0,
@@ -641,6 +642,23 @@ def solve_fix(
             )
             if tdoa is None:
                 continue
+            # Live auto-calibration: feed the calibrator the RAW (pre-
+            # calibration) TDOA so it converges to a stable fixed point.
+            # ``compute_tdoa_s`` subtracted pair_offsets_s[sorted(a,b)] (with
+            # sign for orientation); reconstruct raw = calibrated + applied.
+            if target_calibrator is not None:
+                a_id = node_events[i].get("node_id", "?")
+                b_id = node_events[j].get("node_id", "?")
+                applied = 0.0
+                if pair_offsets_s:
+                    if a_id < b_id:
+                        applied = float(pair_offsets_s.get(f"{a_id},{b_id}", 0.0))
+                    else:
+                        applied = -float(pair_offsets_s.get(f"{b_id},{a_id}", 0.0))
+                target_calibrator.observe(
+                    a_id, b_id, tdoa + applied,
+                    node_events[i], node_events[j],
+                )
             # Per-pair outlier filter: heavy-tailed pair-TDOA distributions
             # produce occasional 50-150 µs outliers (sync-period mis-locks)
             # that corrupt single-transmission fits.  The running-median

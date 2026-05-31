@@ -111,6 +111,20 @@ def create_app(config: ServerFullConfig) -> FastAPI:
     app.state.config = config
     app.state.start_time = time.time()
     app.state.pairer = None           # set in lifespan
+    # Live per-pair TDOA auto-calibrator (None unless auto_calibrate enabled).
+    _cal = config.tdoa_calibration
+    if _cal.auto_calibrate and _cal.calibration_target_channel_hz > 0:
+        from beagle_server.target_calibration import TargetCalibrator
+        app.state.target_calibrator = TargetCalibrator(
+            target_lat=_cal.calibration_target_lat,
+            target_lon=_cal.calibration_target_lon,
+            target_channel_hz=_cal.calibration_target_channel_hz,
+            channel_tol_hz=_cal.calibration_channel_tol_hz,
+            window=_cal.auto_window,
+            min_samples=_cal.auto_min_samples,
+        )
+    else:
+        app.state.target_calibrator = None
     app.state.db = None               # set in lifespan
     app.state.sse_subscribers: dict[int, asyncio.Queue[str]] = {}
     # node_auth and user_auth are read directly from config; no runtime state needed
@@ -162,14 +176,22 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             # both are populated — pair is more specific and captures
             # multipath / pair-only biases that per-node cannot represent.
             calib = cfg.tdoa_calibration
-            node_offsets_s = (
-                dict(calib.node_offsets_s) if (calib.enabled and calib.node_offsets_s)
-                else None
-            )
-            pair_offsets_s = (
-                dict(calib.pair_offsets_s) if (calib.enabled and calib.pair_offsets_s)
-                else None
-            )
+            # Live auto-calibration overrides the static tables: its rolling
+            # per-pair medians ARE the pair_offsets_s when it's enabled.
+            target_calibrator = getattr(app.state, "target_calibrator", None)
+            if calib.auto_calibrate and target_calibrator is not None:
+                node_offsets_s = None
+                pair_offsets_s = target_calibrator.pair_offsets_s() or None
+            else:
+                target_calibrator = None
+                node_offsets_s = (
+                    dict(calib.node_offsets_s) if (calib.enabled and calib.node_offsets_s)
+                    else None
+                )
+                pair_offsets_s = (
+                    dict(calib.pair_offsets_s) if (calib.enabled and calib.pair_offsets_s)
+                    else None
+                )
 
             loop = asyncio.get_event_loop()
             fix = await loop.run_in_executor(
@@ -186,6 +208,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     phat_max_lag_us=cfg.solver.phat_max_lag_us,
                     node_offsets_s=node_offsets_s,
                     pair_offsets_s=pair_offsets_s,
+                    target_calibrator=target_calibrator,
                     boundary_clamp_km=cfg.solver.boundary_clamp_km,
                     multistart_disagreement_km=cfg.solver.multistart_disagreement_km,
                     pair_outlier_k_mad=cfg.solver.pair_outlier_k_mad,
@@ -1171,7 +1194,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         # had to correct ±1-group anchor mismatches between paired nodes.
         # See ``_apply_group_period_snap`` in tdoa.py.
         from beagle_server.tdoa import get_group_snap_counters
-        return {
+        out = {
             "status": "ok",
             "uptime_s": round(uptime_s, 1),
             "event_count": event_count,
@@ -1180,6 +1203,10 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             "pending_groups": pairer.pending_group_count(),
             "group_snap_counters": get_group_snap_counters(),
         }
+        cal = getattr(request.app.state, "target_calibrator", None)
+        if cal is not None:
+            out["auto_calibration"] = cal.health_snapshot()
+        return out
 
     # -------------------------------------------------------------------
     # DELETE /api/v1/fixes

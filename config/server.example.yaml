@@ -170,6 +170,21 @@ map:
 # silently bias output.  Set enabled: true once the table has been validated.
 tdoa_calibration:
   enabled: false
+  # --- Live auto-calibration (no manual offline fit/paste) ---------------
+  # When auto_calibrate: true, the server learns the per-pair TDOA biases
+  # continuously from plateau measurements on the calibration-target channel
+  # and applies the rolling median (overrides the static tables below; you
+  # do NOT also need enabled: true).  Assumes the target channel carries ONLY
+  # the known transmitter (e.g. a single repeater, no simplex traffic).
+  # Validated 2026-05-31: on the synced dpk-tdoa1/tdoa2 pair the learned
+  # offset drove the calibrated TDOA to the geometric truth within 0 µs.
+  auto_calibrate: false
+  calibration_target_lat: 0.0          # Known transmitter position (WGS-84).
+  calibration_target_lon: 0.0          #   e.g. Capitol Hill 2m: 47.62389, -122.31517
+  calibration_target_channel_hz: 0.0   #   e.g. 146.96e6
+  calibration_channel_tol_hz: 1000.0   # Channel match half-window (Hz).
+  auto_window: 200                     # Rolling observations retained per pair.
+  auto_min_samples: 20                 # Min observations before a pair publishes.
   fit_mode: "per_node"         # "per_node" or "per_pair".  Documentation only;
                                # the code uses pair_offsets_s when populated,
                                # else node_offsets_s.
