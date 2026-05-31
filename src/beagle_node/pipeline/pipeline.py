@@ -559,15 +559,25 @@ class NodePipeline:
             return []
 
         # Record wall-clock anchor for sample→wall conversion in the
-        # phase-locked plateau emitter.  ``time.time_ns()`` here is
-        # "now" — approximately when the buffer arrived at the
-        # pipeline.  For HAS_TIME RSPduo callers the precise hardware
-        # timestamp lives in main.py:on_measurement; for the
-        # plateau-decision path the residual processing-lag jitter
-        # (single-digit ms) is well under the 88 ms RDS group period,
-        # so cross-node ``floor(anchor_ns / GROUP_PERIOD_NS)`` still
-        # produces matching integers for the same broadcast group.
-        self._buf_anchor_wall_ns = _time.time_ns()
+        # phase-locked plateau emitter.
+        #
+        # Strongly prefer the caller's ``time_ns`` (RSPduo HAS_TIME
+        # provides the hardware timestamp of the buffer's first sample;
+        # freq_hop provides ``time.time_ns()`` captured immediately
+        # after ``read_bytes()`` returns).  Those are tied to the SDR
+        # capture moment, NOT to pipeline-entry latency, which is what
+        # cross-node phase-locking actually requires.
+        #
+        # Falling back to ``time.time_ns()`` here would re-introduce
+        # per-node buffering / processing latency jitter into the
+        # global-epoch derivation — observed in production 2026-05-31
+        # as plateau emissions scattered across the second with no
+        # cross-node clustering, even though each node's internal
+        # cadence was correct.
+        if time_ns:
+            self._buf_anchor_wall_ns = time_ns
+        else:
+            self._buf_anchor_wall_ns = _time.time_ns()
         self._buf_anchor_target_sample = raw_start // self._cfg.target_decimation
 
         # Remove DC offset before decimation.  RTL-SDR (and other direct-conversion

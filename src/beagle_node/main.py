@@ -936,7 +936,8 @@ def run(args: argparse.Namespace | None = None) -> int:
                             (time.time_ns() - buf_wall_ns) / 1e6,
                         )
                         pipeline.process_target_buffer(
-                            iq_buf, raw_start_sample=raw_start, new_target_block=True,
+                            iq_buf, raw_start_sample=raw_start, time_ns=buf_wall_ns,
+                            new_target_block=True,
                         )
                     adc_pos += block_n
                     sample_count += len(iq_buf)
@@ -989,7 +990,9 @@ def run(args: argparse.Namespace | None = None) -> int:
                     # first sample of this buffer pair, which is sample_count.
                     _buf_ref_sample = sample_count
                     pipeline.process_sync_buffer(sync_buf, raw_start_sample=sample_count)
-                    pipeline.process_target_buffer(target_buf, raw_start_sample=sample_count)
+                    pipeline.process_target_buffer(
+                        target_buf, raw_start_sample=sample_count, time_ns=buf_wall_ns,
+                    )
                     sample_count += len(sync_buf)
 
                     if sample_count % (int(receiver.config.sample_rate_hz) or 2_000_000) < len(sync_buf):
