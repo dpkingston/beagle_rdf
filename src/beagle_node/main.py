@@ -841,6 +841,35 @@ def run(args: argparse.Namespace | None = None) -> int:
     signal.signal(signal.SIGINT, _handle_signal)
 
     # ------------------------------------------------------------------
+    # GC freeze: move all long-lived objects (pipeline, ring buffer,
+    # decoder state, reporter, RDS group lists, …) into the "permanent"
+    # zone so gen0/1/2 collections never re-scan them.  Observed
+    # behaviour pre-freeze: gen2 cycles fired roughly every 67 s, each
+    # collected 0 objects (heap is clean), each paused the process for
+    # ~58 ms walking the otherwise-stable object graph.  After freeze
+    # only short-lived per-buffer allocations are scanned.
+    #
+    # We freeze in two phases:
+    #   1. Now, before the SDR loop starts — catches everything built
+    #      during ``run()`` setup (pipeline, decimators, decoder,
+    #      reporter, ring, sync_events).
+    #   2. Again about 5 s into the loop (warmup-tail freeze) — catches
+    #      any one-shot allocations from the first few SDR buffers
+    #      (numpy decimator-history primes, RDS decoder warmup, etc.).
+    # See _gc_callback above for the diagnostic that drove this.
+    gc.collect()  # full collection so cycle garbage doesn't get frozen
+    _pre_freeze_count = len(gc.get_objects())
+    gc.freeze()
+    _post_freeze_count = len(gc.get_objects())
+    logger.info(
+        "GC pre-loop freeze: %d objects moved to permanent zone "
+        "(scanner now tracks %d objects)",
+        _pre_freeze_count - _post_freeze_count, _post_freeze_count,
+    )
+    _warmup_freeze_done = False
+    _LOOP_START_TIME = time.monotonic()
+
+    # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
     logger.info("Entering main SDR loop")
@@ -848,6 +877,30 @@ def run(args: argparse.Namespace | None = None) -> int:
     sample_count = 0
     _last_heartbeat: float = 0.0
     _HEARTBEAT_INTERVAL_S: float = 30.0
+
+    def _maybe_warmup_freeze() -> bool:
+        """Second-phase freeze ~5 s into the SDR loop.
+
+        Catches one-shot allocations from the first few SDR buffers
+        (decimator history primes, RDS warmup, etc.) that weren't yet
+        constructed at the pre-loop freeze point.
+
+        Returns True when the freeze runs (so the caller can flip its
+        ``done`` flag).
+        """
+        if time.monotonic() - _LOOP_START_TIME < 5.0:
+            return False
+        before = len(gc.get_objects())
+        gc.collect()
+        gc.freeze()
+        after = len(gc.get_objects())
+        logger.info(
+            "GC warmup freeze (t+%.0fs): %d additional objects moved to "
+            "permanent zone (scanner now tracks %d)",
+            time.monotonic() - _LOOP_START_TIME,
+            before - after, after,
+        )
+        return True
 
     try:
         with receiver:
@@ -862,6 +915,8 @@ def run(args: argparse.Namespace | None = None) -> int:
                 for role, iq_buf, buf_wall_ns, discontinuity in receiver.labeled_stream():
                     if _stop["flag"]:
                         break
+                    if not _warmup_freeze_done:
+                        _warmup_freeze_done = _maybe_warmup_freeze()
                     if discontinuity:
                         pipeline.mark_discontinuity()
                     block_n = receiver.sync_block_samples if role == "sync" else receiver.target_block_samples
@@ -925,6 +980,8 @@ def run(args: argparse.Namespace | None = None) -> int:
                 for sync_buf, target_buf, buf_wall_ns, discontinuity in receiver.paired_stream():
                     if _stop["flag"]:
                         break
+                    if not _warmup_freeze_done:
+                        _warmup_freeze_done = _maybe_warmup_freeze()
                     if discontinuity:
                         pipeline.mark_discontinuity()
                     # _buf_ref_sample = buffer start (raw ADC position).
@@ -976,6 +1033,8 @@ def run(args: argparse.Namespace | None = None) -> int:
                 for iq_buf, discontinuity in receiver.stream():
                     if _stop["flag"]:
                         break
+                    if not _warmup_freeze_done:
+                        _warmup_freeze_done = _maybe_warmup_freeze()
                     if discontinuity:
                         pipeline.mark_discontinuity()
                     pipeline.process_sync_buffer(iq_buf)
