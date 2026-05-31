@@ -159,6 +159,17 @@ class TestPipelineIntegration:
         assert snap["bler_mean"] is None or snap["bler_mean"] == 0.0
         # group_period_hz is the constant for the server's reference
         assert snap["group_period_hz"] == pytest.approx(11.418, abs=0.01)
+        # Per-attempt plateau-emit telemetry present and zeroed.
+        assert "plateau_emit" in snap
+        pe = snap["plateau_emit"]
+        assert pe == {
+            "attempts": 0, "ok": 0, "skip_no_anchor": 0,
+            "skip_not_kslot": 0, "skip_already_emitted": 0, "skip_try_emit": 0,
+        }
+        # Snapshot returns a COPY — mutating it must not corrupt the live
+        # counters (dict() defensive copy in rds_health_snapshot).
+        pe["ok"] = 999
+        assert pipe.rds_health_snapshot()["plateau_emit"]["ok"] == 0
 
     def test_plateau_K_groups_follows_live_interval_reload(self):
         """Live reload of ``carrier.plateau_event_interval_s`` (via

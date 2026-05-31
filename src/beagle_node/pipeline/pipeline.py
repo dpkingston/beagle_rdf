@@ -314,6 +314,32 @@ class NodePipeline:
         # period).  Reset on idle→active.
         self._last_emitted_global_epoch: int | None = None
 
+        # Per-attempt plateau-emit telemetry (Step 1 of the plateau
+        # cross-node-sync fix).  Surfaced via rds_health_snapshot so the
+        # aliasing between the 1 s RDS decode and the ~196 ms IQ ring is
+        # directly observable in production.  Cumulative for the process
+        # lifetime (like the anchor_* counters), NOT reset on idle→active.
+        #   attempts             - calls that got past the disabled/idle/K=0
+        #                          gates (i.e. a real chance to emit)
+        #   ok                   - plateaus actually emitted
+        #   skip_no_anchor       - find_a_bit0_anchor returned None (no
+        #                          decoded block-A bit-0 within the lookback
+        #                          of the snippet horizon — the decode-
+        #                          staleness symptom)
+        #   skip_not_kslot       - anchor epoch not a K-multiple
+        #   skip_already_emitted - anchor epoch <= last emitted (same slot)
+        #   skip_try_emit        - carrier_det.try_emit_plateau_at failed
+        #                          (ring shortfall / edge clearance / cap —
+        #                          the ring-too-small symptom)
+        self._plateau_emit_counters: dict[str, int] = {
+            "attempts": 0,
+            "ok": 0,
+            "skip_no_anchor": 0,
+            "skip_not_kslot": 0,
+            "skip_already_emitted": 0,
+            "skip_try_emit": 0,
+        }
+
         # K (number of groups between successive plateau emissions) is
         # derived at use time from the carrier_detect's current
         # ``_plateau_interval_s`` so live config reloads of
@@ -428,6 +454,12 @@ class NodePipeline:
                 round(emit_frac, 3) if emit_frac is not None else None
             ),
             "anchor_match_attempts_failed": match_attempts,
+            # Per-attempt plateau-emit telemetry (cross-node-sync diagnostic).
+            # A healthy emitter shows ``ok`` ≈ one per K-slot of active time
+            # with small skip_no_anchor / skip_try_emit.  The aliasing bug
+            # shows large skip_no_anchor (decode staleness) + skip_try_emit
+            # (ring too small) relative to ok.
+            "plateau_emit": dict(self._plateau_emit_counters),
         }
 
     # ------------------------------------------------------------------
@@ -720,6 +752,9 @@ class NodePipeline:
         if latest_target_anchor < 0:
             return None
 
+        # Past the disabled/idle/warmup gates: this is a real emit attempt.
+        self._plateau_emit_counters["attempts"] += 1
+
         # Look up the most recent block-A bit-0 anchor at or before that
         # point, in sync-domain sample coordinates (the RDS decoder
         # speaks sync space).  Allow 2 group periods of lookback so we
@@ -733,6 +768,7 @@ class NodePipeline:
             float(sync_at_latest_anchor), float(sync_lookback),
         )
         if best_ctx is None:
+            self._plateau_emit_counters["skip_no_anchor"] += 1
             return None
 
         # Map the demod-derived anchor sample back to target domain.
@@ -771,6 +807,7 @@ class NodePipeline:
                 and target_anchor - self._last_plateau_target_anchor
                     < K * self._plateau_group_period_target_samples
             ):
+                self._plateau_emit_counters["skip_already_emitted"] += 1
                 return None
             global_epoch_for_log: int | None = None
         else:
@@ -792,8 +829,10 @@ class NodePipeline:
                 self._last_emitted_global_epoch is not None
                 and global_epoch <= self._last_emitted_global_epoch
             ):
+                self._plateau_emit_counters["skip_already_emitted"] += 1
                 return None
             if global_epoch % K != 0:
+                self._plateau_emit_counters["skip_not_kslot"] += 1
                 return None
 
         plateau = self._carrier_det.try_emit_plateau_at(target_anchor)
@@ -801,8 +840,10 @@ class NodePipeline:
             # Gate inside try_emit failed (cap reached, edge-clearance,
             # ring shortfall).  Don't record this anchor / epoch as
             # emitted so we retry on the next process() call.
+            self._plateau_emit_counters["skip_try_emit"] += 1
             return None
 
+        self._plateau_emit_counters["ok"] += 1
         self._last_plateau_target_anchor = target_anchor
         if global_epoch_for_log is not None:
             self._last_emitted_global_epoch = global_epoch_for_log
