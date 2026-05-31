@@ -422,3 +422,57 @@ def test_carrier_event_to_db_dict_includes_snippet():
     assert d["channel_sample_rate_hz"] == pytest.approx(64_000.0)
 
 
+
+
+# ---------------------------------------------------------------------------
+# GCC-PHAT search-window constraint (max_lag_s) — CTCSS tonal-sidelobe fix
+# ---------------------------------------------------------------------------
+
+def test_phat_max_lag_excludes_far_sidelobe():
+    """``_xcorr_phat_arrays(max_lag_s=...)`` must bound the peak search so a
+    dominant correlation feature at a large (implausible) lag is ignored in
+    favour of the true small-lag peak.
+
+    This is the mechanism that fixes the CTCSS tonal-lock failure: a
+    continuously-keyed sub-audible tone produces a phase-coherent
+    cross-spectrum whose PHAT peak lands on the TONE PERIOD (e.g. a 107 Hz
+    tone → ±9.3 ms).  PHAT is magnitude-blind, so filtering the tone does
+    nothing; only bounding the search to the physically-plausible window
+    (true TDOA ≤ baseline/c, hundreds of µs) discards the far sidelobe.
+    """
+    import numpy as np
+    from beagle_server.tdoa import _xcorr_phat_arrays
+
+    rate = 250_000.0
+    rng = np.random.default_rng(1234)
+    n = 8000
+    a = rng.standard_normal(n)
+    far = 2000   # 8 ms — stands in for the tonal sidelobe (implausible)
+    true = 25    # 100 µs — the real inter-node lag (plausible)
+    b = np.zeros(n)
+    b[far:] += a[: n - far]            # dominant correlated copy at the far lag
+    b[true:] += 0.6 * a[: n - true]    # weaker true copy at the small lag
+
+    # Unbounded search locks onto the dominant far feature.
+    lag_full_ns, _ = _xcorr_phat_arrays(a, b, rate)
+    assert abs(lag_full_ns * rate / 1e9 - far) < 3
+
+    # Bounded to ±200 µs (50 samples) — the far peak is excluded, so the
+    # true small-lag peak wins.
+    lag_bound_ns, _ = _xcorr_phat_arrays(a, b, rate, max_lag_s=200e-6)
+    assert abs(lag_bound_ns * rate / 1e9 - true) < 3
+
+
+def test_phat_max_lag_none_is_unbounded():
+    """max_lag_s=None preserves the legacy full-range search."""
+    import numpy as np
+    from beagle_server.tdoa import _xcorr_phat_arrays
+    rate = 250_000.0
+    rng = np.random.default_rng(7)
+    n = 4000
+    a = rng.standard_normal(n)
+    lag = 1500  # 6 ms — outside any plausible TDOA window
+    b = np.zeros(n)
+    b[lag:] = a[: n - lag]
+    lag_ns, _ = _xcorr_phat_arrays(a, b, rate, max_lag_s=None)
+    assert abs(lag_ns * rate / 1e9 - lag) < 3

@@ -473,6 +473,7 @@ def solve_fix(
     max_xcorr_baseline_km: float = 50.0,
     savgol_window_us: float = 360.0,
     tdoa_method: str = "xcorr",
+    phat_max_lag_us: float = 0.0,
     node_offsets_s: dict[str, float] | None = None,
     pair_offsets_s: dict[str, float] | None = None,
     boundary_clamp_km: float = 2.0,
@@ -634,6 +635,7 @@ def solve_fix(
                 max_xcorr_baseline_km=max_xcorr_baseline_km,
                 savgol_window_us=savgol_window_us,
                 tdoa_method=tdoa_method,
+                phat_max_lag_us=phat_max_lag_us,
                 node_offsets_s=node_offsets_s,
                 pair_offsets_s=pair_offsets_s,
             )

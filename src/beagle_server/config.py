@@ -221,6 +221,37 @@ class SolverConfig(BaseModel):
       "knee": per-node Savgol-smoothed second-derivative knee finder.
         Uses ``savgol_window_us``.  Retained for comparison.
     """
+    phat_max_lag_us: float = 1500.0
+    """
+    Peak-search half-window (microseconds) for the GCC-PHAT cross-
+    correlation in ``tdoa_method: phat`` and ``audio_phat``.  Bounds the
+    correlation argmax to ``±phat_max_lag_us``.
+
+    Why this is needed: a continuously-keyed CTCSS tone (almost all
+    repeaters) produces a phase-coherent cross-spectrum that SURVIVES
+    PHAT's magnitude whitening — PHAT normalises every bin to unit
+    magnitude, so attenuating the tone with a filter does nothing — and
+    yields strong correlation peaks at the TONE PERIOD (a 107 Hz tone →
+    ±9.3 ms sidelobes).  With an unbounded search those tonal sidelobes
+    swamp the true sub-millisecond peak, so every voice pair returns an
+    implausible ~10 ms lag and is rejected by the geometric plausibility
+    filter.  Since the true inter-node TDOA is bounded by baseline/c
+    (hundreds of µs even for the widest baselines), restricting the
+    search to a physically-plausible window discards the tonal sidelobes
+    and recovers the correct peak.
+
+    1500 µs (default) comfortably exceeds the real refinement (geometry
+    + sync-path + per-pair bias, observed < ~500 µs on the Seattle net)
+    while staying well below the CTCSS tone period (>= 4 ms for the
+    254 Hz max tone) and the voice pitch period (5-20 ms).  Raise it for
+    very wide baselines (> ~200 km); set to 0 to disable (legacy
+    unbounded search).
+
+    Validated on dpk-tdoa1/tdoa2 live voice (2026-05-31, 107 Hz /
+    15 %-deviation tone): bounding the search moved voice-pair audio-PHAT
+    from spurious ±10 ms lags (0/9 plausible) to sensible sub-millisecond
+    values (9/9), with no audio filtering.
+    """
     xcorr_resample_rate_hz: float | None = None
     """
     Target sample rate (Hz) to resample IQ snippets to before cross-correlation

@@ -541,6 +541,7 @@ def _xcorr_arrays(
 
 def _xcorr_phat_arrays(
     a: np.ndarray, b: np.ndarray, sample_rate_hz: float, epsilon: float = 1e-12,
+    max_lag_s: float | None = None,
 ) -> tuple[float, float]:
     """GCC-PHAT cross-correlation.
 
@@ -559,6 +560,17 @@ def _xcorr_phat_arrays(
     same physical PA ramp.  Classic TDOA technique from acoustic-
     localisation; see Knapp & Carter (1976).
 
+    ``max_lag_s`` bounds the peak search to ``±max_lag_s`` seconds.  This
+    is essential for content with a strong periodic component — the
+    canonical case is a continuously-keyed CTCSS tone, whose phase-coherent
+    spectrum survives PHAT's magnitude whitening (PHAT is magnitude-blind,
+    so attenuating the tone does nothing) and produces correlation peaks at
+    the TONE PERIOD.  A 107 Hz tone yields ±9.3 ms sidelobes that swamp the
+    true sub-ms peak when the search is unbounded.  Since the real TDOA is
+    bounded by baseline/c (hundreds of µs at most), restricting the search
+    to a physically-plausible window discards the tonal sidelobes.  None
+    (default) searches the full half-length (legacy behaviour).
+
     Returns (lag_ns, snr) with the same conventions as ``_xcorr_arrays``.
     """
     n = len(a) + len(b) - 1
@@ -570,6 +582,8 @@ def _xcorr_phat_arrays(
     cc = np.fft.ifft(X_phat)
     cc_abs = np.abs(cc)
     max_lag = min(len(a), len(b)) // 2
+    if max_lag_s is not None:
+        max_lag = min(max_lag, max(1, int(round(max_lag_s * sample_rate_hz))))
     lags = np.concatenate([cc_abs[n_fft - max_lag:], cc_abs[:max_lag + 1]])
     peak_idx = int(np.argmax(lags))
     integer_lag = peak_idx - max_lag
@@ -737,6 +751,7 @@ def cross_correlate_audio_phat(
     transition_start_b: int,
     transition_end_b: int,
     savgol_window_us: float = 360.0,
+    max_lag_s: float | None = None,
 ) -> tuple[float, float] | None:
     """GCC-PHAT cross-correlation on FM-demodulated audio.
 
@@ -861,8 +876,15 @@ def cross_correlate_audio_phat(
     seg_a = seg_a - np.mean(seg_a)
     seg_b = seg_b - np.mean(seg_b)
 
-    # GCC-PHAT on real audio.
-    lag_ns_local, snr = _xcorr_phat_arrays(seg_a, seg_b, rate)
+    # GCC-PHAT on real audio, constrained to the physically-plausible lag
+    # window.  The true inter-node audio delay is bounded by the baseline
+    # (hundreds of µs at most); a continuously-keyed CTCSS tone produces a
+    # phase-coherent cross-spectrum whose PHAT (magnitude-blind) peak can
+    # land on the TONE PERIOD (a 107 Hz tone → ±10 ms) far outside that
+    # window.  Bounding the argmax search to ``max_lag_s`` excludes those
+    # tonal sidelobes and forces PHAT onto the true sub-ms peak.  See the
+    # note in ``_xcorr_phat_arrays``.
+    lag_ns_local, snr = _xcorr_phat_arrays(seg_a, seg_b, rate, max_lag_s=max_lag_s)
 
     # Convert plateau-local lag (b minus a) to snippet-frame A-minus-B
     # refinement, mirroring cross_correlate_coherent_phat.
@@ -882,6 +904,7 @@ def cross_correlate_coherent_phat(
     transition_start_b: int,
     transition_end_b: int,
     savgol_window_us: float = 360.0,
+    max_lag_s: float | None = None,
 ) -> tuple[float, float] | None:
     """Coherent complex-IQ GCC-PHAT cross-correlation.
 
@@ -1005,6 +1028,7 @@ def cross_correlate_coherent_phat(
 
     lag_ns_local, snr = _xcorr_phat_arrays(
         iq_a_d[pl_a[0]:pl_a[1]], iq_b_d[pl_b[0]:pl_b[1]], rate,
+        max_lag_s=max_lag_s,
     )
 
     # Convert plateau-local lag (b minus a within their plateau coords) to
@@ -1159,6 +1183,7 @@ def compute_tdoa_s(
     tdoa_method: str = "xcorr",
     node_offsets_s: dict[str, float] | None = None,
     pair_offsets_s: dict[str, float] | None = None,
+    phat_max_lag_us: float = 0.0,
 ) -> float | None:
     """
     Compute the corrected TDOA between two events in **seconds**.
@@ -1386,6 +1411,13 @@ def compute_tdoa_s(
     ts_b = int(event_b.get("transition_start", 0))
     te_b = int(event_b.get("transition_end", 0))
 
+    # PHAT peak-search window (±seconds).  Bounds the GCC-PHAT argmax to the
+    # physically-plausible lag range, excluding the multi-ms tonal sidelobes
+    # a continuously-keyed CTCSS tone produces (PHAT is magnitude-blind, so
+    # filtering the tone doesn't help — the search window must constrain it).
+    # 0 = unbounded (legacy).  Applies to "phat" and "audio_phat".
+    phat_max_lag_s = (phat_max_lag_us / 1e6) if phat_max_lag_us > 0 else None
+
     if tdoa_method == "phat":
         # Coherent complex-IQ GCC-PHAT.  Uses per-node LO-offset estimation +
         # de-rotation + PHAT cross-correlation on the plateau segment of each
@@ -1401,6 +1433,7 @@ def compute_tdoa_s(
             transition_start_a=ts_a, transition_end_a=te_a,
             transition_start_b=ts_b, transition_end_b=te_b,
             savgol_window_us=savgol_window_us,
+            max_lag_s=phat_max_lag_s,
         )
         if res is None:
             logger.warning(
@@ -1438,6 +1471,7 @@ def compute_tdoa_s(
             transition_start_a=ts_a, transition_end_a=te_a,
             transition_start_b=ts_b, transition_end_b=te_b,
             savgol_window_us=savgol_window_us,
+            max_lag_s=phat_max_lag_s,
         )
         if res is None:
             logger.warning(

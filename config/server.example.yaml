@@ -98,6 +98,18 @@ solver:
                                   #              is unchanged from "phat" — that's a system
                                   #              property, not a method property.
                                   # "knee"       (diagnostic): per-node Savgol-smoothed d2 knee.
+  phat_max_lag_us: 1500.0         # PHAT peak-search half-window (µs) for "phat"/"audio_phat".
+                                  # Bounds the GCC-PHAT argmax to ±this.  REQUIRED for
+                                  # repeaters that key a CTCSS tone (almost all): the tone's
+                                  # phase-coherent spectrum survives PHAT's magnitude whitening
+                                  # (PHAT is magnitude-blind, so filtering the tone does NOT
+                                  # help) and produces correlation peaks at the TONE PERIOD
+                                  # (a 107 Hz tone -> ±9.3 ms).  Unbounded, those tonal
+                                  # sidelobes swamp the true sub-ms peak and every voice pair
+                                  # is rejected as implausible.  1500 µs exceeds the real
+                                  # refinement (<~500 µs on a metro-scale net) while staying
+                                  # below the CTCSS period (>=4 ms) and voice pitch (5-20 ms).
+                                  # Raise for very wide (>200 km) baselines; 0 = unbounded.
   boundary_clamp_km: 2.0          # Suppress fixes whose converged position lies within this
                                   # many km of the search bounds.  L-BFGS-B clamps to the
                                   # constraint when the cost minimum is outside the search

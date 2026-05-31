@@ -183,6 +183,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     max_xcorr_baseline_km=cfg.solver.max_xcorr_baseline_km,
                     savgol_window_us=cfg.solver.savgol_window_us,
                     tdoa_method=cfg.solver.tdoa_method,
+                    phat_max_lag_us=cfg.solver.phat_max_lag_us,
                     node_offsets_s=node_offsets_s,
                     pair_offsets_s=pair_offsets_s,
                     boundary_clamp_km=cfg.solver.boundary_clamp_km,
