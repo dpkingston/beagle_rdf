@@ -141,6 +141,38 @@ class TestPipelineIntegration:
         assert pipe.rds_decoder is not None
         assert isinstance(pipe.rds_decoder, RDSDecoderService)
 
+    def test_ring_enlarged_to_cover_decode_window_with_rds(self):
+        """Step 2 of the plateau cross-node-sync fix: when an RDS decoder
+        is active, the carrier-detector IQ ring must hold at least the RDS
+        decode window so a (possibly ~1 decode-interval stale) block-A
+        anchor returned by the widened ``find_a_bit0_anchor`` lookback is
+        still snippet-extractable.
+
+        Production telemetry (2026-05-31) had skip_try_emit=0 with the old
+        ~196 ms ring only because the 2-group lookback never returned an
+        anchor older than the ring.  Widening the lookback (same commit)
+        without this ring change would convert skip_no_anchor misses into
+        skip_try_emit misses; the enlarged ring prevents that."""
+        from beagle_node.pipeline.pipeline import NodePipeline, PipelineConfig
+        import math
+
+        cfg = PipelineConfig(sync_mode="rds")
+        pipe = NodePipeline(config=cfg)
+        ring = pipe.carrier_detector._iq_ring
+        window = pipe.carrier_detector._window
+        target_rate = cfg.sdr_rate_hz / cfg.target_decimation
+
+        # Ring must cover decode window + 1 s margin.
+        ring_seconds = ring.maxlen * window / target_rate
+        assert ring_seconds >= cfg.rds_decoder_window_seconds + 1.0 - 1e-6, (
+            f"ring holds {ring_seconds:.2f}s, need "
+            f">= {cfg.rds_decoder_window_seconds + 1.0:.2f}s"
+        )
+        # And it must comfortably exceed the old ~3x-snippet auto-size,
+        # which was the pre-fix default.
+        snippet_windows = max(1, math.ceil(cfg.carrier_snippet_samples / window))
+        assert ring.maxlen > snippet_windows * 3
+
     def test_rds_health_snapshot_initial(self):
         """Snapshot is well-formed before any decode has run."""
         from beagle_node.pipeline.pipeline import NodePipeline, PipelineConfig

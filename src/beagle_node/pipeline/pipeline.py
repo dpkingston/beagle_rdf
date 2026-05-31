@@ -215,6 +215,32 @@ class NodePipeline:
 
         # Target chain
         self._target_dec = Decimator(c.target_decimation, c.sdr_rate_hz, c.target_cutoff_hz)
+
+        # IQ-ring depth.  With an RDS decoder the anchor-triggered plateau
+        # emitter (see ``_maybe_emit_anchor_plateau``) may pick a block-A
+        # bit-0 anchor that is up to ~one decode-interval stale — the
+        # decoder refreshes ``_latest_groups`` only every
+        # ``rds_decoder_interval_ms`` over a ``rds_decoder_window_seconds``
+        # rolling buffer.  For that older anchor's snippet to still be
+        # extractable, the ring must hold at least the decode window plus a
+        # margin (Step 2 of the plateau cross-node-sync fix).  Without the
+        # RDS decoder the legacy snippet-sized auto-ring is fine.
+        #
+        # Pre-Step-2 the ring auto-sized to ~3× snippet (~196 ms), which is
+        # why production showed skip_no_anchor=81% but skip_try_emit=0: the
+        # 2-group lookback only ever returned anchors already inside that
+        # small ring.  Widening the lookback (below) without enlarging the
+        # ring would convert those misses into skip_try_emit; we enlarge the
+        # ring here so the wider lookback's older anchors stay emittable.
+        _ring_windows = c.carrier_ring_lookback_windows
+        if self._rds_decoder is not None:
+            _target_rate = c.sdr_rate_hz / c.target_decimation
+            _ring_seconds_needed = c.rds_decoder_window_seconds + 1.0
+            _needed_windows = math.ceil(
+                _ring_seconds_needed * _target_rate / c.carrier_window_samples
+            )
+            _ring_windows = max(int(_ring_windows or 0), _needed_windows)
+
         self._carrier_det = CarrierDetector(
             sample_rate_hz=c.sdr_rate_hz / c.target_decimation,
             onset_threshold_db=c.carrier_onset_db,
@@ -224,7 +250,7 @@ class NodePipeline:
             min_release_windows=c.carrier_min_release_windows,
             snippet_samples=c.carrier_snippet_samples,
             snippet_post_windows=c.carrier_snippet_post_windows,
-            ring_lookback_windows=c.carrier_ring_lookback_windows,
+            ring_lookback_windows=_ring_windows,
             min_active_windows_for_offset=c.carrier_min_active_windows_for_offset,
             auto_threshold_margins=c.carrier_auto_threshold_margins,
             onset_margin_db=c.carrier_onset_margin_db,
@@ -757,12 +783,22 @@ class NodePipeline:
 
         # Look up the most recent block-A bit-0 anchor at or before that
         # point, in sync-domain sample coordinates (the RDS decoder
-        # speaks sync space).  Allow 2 group periods of lookback so we
-        # catch anchors that landed just before the snippet horizon.
+        # speaks sync space).
+        #
+        # Step 2 (plateau cross-node-sync fix): widen the lookback from
+        # 2 group periods (~175 ms) to the full RDS decode window
+        # (``rds_decoder_window_seconds``, ~2 s).  Production telemetry
+        # showed skip_no_anchor=81%: the old 2-group window only found a
+        # decoded block-A in the ~175-240 ms right after each 1 s decode,
+        # so 4 attempts in 5 returned None.  Widening to the decode window
+        # lets find() return the most recent decoded block-A even when the
+        # decode is up to ~1 decode-interval stale — and the enlarged ring
+        # (above) keeps that older anchor's snippet extractable.
         td = self._cfg.target_decimation
         sd = self._cfg.sync_decimation
+        sync_rate_hz = self._cfg.sdr_rate_hz / sd
         sync_at_latest_anchor = latest_target_anchor * td // sd
-        sync_lookback = 2 * self._plateau_group_period_target_samples * td // sd
+        sync_lookback = int(self._cfg.rds_decoder_window_seconds * sync_rate_hz)
 
         best_ctx = self._rds_decoder.find_a_bit0_anchor(
             float(sync_at_latest_anchor), float(sync_lookback),
