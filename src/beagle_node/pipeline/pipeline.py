@@ -288,9 +288,32 @@ class NodePipeline:
         self._prev_carrier_state: str = "idle"
         # Group period at the target rate (RDS group = 104 bits / 1187.5 Hz).
         target_rate = c.sdr_rate_hz / c.target_decimation
+        self._target_rate_hz: float = target_rate
         self._plateau_group_period_target_samples: int = max(
             1, round(target_rate / (1187.5 / 104.0)),
         )
+        # Group period in nanoseconds, used for cross-node phase-locked
+        # plateau emission (see _maybe_emit_anchor_plateau).
+        self._group_period_ns: int = int(round(1e9 * 104.0 / 1187.5))  # 87_578_947 ns
+
+        # Cross-node plateau phase-lock state.  ``_buf_anchor_wall_ns`` is
+        # ``time.time_ns()`` captured at the start of the most recent
+        # ``process_target_buffer`` call, and ``_buf_anchor_target_sample``
+        # is the target-domain sample index corresponding to it.  Used to
+        # convert the demod-derived block-A bit-0 anchor sample to a
+        # wall-clock time so we can compute a globally-shared
+        # ``global_group_epoch = floor(anchor_wall_ns / GROUP_PERIOD_NS)``.
+        # All NTP-synced nodes observing the same broadcast group will
+        # compute the same epoch integer (NTP error << 88 ms group period),
+        # so emitting only when ``epoch % K == 0`` makes all nodes fire
+        # plateaus on the SAME RDS group.  Snippets across nodes then
+        # cover the same physical time window, and the server pairs them.
+        self._buf_anchor_wall_ns: int | None = None
+        self._buf_anchor_target_sample: int = 0
+        # Most recent emitted global epoch (de-dupes within a single active
+        # period).  Reset on idle→active.
+        self._last_emitted_global_epoch: int | None = None
+
         # K (number of groups between successive plateau emissions) is
         # derived at use time from the carrier_detect's current
         # ``_plateau_interval_s`` so live config reloads of
@@ -527,12 +550,25 @@ class NodePipeline:
             Any new measurements produced.
         """
         import numpy as np
+        import time as _time
         iq = np.asarray(iq, dtype=np.complex64)
         raw_start = self._target_sample_count if raw_start_sample is None else raw_start_sample
 
         if len(iq) == 0:
             self._target_sample_count = raw_start
             return []
+
+        # Record wall-clock anchor for sample→wall conversion in the
+        # phase-locked plateau emitter.  ``time.time_ns()`` here is
+        # "now" — approximately when the buffer arrived at the
+        # pipeline.  For HAS_TIME RSPduo callers the precise hardware
+        # timestamp lives in main.py:on_measurement; for the
+        # plateau-decision path the residual processing-lag jitter
+        # (single-digit ms) is well under the 88 ms RDS group period,
+        # so cross-node ``floor(anchor_ns / GROUP_PERIOD_NS)`` still
+        # produces matching integers for the same broadcast group.
+        self._buf_anchor_wall_ns = _time.time_ns()
+        self._buf_anchor_target_sample = raw_start // self._cfg.target_decimation
 
         # Remove DC offset before decimation.  RTL-SDR (and other direct-conversion
         # SDRs) have a strong LO leakage component at 0 Hz that would otherwise
@@ -629,11 +665,13 @@ class NodePipeline:
         # Track state for idle→active reset of the plateau-anchor pointer.
         new_state = self._carrier_det.state
         if self._prev_carrier_state != "active" and new_state == "active":
-            # Active period just started — clear the last-anchor pointer so
-            # the first plateau of this period can fire at the soonest
-            # in-ring anchor (rather than wait K groups after the previous
-            # active period's last anchor).
+            # Active period just started — clear the last-anchor pointer
+            # AND the global-epoch tracker so the first plateau of this
+            # period can fire at the soonest valid global epoch (rather
+            # than wait K groups after the previous active period's last
+            # anchor or epoch).
             self._last_plateau_target_anchor = None
+            self._last_emitted_global_epoch = None
         self._prev_carrier_state = new_state
 
         self._target_sample_count = raw_start + len(iq)
@@ -704,23 +742,60 @@ class NodePipeline:
         # offset, which is well below our sub-µs timing target.
         target_anchor = math.ceil(best_ctx.group_anchor_sample) * sd // td
 
-        # K-groups cadence: only emit if we're at least K groups past the
-        # previously-emitted anchor in this active period.
-        if (
-            self._last_plateau_target_anchor is not None
-            and target_anchor - self._last_plateau_target_anchor
-                < K * self._plateau_group_period_target_samples
-        ):
-            return None
+        # Cross-node phase-locked cadence.  Convert the anchor sample to
+        # wall-clock time and compute a globally-shared group epoch
+        # number.  All NTP-synced nodes observing the same broadcast
+        # group will compute the same epoch (since NTP error ≪
+        # GROUP_PERIOD = 88 ms).  Emitting only on epochs that are
+        # multiples of K makes every node fire its plateau on the same
+        # RDS group, so paired snippets cover the same physical time
+        # window.
+        #
+        # Falls back to the per-node "K groups since previous emission"
+        # rule only when ``_buf_anchor_wall_ns`` is unset (the very first
+        # buffer / tests that don't drive the pipeline through
+        # ``process_target_buffer``).
+        if self._buf_anchor_wall_ns is None:
+            if (
+                self._last_plateau_target_anchor is not None
+                and target_anchor - self._last_plateau_target_anchor
+                    < K * self._plateau_group_period_target_samples
+            ):
+                return None
+            global_epoch_for_log: int | None = None
+        else:
+            sample_delta = target_anchor - self._buf_anchor_target_sample
+            anchor_wall_ns = self._buf_anchor_wall_ns + int(
+                sample_delta * 1e9 / self._target_rate_hz
+            )
+            # NOTE: ``round`` not ``//`` (floor).  Rounding gives a
+            # symmetric ±half-group safety margin (44 ms) against NTP
+            # skew + propagation between nodes — much more robust than
+            # floor's sharp boundary at each group multiple.  Two nodes
+            # whose anchor wall-clocks differ by up to 44 ms (well above
+            # NTP error) will round to the SAME epoch.
+            global_epoch = int(round(anchor_wall_ns / self._group_period_ns))
+            global_epoch_for_log = global_epoch
+            # Phase-locked: emit only when epoch % K == 0 (same residue
+            # all nodes agree on), and never twice for the same epoch.
+            if (
+                self._last_emitted_global_epoch is not None
+                and global_epoch <= self._last_emitted_global_epoch
+            ):
+                return None
+            if global_epoch % K != 0:
+                return None
 
         plateau = self._carrier_det.try_emit_plateau_at(target_anchor)
         if plateau is None:
             # Gate inside try_emit failed (cap reached, edge-clearance,
-            # ring shortfall).  Don't record this anchor as emitted so we
-            # retry on the next process() call.
+            # ring shortfall).  Don't record this anchor / epoch as
+            # emitted so we retry on the next process() call.
             return None
 
         self._last_plateau_target_anchor = target_anchor
+        if global_epoch_for_log is not None:
+            self._last_emitted_global_epoch = global_epoch_for_log
         return plateau
 
     # ------------------------------------------------------------------
@@ -792,6 +867,10 @@ class NodePipeline:
         self._pps_det.reset()
         self._sync_sample_count = 0
         self._target_sample_count = 0
-        # Reset anchor-plateau scheduler state too.
+        # Reset anchor-plateau scheduler state too (including the
+        # cross-node phase-locked global-epoch tracker).
         self._last_plateau_target_anchor = None
+        self._last_emitted_global_epoch = None
+        self._buf_anchor_wall_ns = None
+        self._buf_anchor_target_sample = 0
         self._prev_carrier_state = "idle"

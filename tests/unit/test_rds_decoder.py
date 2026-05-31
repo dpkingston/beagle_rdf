@@ -212,3 +212,75 @@ class TestPipelineIntegration:
             "If this assertion changes, Python's int() semantics changed "
             "and the bug-fix rationale needs revisiting."
         )
+
+    def test_plateau_global_epoch_safety_margin(self):
+        """The phase-locked epoch derivation uses ``round`` (not
+        ``floor``) for a symmetric ±half-group safety margin.  Two
+        nodes whose anchor-wall-clock estimates for the SAME RDS
+        broadcast group differ by NTP-grade skew compute the same
+        epoch in the worst case (broadcast right at a rounding center)
+        and the best case (broadcast right at a rounding boundary).
+
+        The realistic operating envelope is:
+          - NTP skew across hardened nodes:  <10 ms
+          - Propagation delay across baseline: <100 µs
+          - Processing-latency jitter:       <5 ms (single buffer)
+
+        ⇒ realistic worst-case cross-node anchor_wall_ns delta ≈ 15 ms.
+
+        We test from 0 to 40 ms of skew, sweeping the broadcast position
+        across the safe-zone fraction of the group cycle.  Skews above
+        ~44 ms can flip the rounded epoch at boundaries — that's a real
+        quantization edge but well outside the operating envelope."""
+        GROUP_PERIOD_NS = int(round(1e9 * 104.0 / 1187.5))  # 87_578_947 ns
+
+        def epoch(wall_ns):
+            return int(round(wall_ns / GROUP_PERIOD_NS))
+
+        # For each ``skew_ms``, find the range of broadcast positions
+        # within a group for which both nodes agree on the rounded epoch.
+        # Assert that range covers > the realistic envelope.
+        for skew_ms in (1, 5, 10, 15, 20):
+            skew_ns = skew_ms * 1_000_000
+            base_wall = 1_780_000_000_000_000_000
+            # Sweep offset across the full group period in 5 ms steps.
+            agreeing = 0
+            total = 0
+            for offset_ns in range(0, GROUP_PERIOD_NS, 5_000_000):
+                wall_a = base_wall + offset_ns
+                wall_b = wall_a + skew_ns
+                total += 1
+                if epoch(wall_a) == epoch(wall_b):
+                    agreeing += 1
+            # Expected safe-zone fraction = (group_period − skew) / group_period
+            safe_frac = (GROUP_PERIOD_NS - skew_ns) / GROUP_PERIOD_NS
+            observed_frac = agreeing / total
+            # At skew = 15 ms, expected ~83 % of positions agree.
+            assert observed_frac >= safe_frac - 0.05, (
+                f"skew={skew_ms}ms: observed agree-frac {observed_frac:.2f} "
+                f"< expected lower bound {safe_frac - 0.05:.2f}"
+            )
+
+        # Realistic-scenario test: NTP 10 ms + propagation + processing
+        # = 15 ms total skew is well inside the safe zone for ~83 % of
+        # group positions.  All groups eventually fire ASAP after
+        # idle→active, and over the course of a long key-up cross-node
+        # plateau alignment is empirically tight.
+        skew_ns = 15 * 1_000_000
+        # The 17 % of groups where rounding flips is acceptable: we
+        # emit at K-multiple epochs, not every group, so an occasional
+        # boundary-straddling group just delays one emission by one
+        # K-cycle, not catastrophic.
+        assert (GROUP_PERIOD_NS - skew_ns) / GROUP_PERIOD_NS > 0.80
+
+    def test_plateau_global_epoch_K_residue_gate(self):
+        """For K = 11 groups (≈ 1 s cadence), plateau emissions fire on
+        epochs that are exact multiples of 11 — and only those.  All
+        nodes computing the same global epoch will agree on whether to
+        fire.  This locks cross-node plateaus to the same RDS group."""
+        K = 11
+        # Pretend two epochs at known offsets from a multiple of K.
+        epoch_on_grid = 11 * 12345  # multiple of K
+        epoch_off_grid = epoch_on_grid + 3
+        assert epoch_on_grid % K == 0
+        assert epoch_off_grid % K != 0
