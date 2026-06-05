@@ -206,7 +206,6 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                     savgol_window_us=cfg.solver.savgol_window_us,
                     tdoa_method=cfg.solver.tdoa_method,
                     phat_max_lag_us=cfg.solver.phat_max_lag_us,
-                    voice_gate_min_fraction=cfg.solver.resolve_voice_gate(channel_hz),
                     node_offsets_s=node_offsets_s,
                     pair_offsets_s=pair_offsets_s,
                     target_calibrator=target_calibrator,
@@ -1194,7 +1193,7 @@ def create_app(config: ServerFullConfig) -> FastAPI:
         # Group-period anchor-snap counters: surfaces how often the server
         # had to correct ±1-group anchor mismatches between paired nodes.
         # See ``_apply_group_period_snap`` in tdoa.py.
-        from beagle_server.tdoa import get_group_snap_counters, get_voice_gate_counters
+        from beagle_server.tdoa import get_group_snap_counters
         out = {
             "status": "ok",
             "uptime_s": round(uptime_s, 1),
@@ -1203,7 +1202,6 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             "last_fix_age_s": round(last_fix_age, 1) if last_fix_age is not None else None,
             "pending_groups": pairer.pending_group_count(),
             "group_snap_counters": get_group_snap_counters(),
-            "voice_gate_counters": get_voice_gate_counters(),
         }
         cal = getattr(request.app.state, "target_calibrator", None)
         if cal is not None:

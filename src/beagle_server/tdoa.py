@@ -721,47 +721,6 @@ def cross_correlate_snippets(
     return _xcorr_arrays(d2_a[:min_len], d2_b[:min_len], effective_rate)
 
 
-# Module-level voice-gate counters (single-process; surfaced via /health).
-_VOICE_GATE_COUNTERS: dict[str, int] = {
-    "passed": 0,   # pair had enough voice-band energy (or gate disabled)
-    "gated":  0,   # pair rejected: tone-only / dead-carrier snippet
-}
-
-
-def reset_voice_gate_counters() -> None:
-    for k in _VOICE_GATE_COUNTERS:
-        _VOICE_GATE_COUNTERS[k] = 0
-
-
-def get_voice_gate_counters() -> dict[str, int]:
-    return dict(_VOICE_GATE_COUNTERS)
-
-
-def voice_fraction(audio: np.ndarray, sample_rate_hz: float) -> float:
-    """Fraction of FM-demodulated audio energy in the voice band.
-
-    Returns ``energy[300–3000 Hz] / total_energy`` (0..1) for a real
-    audio signal (the instantaneous-frequency output of ``_fm_demodulate``).
-
-    A continuously-keyed sub-audible CTCSS tone or a dead carrier puts
-    nearly all its energy below 300 Hz (or in noise), so it scores low; a
-    voice-modulated transmission puts substantial energy in 300–3000 Hz.
-    The voice band carries the broadband content that gives a sharp
-    cross-correlation peak; tone-only snippets are narrowband and yield a
-    broad, timing-poor peak (≈150 µs scatter empirically).  Used by the
-    server-side voice gate to drop untimeable snippets.
-    """
-    n = len(audio)
-    if n < 16:
-        return 0.0
-    a = audio - np.mean(audio)
-    spec = np.abs(np.fft.rfft(a * np.hanning(n))) ** 2
-    freqs = np.fft.rfftfreq(n, 1.0 / sample_rate_hz)
-    total = float(spec[1:].sum()) + 1e-30
-    band = float(spec[(freqs >= 300.0) & (freqs < 3000.0)].sum())
-    return band / total
-
-
 def _fm_demodulate(iq: np.ndarray) -> np.ndarray:
     """Quadrature FM demodulator.
 
@@ -793,7 +752,6 @@ def cross_correlate_audio_phat(
     transition_end_b: int,
     savgol_window_us: float = 360.0,
     max_lag_s: float | None = None,
-    voice_gate_min_fraction: float = 0.0,
 ) -> tuple[float, float] | None:
     """GCC-PHAT cross-correlation on FM-demodulated audio.
 
@@ -864,21 +822,6 @@ def cross_correlate_audio_phat(
     # Demodulate to audio (real-valued).  Length is len(iq) - 1.
     audio_a = _fm_demodulate(iq_a)
     audio_b = _fm_demodulate(iq_b)
-
-    # Voice gate: a tone-only / dead-carrier snippet is narrowband, so its
-    # cross-correlation peak is broad (poor time resolution, ~150 µs
-    # scatter empirically).  When enabled (threshold > 0) require BOTH
-    # nodes' snippets to carry enough voice-band energy — both hear the
-    # same transmission, so they pass or fail together; using the MIN is
-    # conservative against a noisy node.  Rejected pairs return None (the
-    # caller skips them), which keeps tone-only snippets out of both fixes
-    # and the auto-calibrator.  Disabled (0.0) by default.
-    if voice_gate_min_fraction > 0.0:
-        vf = min(voice_fraction(audio_a, rate), voice_fraction(audio_b, rate))
-        if vf < voice_gate_min_fraction:
-            _VOICE_GATE_COUNTERS["gated"] += 1
-            return None
-        _VOICE_GATE_COUNTERS["passed"] += 1
 
     # Locate plateau segment within each snippet (same logic as
     # cross_correlate_coherent_phat).
@@ -1241,7 +1184,6 @@ def compute_tdoa_s(
     node_offsets_s: dict[str, float] | None = None,
     pair_offsets_s: dict[str, float] | None = None,
     phat_max_lag_us: float = 0.0,
-    voice_gate_min_fraction: float = 0.0,
 ) -> float | None:
     """
     Compute the corrected TDOA between two events in **seconds**.
@@ -1530,11 +1472,10 @@ def compute_tdoa_s(
             transition_start_b=ts_b, transition_end_b=te_b,
             savgol_window_us=savgol_window_us,
             max_lag_s=phat_max_lag_s,
-            voice_gate_min_fraction=voice_gate_min_fraction,
         )
         if res is None:
-            logger.debug(
-                "Audio-PHAT preprocessing failed or voice-gated for %s<->%s (%s); pair skipped",
+            logger.warning(
+                "Audio-PHAT preprocessing failed for %s<->%s (%s); pair skipped",
                 node_a, node_b, event_type,
             )
             return None
