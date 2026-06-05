@@ -474,6 +474,7 @@ def solve_fix(
     savgol_window_us: float = 360.0,
     tdoa_method: str = "xcorr",
     phat_max_lag_us: float = 0.0,
+    voice_gate_min_fraction: float = 0.0,
     node_offsets_s: dict[str, float] | None = None,
     pair_offsets_s: dict[str, float] | None = None,
     target_calibrator: Any = None,
@@ -637,6 +638,7 @@ def solve_fix(
                 savgol_window_us=savgol_window_us,
                 tdoa_method=tdoa_method,
                 phat_max_lag_us=phat_max_lag_us,
+                voice_gate_min_fraction=voice_gate_min_fraction,
                 node_offsets_s=node_offsets_s,
                 pair_offsets_s=pair_offsets_s,
             )

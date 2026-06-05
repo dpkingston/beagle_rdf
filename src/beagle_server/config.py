@@ -134,6 +134,28 @@ class PairingConfig(BaseModel):
     """
 
 
+class VoiceGateChannelConfig(BaseModel):
+    """Per-channel override for the audio-PHAT voice gate.
+
+    A plateau snippet that carries only a sub-audible CTCSS tone or a dead
+    carrier is narrowband, so its cross-correlation peak is broad and its
+    TDOA is noisy (~150 µs scatter).  The voice gate rejects pairs whose
+    snippets have less than ``min_fraction`` of their FM-demodulated audio
+    energy in the 300–3000 Hz voice band.
+
+    Per-channel because the policy differs by target: a voice repeater
+    wants the gate ON (clean fixes + clean calibration); a tone-only
+    interference target wants it OFF (its signal has no voice content by
+    nature and must be tracked by averaging instead).
+    """
+    channel_hz: float
+    tol_hz: float = 1000.0
+    """Half-width of the channel match window (Hz)."""
+    min_fraction: float
+    """Minimum voice-band energy fraction (0..1) to accept a pair on this
+    channel.  0 disables the gate for the channel."""
+
+
 class SolverConfig(BaseModel):
     search_center_lat: float = 47.7
     search_center_lon: float = -122.3
@@ -252,6 +274,34 @@ class SolverConfig(BaseModel):
     from spurious ±10 ms lags (0/9 plausible) to sensible sub-millisecond
     values (9/9), with no audio filtering.
     """
+    voice_gate_min_fraction: float = 0.0
+    """Default voice gate for ``tdoa_method: audio_phat``.
+
+    Reject a pair when either snippet has less than this fraction (0..1) of
+    its FM-demodulated audio energy in the 300–3000 Hz voice band.  Tone-
+    only / dead-carrier snippets are narrowband → broad correlation peak →
+    ~150 µs TDOA scatter that corrupts both fixes and the auto-calibration.
+    Gating them out keeps only voice-bearing plateaus.
+
+    0.0 (default) = disabled, so the gate never silently discards a
+    tone-only interference target you intend to track.  Per-channel
+    overrides go in ``voice_gate_channels``; e.g. set ~0.15 for a voice
+    repeater used as the calibration target and leave this 0.0 so other
+    channels are ungated.  Only affects ``audio_phat``.
+    """
+    voice_gate_channels: list[VoiceGateChannelConfig] = Field(default_factory=list)
+    """Per-channel voice-gate overrides.  A fix on channel C uses the first
+    matching entry (``|C - channel_hz| <= tol_hz``); otherwise the default
+    ``voice_gate_min_fraction``."""
+
+    def resolve_voice_gate(self, channel_hz: float) -> float:
+        """Voice-gate threshold for a given channel (per-channel override
+        if one matches, else the default)."""
+        for ch in self.voice_gate_channels:
+            if abs(channel_hz - ch.channel_hz) <= ch.tol_hz:
+                return ch.min_fraction
+        return self.voice_gate_min_fraction
+
     xcorr_resample_rate_hz: float | None = None
     """
     Target sample rate (Hz) to resample IQ snippets to before cross-correlation

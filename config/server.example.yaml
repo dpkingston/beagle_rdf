@@ -110,6 +110,21 @@ solver:
                                   # refinement (<~500 µs on a metro-scale net) while staying
                                   # below the CTCSS period (>=4 ms) and voice pitch (5-20 ms).
                                   # Raise for very wide (>200 km) baselines; 0 = unbounded.
+  voice_gate_min_fraction: 0.0    # Default audio_phat voice gate (0..1), all channels.
+                                  # Reject a pair when either snippet has less than this
+                                  # fraction of its FM-demod audio energy in the 300-3000 Hz
+                                  # voice band.  Tone-only / dead-carrier snippets are
+                                  # narrowband -> broad correlation peak -> ~150 us TDOA
+                                  # scatter that corrupts fixes AND auto-calibration.
+                                  # 0.0 = DISABLED (default), so a tone-only interference
+                                  # target you intend to track is never silently dropped.
+  voice_gate_channels: []         # Per-channel overrides.  A fix on channel C uses the first
+                                  # entry with |C - channel_hz| <= tol_hz, else the default.
+                                  # Set ~0.15 on a voice repeater used as the calibration
+                                  # target; leave other (e.g. tone-only) channels ungated:
+                                  #   - channel_hz: 146.96e6
+                                  #     tol_hz: 1000.0
+                                  #     min_fraction: 0.15
   boundary_clamp_km: 2.0          # Suppress fixes whose converged position lies within this
                                   # many km of the search bounds.  L-BFGS-B clamps to the
                                   # constraint when the cost minimum is outside the search

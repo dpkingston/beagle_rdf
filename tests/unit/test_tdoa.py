@@ -1756,3 +1756,82 @@ def test_reset_group_snap_counters_zeroes_all_keys():
     assert sum(get_group_snap_counters().values()) >= 2
     reset_group_snap_counters()
     assert all(v == 0 for v in get_group_snap_counters().values())
+
+
+# ---------------------------------------------------------------------------
+# Voice gate (server-side, per-channel) for audio_phat
+# ---------------------------------------------------------------------------
+
+def _fm_modulate(audio, rate, dev_hz=3000.0):
+    """Synthesize a constant-envelope FM IQ stream from a real audio signal."""
+    import numpy as np
+    a = audio / (np.max(np.abs(audio)) + 1e-12)
+    phase = np.cumsum(2 * np.pi * dev_hz * a / rate)
+    return np.exp(1j * phase).astype(np.complex64)
+
+
+def test_voice_fraction_tone_vs_voice():
+    import numpy as np
+    from beagle_server.tdoa import _fm_demodulate, voice_fraction
+    rate = 250_000.0
+    n = 16384
+    t = np.arange(n) / rate
+    # tone-only: 107 Hz CTCSS (sub-audible)
+    tone_iq = _fm_modulate(np.sin(2 * np.pi * 107.0 * t), rate, dev_hz=500.0)
+    # voice: broadband 300-3000 Hz mixture
+    rng = np.random.default_rng(3)
+    voice = sum(np.sin(2 * np.pi * f * t + rng.uniform(0, 6)) for f in (450, 900, 1600, 2400))
+    voice_iq = _fm_modulate(voice + 0.15 * np.sin(2 * np.pi * 107.0 * t), rate, dev_hz=3000.0)
+    vf_tone = voice_fraction(_fm_demodulate(tone_iq), rate)
+    vf_voice = voice_fraction(_fm_demodulate(voice_iq), rate)
+    assert vf_tone < 0.05, f"tone voice_fraction too high: {vf_tone}"
+    assert vf_voice > 0.5, f"voice voice_fraction too low: {vf_voice}"
+
+
+def test_voice_gate_rejects_tone_pair_and_counts():
+    import numpy as np
+    from beagle_server.tdoa import (
+        cross_correlate_audio_phat, reset_voice_gate_counters, get_voice_gate_counters)
+    reset_voice_gate_counters()
+    rate = 250_000.0
+    n = 16384
+    t = np.arange(n) / rate
+    tone = np.sin(2 * np.pi * 107.0 * t)
+    a = _iq_to_b64(_fm_modulate(tone, rate, dev_hz=500.0))
+    b = _iq_to_b64(_fm_modulate(np.roll(tone, 5), rate, dev_hz=500.0))
+    # Gate enabled: tone-only pair rejected -> None, counter increments.
+    res = cross_correlate_audio_phat(
+        a, b, sample_rate_hz_a=rate, sample_rate_hz_b=rate, event_type="plateau",
+        transition_start_a=0, transition_end_a=0, transition_start_b=0, transition_end_b=0,
+        voice_gate_min_fraction=0.15)
+    assert res is None
+    assert get_voice_gate_counters()["gated"] == 1
+    # Gate disabled (0.0): not rejected by the gate (may still return a result).
+    reset_voice_gate_counters()
+    cross_correlate_audio_phat(
+        a, b, sample_rate_hz_a=rate, sample_rate_hz_b=rate, event_type="plateau",
+        transition_start_a=0, transition_end_a=0, transition_start_b=0, transition_end_b=0,
+        voice_gate_min_fraction=0.0)
+    assert get_voice_gate_counters()["gated"] == 0
+
+
+def test_voice_gate_passes_voice_pair():
+    import numpy as np
+    from beagle_server.tdoa import (
+        cross_correlate_audio_phat, reset_voice_gate_counters, get_voice_gate_counters)
+    reset_voice_gate_counters()
+    rate = 250_000.0
+    n = 16384
+    t = np.arange(n) / rate
+    rng = np.random.default_rng(9)
+    voice = sum(np.sin(2 * np.pi * f * t + rng.uniform(0, 6)) for f in (450, 900, 1600, 2400))
+    iq = _fm_modulate(voice, rate, dev_hz=3000.0)
+    a = _iq_to_b64(iq)
+    b = _iq_to_b64(np.roll(iq, 4))
+    res = cross_correlate_audio_phat(
+        a, b, sample_rate_hz_a=rate, sample_rate_hz_b=rate, event_type="plateau",
+        transition_start_a=0, transition_end_a=0, transition_start_b=0, transition_end_b=0,
+        voice_gate_min_fraction=0.15)
+    assert res is not None
+    assert get_voice_gate_counters()["passed"] == 1
+    assert get_voice_gate_counters()["gated"] == 0

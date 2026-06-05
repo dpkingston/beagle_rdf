@@ -87,3 +87,22 @@ def test_empty_target_channels():
             },
             "target_channels": [],
         })
+
+
+def test_voice_gate_per_channel_resolution():
+    """resolve_voice_gate returns the per-channel override when one matches,
+    else the default."""
+    from beagle_server.config import SolverConfig, VoiceGateChannelConfig
+    s = SolverConfig(
+        voice_gate_min_fraction=0.0,
+        voice_gate_channels=[
+            VoiceGateChannelConfig(channel_hz=146_960_000.0, tol_hz=1000.0, min_fraction=0.15),
+            VoiceGateChannelConfig(channel_hz=442_875_000.0, tol_hz=2000.0, min_fraction=0.10),
+        ],
+    )
+    assert s.resolve_voice_gate(146_960_000.0) == 0.15   # exact match
+    assert s.resolve_voice_gate(146_960_500.0) == 0.15   # within tol
+    assert s.resolve_voice_gate(442_876_000.0) == 0.10   # within tol of 2nd
+    assert s.resolve_voice_gate(145_000_000.0) == 0.0    # no match -> default
+    # default applies everywhere when no channels configured
+    assert SolverConfig(voice_gate_min_fraction=0.2).resolve_voice_gate(99e6) == 0.2
