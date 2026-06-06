@@ -849,10 +849,13 @@ import logging  # noqa: E402 (needed for caplog.at_level)
 class TestBacklogDrain:
     """Tests for the stale-buffer detection and drain logic in paired_stream().
 
-    Two detection paths:
-      - Fallback (no HAS_TIME): stale when sync readStream returns faster
-        than half a buffer period (driver FIFO held pre-buffered data).
-      - HAS_TIME: stale when wall-clock age of the buffer exceeds threshold.
+    Backlog is detected by READ LATENCY on both paths (HAS_TIME and fallback
+    alike): a sync readStream that returns faster than the 1 ms fallback
+    threshold handed back a pre-buffered (stale) FIFO slot, so the consumer is
+    behind real-time and drains to the live edge.  HAS_TIME does NOT disable
+    draining - the RSPduo/SoapySDRPlay3 timeNs is not backlog-immune, so a node
+    that falls behind must still drain (regression: the 2026-06-06 ~14.5 s-behind
+    incident with backlog_drain_count == 0).
     """
 
     HAS_TIME = 4  # SOAPY_SDR_HAS_TIME
@@ -956,12 +959,14 @@ class TestBacklogDrain:
         assert w == hw_time_ns
         assert rx.backlog_drain_count == 0
 
-    def test_has_time_stale_discards(self, monkeypatch, inject_soapy_stub):
-        """HAS_TIME set, buffer with old timestamp -> yielded (not drained).
+    def test_has_time_old_timestamp_slow_read_not_drained(self, monkeypatch, inject_soapy_stub):
+        """HAS_TIME buffer with an old timestamp but a SLOW (real-time) read is
+        NOT drained: draining is governed by read latency, not timestamp age.
 
-        Hardware timestamps are always accurate regardless of how old the buffer
-        is in the FIFO - a slow host may queue many buffer periods.  No drain
-        is performed when HAS_TIME is set; the buffer is passed through normally.
+        The default mocked read is slow (>> 1 ms), so even a 60 s-old driver
+        timestamp passes through - a real-time read means the data is current
+        regardless of what timeNs claims.  Backlog is caught by the fast-read
+        test below, not by timestamp age.
         """
         stub = inject_soapy_stub
         old_time_ns = 1_700_000_000_000_000_000
@@ -978,10 +983,74 @@ class TestBacklogDrain:
         rx._dev.readStream.side_effect = read_old_timestamp
         monkeypatch.setattr(_time_module, "time_ns", lambda: now_ns)
 
-        # Buffer should be yielded despite being 60 s old - timestamps are correct.
+        # Slow read (default _big_delta_monotonic) -> not stale -> yielded.
         sync_buf, target_buf, buf_wall_ns, _disc = next(rx.paired_stream())
         assert buf_wall_ns == old_time_ns
         assert rx.backlog_drain_count == 0
+
+    def test_has_time_fast_read_drains(self, monkeypatch, inject_soapy_stub):
+        """HAS_TIME set + FAST read latency -> stale -> drained.
+
+        Regression for the 2026-06-06 backlog bug: a backlogged RSPduo FIFO
+        returns HAS_TIME buffers almost instantly, and on this SoapySDRPlay3
+        build timeNs is not backlog-immune, so these MUST drain by read latency
+        even though HAS_TIME is set.  Previously stale was forced False on the
+        HAS_TIME path, so the node stayed permanently behind real-time with
+        backlog_drain_count == 0.
+        """
+        stub = inject_soapy_stub
+        hw_time_ns = 1_700_000_000_000_000_000
+
+        def read_has_time(stream, buffers, n, timeoutUs=1_000_000):
+            for buf in buffers:
+                buf[:n] = np.zeros(n, dtype=np.complex64)
+            return stub._StreamResult(n, flags=self.HAS_TIME, timeNs=hw_time_ns)
+
+        rx = _make_receiver(buffer_size=self._BUF_SIZE)
+        rx.open()
+        rx._dev.readStream.side_effect = read_has_time
+        monkeypatch.setattr(_time_module, "time_ns", lambda: hw_time_ns + 1_000)
+
+        # Iter 1: fast read (delta 1_000 ns < 1 ms) -> stale -> drain+continue.
+        # Iter 2: slow read (delta 2 ms) -> not stale -> yield.
+        # (override AFTER open() so open() is unaffected.)
+        values = itertools.chain(
+            [0, 1_000, 0, self._NORMAL_READ_NS],
+            itertools.cycle([0, self._NORMAL_READ_NS]),
+        )
+        monkeypatch.setattr(_time_module, "monotonic_ns", lambda: next(values))
+
+        next(rx.paired_stream())
+        assert rx.backlog_drain_count == 1
+
+    def test_has_time_backlog_drains_then_yields_fresh(self, monkeypatch, inject_soapy_stub):
+        """A backlogged HAS_TIME FIFO (several fast reads) drains to the live
+        edge, counts each discarded buffer, and the yielded buffer is the first
+        real-time read AND carries a discontinuity flag (forces a re-anchor)."""
+        stub = inject_soapy_stub
+        hw_time_ns = 1_700_000_000_000_000_000
+
+        def read_has_time(stream, buffers, n, timeoutUs=1_000_000):
+            for buf in buffers:
+                buf[:n] = np.zeros(n, dtype=np.complex64)
+            return stub._StreamResult(n, flags=self.HAS_TIME, timeNs=hw_time_ns)
+
+        rx = _make_receiver(buffer_size=self._BUF_SIZE)
+        rx.open()
+        rx._dev.readStream.side_effect = read_has_time
+        monkeypatch.setattr(_time_module, "time_ns", lambda: hw_time_ns + 1_000)
+
+        # 3 stale (fast) reads, then a real-time read.
+        values = itertools.chain(
+            [0, 1_000, 0, 1_000, 0, 1_000, 0, self._NORMAL_READ_NS],
+            itertools.cycle([0, self._NORMAL_READ_NS]),
+        )
+        monkeypatch.setattr(_time_module, "monotonic_ns", lambda: next(values))
+
+        _s, _t, w, disc = next(rx.paired_stream())
+        assert rx.backlog_drain_count == 3
+        assert disc is True              # drain completion raises a discontinuity
+        assert w == hw_time_ns           # yielded buffer is the fresh one
 
     def test_buf_wall_ns_is_timens_when_has_time(self, monkeypatch, inject_soapy_stub):
         """Yielded buf_wall_ns equals sr_sync.timeNs when SOAPY_SDR_HAS_TIME is set."""

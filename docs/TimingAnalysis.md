@@ -493,6 +493,34 @@ Full error budget:
 | Buffer backlog -> stale `onset_time_ns` -> wrong `n` | Part B: backlog drain logic in `rspduo.py` | Eliminates +/-7 ms catastrophic outliers |
 | Per-buffer NTP jitter on `onset_time_ns` | Part A: TCXO hardware timestamps in SoapySDRPlay3 | onset_diff error 50-200 usec -> correct disambiguation |
 
+> **Correction (2026-06-06): Part A is not backlog-immune in production, and Part B
+> was being bypassed.** Field data showed nodes running **seconds** behind real-time
+> with `onset_time_ns` stamped at processing time, not capture time. Two causes,
+> both now understood:
+> 1. **Part A's premise did not hold.** The intended design (C-thread TCXO anchor →
+>    `timeNs` derived from the sample counter, so backlog is harmless) requires the
+>    patched `dpkingston/SoapySDRPlay3` build to actually deliver capture-anchored
+>    timestamps. On the production RSPduo nodes `timeNs` instead tracks the *read*
+>    moment, so a backlogged FIFO yields buffers stamped "now" (late) rather than at
+>    true capture. The result: `onset_time_ns` off by the backlog depth (~10-15 s
+>    observed), which is a *gross* pairing failure — events fall outside the
+>    server's `correlation_window_s` and **stop pairing entirely** (this is much
+>    larger than the ±7 ms wrong-`n` regime above; it kills the event, not just its
+>    disambiguation). The fine `sync_to_snippet_start_ns` TDOA is unaffected.
+> 2. **Part B (the drain) was disabled whenever HAS_TIME was set** — on the
+>    assumption that Part A made draining unnecessary. Since Part A was not actually
+>    backlog-immune, the safety net never engaged (`backlog_drain_count == 0` on a
+>    node 14.5 s behind).
+>
+> **Fix:** `rspduo.py` now detects backlog by **read latency on both paths**
+> (HAS_TIME and fallback alike) and drains to the live edge regardless of the
+> timestamp's claimed accuracy. This keeps every node at the live edge so its
+> capture timestamps stay correct even when the driver timestamp can't be trusted.
+> Caveat: draining keeps timing correct but **drops** the stale samples, so a node
+> that *chronically* can't keep up (e.g. RSPduo 2 MSps×2 on a slow Pi) stays
+> real-time at the cost of yield; reducing per-node load is the separate, additive
+> lever for the data loss.
+
 **Remaining noise floor: 0-1 ms per onset event, depending on signal onset sharpness.**
 For fast keying events both nodes quantise to the same window -> TDOA residual near 0.
 For gradual onsets -> +/-1 ms jitter.

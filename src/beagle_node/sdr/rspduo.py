@@ -654,20 +654,35 @@ class RSPduoReceiver(SDRReceiver):
                     bool(sr_sync.flags & HAS_TIME),
                 )
 
-                # Stale-buffer detection: not needed when HAS_TIME is set
-                # (hardware timestamps are always accurate regardless of FIFO
-                # depth). Only drain when falling back to time.time_ns(), where
-                # a fast readStream return signals a stale pre-filled FIFO slot.
+                # Stale-buffer detection by READ LATENCY, on both paths
+                # (HAS_TIME and fallback alike).
+                #
+                # A real-time read of one buffer blocks for ~one buffer period;
+                # a read that returns far faster handed back a pre-buffered
+                # (stale) FIFO slot, which means the consumer is behind and must
+                # drain to the live edge.  This latency test is ground truth
+                # about FIFO depth and is independent of the driver's timestamp.
+                #
+                # We previously forced ``stale = False`` whenever HAS_TIME was
+                # set, trusting that "the hardware timestamp is accurate
+                # regardless of FIFO depth, so no drain is needed."  That
+                # assumption is FALSE on the production RSPduo/SoapySDRPlay3
+                # build: its ``timeNs`` tracks the read moment, not true
+                # sample-capture, so a backlogged node stamps ``onset_time_ns``
+                # seconds late and silently stops pairing.  Observed 2026-06-06:
+                # a node ran ~14.5 s behind real-time with
+                # ``backlog_drain_count == 0`` precisely because this branch
+                # disabled the drain.  Detecting backlog by read latency on both
+                # paths keeps every node at the live edge so its capture
+                # timestamps stay correct.
+                #
                 # IMPORTANT: only classify as stale when sr_sync.ret > 0 (valid
                 # data returned).  A fast return with ret < 0 is a driver error
                 # (e.g. TIMEOUT from a broken stream after reopen) - it must fall
                 # through to the error handler below, not be silently drained.
                 # Without this guard, an instant-TIMEOUT loop after a reopen
                 # bypasses the error handler and spins at 100%+ CPU indefinitely.
-                if sr_sync.flags & HAS_TIME:
-                    stale = False
-                else:
-                    stale = sr_sync.ret > 0 and _sync_read_ns < _fallback_thresh_ns
+                stale = sr_sync.ret > 0 and _sync_read_ns < _fallback_thresh_ns
 
                 if stale:
                     if not _draining:
@@ -827,9 +842,19 @@ class RSPduoReceiver(SDRReceiver):
                     if sr_sync.ret == OVERFLOW or sr_tgt.ret == OVERFLOW:
                         self._overflow_count += 1
                         logger.warning(
-                            "RSPduo readStream overflow #%d: sync=%d  target=%d - retrying",
+                            "RSPduo readStream overflow #%d: sync=%d  target=%d - "
+                            "draining to live edge",
                             self._overflow_count, sr_sync.ret, sr_tgt.ret,
                         )
+                        # An overflow means the FIFO backed up and dropped
+                        # samples.  Flag the discontinuity and continue: the
+                        # paired read-latency drain above discards the stale
+                        # backlog (both streams together, staying aligned) on the
+                        # following iterations until reads block at real-time, so
+                        # the next yielded buffer carries a fresh, correct capture
+                        # timestamp.  A separate per-stream flush is deliberately
+                        # avoided here - it could drain the two streams by
+                        # different amounts and desync them.
                         self._discontinuity_pending = True
                         continue
                     logger.error(
