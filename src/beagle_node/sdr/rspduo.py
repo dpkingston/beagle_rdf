@@ -499,7 +499,14 @@ class RSPduoReceiver(SDRReceiver):
         # arrived earlier). Drain to restore real-time accuracy.
         # 1 ms is safely below any real slot delivery time but above a truly
         # immediate (pre-filled, i.e. stale) return.
-        _fallback_thresh_ns = 1_000_000  # 1 ms
+        _fallback_thresh_ns = 1_000_000  # 1 ms (fallback path: read-latency)
+        # HAS_TIME path: detect backlog by buffer-timestamp AGE, not read
+        # latency.  The RSPduo driver returns readStream almost instantly even
+        # at real-time, so latency can't distinguish current from backlogged;
+        # a buffer whose timeNs is far in the past is the reliable signal.
+        # Sits well above the ~70 ms steady-state FIFO floor so only a genuine
+        # multi-second backlog (e.g. an undrained startup fill) is drained.
+        _has_time_drain_age_ns = 500_000_000  # 500 ms
         _draining            = False
         _drain_episode_count = 0
 
@@ -654,35 +661,40 @@ class RSPduoReceiver(SDRReceiver):
                     bool(sr_sync.flags & HAS_TIME),
                 )
 
-                # Stale-buffer detection by READ LATENCY, on both paths
-                # (HAS_TIME and fallback alike).
+                # Stale-buffer (backlog) detection.  Two paths, because the
+                # reliable backlog signal differs between them:
                 #
-                # A real-time read of one buffer blocks for ~one buffer period;
-                # a read that returns far faster handed back a pre-buffered
-                # (stale) FIFO slot, which means the consumer is behind and must
-                # drain to the live edge.  This latency test is ground truth
-                # about FIFO depth and is independent of the driver's timestamp.
+                # * HAS_TIME -> detect by buffer-timestamp AGE, NOT read latency.
+                #   The RSPduo/SoapySDRPlay3 driver keeps a DMA-fed ring and
+                #   returns readStream almost instantly (~0.2 ms) whether the node
+                #   is current or seconds behind, so a fast return is NOT a backlog
+                #   signal here - a latency test drains every buffer forever
+                #   (observed 2026-06-06: both nodes livelocked at sync_read_ms~0.2
+                #   with buf_wall_age~71 ms, yielding nothing).  A genuinely
+                #   backlogged FIFO instead yields buffers whose timeNs is far in
+                #   the past, so age = now - buf_wall_ns is the reliable signal.
+                #   The threshold sits well above the ~70 ms steady-state FIFO
+                #   floor, so normal buffers pass through and only a multi-second
+                #   backlog (e.g. an undrained startup fill) is discarded down to
+                #   the live edge.  This is what keeps onset_time_ns from being
+                #   stamped seconds late and silently dropping out of the server
+                #   pairing window.
                 #
-                # We previously forced ``stale = False`` whenever HAS_TIME was
-                # set, trusting that "the hardware timestamp is accurate
-                # regardless of FIFO depth, so no drain is needed."  That
-                # assumption is FALSE on the production RSPduo/SoapySDRPlay3
-                # build: its ``timeNs`` tracks the read moment, not true
-                # sample-capture, so a backlogged node stamps ``onset_time_ns``
-                # seconds late and silently stops pairing.  Observed 2026-06-06:
-                # a node ran ~14.5 s behind real-time with
-                # ``backlog_drain_count == 0`` precisely because this branch
-                # disabled the drain.  Detecting backlog by read latency on both
-                # paths keeps every node at the live edge so its capture
-                # timestamps stay correct.
+                # * Fallback (no HAS_TIME, buf_wall_ns = time.time_ns() at read)
+                #   -> age is ~0 by construction, so use read latency: a fast
+                #   return means the FIFO held pre-buffered (stale) data.
                 #
                 # IMPORTANT: only classify as stale when sr_sync.ret > 0 (valid
-                # data returned).  A fast return with ret < 0 is a driver error
-                # (e.g. TIMEOUT from a broken stream after reopen) - it must fall
-                # through to the error handler below, not be silently drained.
-                # Without this guard, an instant-TIMEOUT loop after a reopen
-                # bypasses the error handler and spins at 100%+ CPU indefinitely.
-                stale = sr_sync.ret > 0 and _sync_read_ns < _fallback_thresh_ns
+                # data returned).  A fast/old return with ret < 0 is a driver
+                # error (e.g. TIMEOUT from a broken stream after reopen) - it must
+                # fall through to the error handler below, not be silently
+                # drained.  Without this guard, an instant-error loop after a
+                # reopen bypasses the error handler and spins at 100%+ CPU.
+                if sr_sync.flags & HAS_TIME:
+                    stale = (sr_sync.ret > 0
+                             and (time.time_ns() - buf_wall_ns) > _has_time_drain_age_ns)
+                else:
+                    stale = sr_sync.ret > 0 and _sync_read_ns < _fallback_thresh_ns
 
                 if stale:
                     if not _draining:
@@ -848,9 +860,10 @@ class RSPduoReceiver(SDRReceiver):
                         )
                         # An overflow means the FIFO backed up and dropped
                         # samples.  Flag the discontinuity and continue: the
-                        # paired read-latency drain above discards the stale
-                        # backlog (both streams together, staying aligned) on the
-                        # following iterations until reads block at real-time, so
+                        # paired backlog drain above discards the stale backlog
+                        # (both streams together, staying aligned) on the
+                        # following iterations until buffers return within the
+                        # threshold (age for HAS_TIME, read latency otherwise), so
                         # the next yielded buffer carries a fresh, correct capture
                         # timestamp.  A separate per-stream flush is deliberately
                         # avoided here - it could drain the two streams by

@@ -512,14 +512,24 @@ Full error budget:
 >    backlog-immune, the safety net never engaged (`backlog_drain_count == 0` on a
 >    node 14.5 s behind).
 >
-> **Fix:** `rspduo.py` now detects backlog by **read latency on both paths**
-> (HAS_TIME and fallback alike) and drains to the live edge regardless of the
-> timestamp's claimed accuracy. This keeps every node at the live edge so its
-> capture timestamps stay correct even when the driver timestamp can't be trusted.
+> **Fix:** `rspduo.py` now drains genuine backlog on **both** paths, but with the
+> right signal for each:
+> - **HAS_TIME → buffer-timestamp age.** Read latency cannot detect backlog here:
+>   the RSPduo driver returns `readStream` in ~0.2 ms whether the node is current
+>   or seconds behind, so a latency test drains *every* buffer forever (a
+>   first attempt at this fix livelocked both nodes — `sync_read_ms 0.2`,
+>   `backlog_drain_count` climbing without bound, zero events emitted). Instead,
+>   drain when `now - buf_wall_ns` exceeds a threshold (~500 ms, well above the
+>   ~70 ms steady-state FIFO floor); a multi-second startup backlog is discarded
+>   down to the live edge and normal buffers pass through.
+> - **Fallback (no HAS_TIME) → read latency** (`buf_wall_ns` is `time.time_ns()`
+>   at read, so its age is ~0 and only latency distinguishes stale data).
+>
 > Caveat: draining keeps timing correct but **drops** the stale samples, so a node
 > that *chronically* can't keep up (e.g. RSPduo 2 MSps×2 on a slow Pi) stays
 > real-time at the cost of yield; reducing per-node load is the separate, additive
-> lever for the data loss.
+> lever for the data loss. The age threshold is the key tuning knob (tighter →
+> better cross-node pairing, looser → higher yield).
 
 **Remaining noise floor: 0-1 ms per onset event, depending on signal onset sharpness.**
 For fast keying events both nodes quantise to the same window -> TDOA residual near 0.
