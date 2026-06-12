@@ -1092,6 +1092,12 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             # RDS decoder + block-A anchor health summary (Commit 9).
             # Optional dict; absent on older nodes or non-RDS sync_mode.
             "rds": body.get("rds"),
+            # SDR FIFO backlog counters (absent on older nodes -> None).
+            # Surfaced so per-node backlog/overflow state is visible centrally
+            # without SSHing to each node's local /health.
+            "sdr_overflows": body.get("sdr_overflows"),
+            "backlog_drains": body.get("backlog_drains"),
+            "discontinuities": body.get("discontinuities"),
             "received_at": time.time(),
             "ip": client_ip,
         }
@@ -2294,6 +2300,10 @@ def create_app(config: ServerFullConfig) -> FastAPI:
             # first post-restart heartbeat arrives.  Nodes running older
             # software may not include this field; UI falls back to "?".
             n["uptime_s"] = hb.get("uptime_s") if hb else None
+            # SDR FIFO backlog counters (None on older nodes that don't send them).
+            n["sdr_overflows"] = hb.get("sdr_overflows") if hb else None
+            n["backlog_drains"] = hb.get("backlog_drains") if hb else None
+            n["discontinuities"] = hb.get("discontinuities") if hb else None
             n["config_reload"] = _config_status_summary(reload_status.get(n["node_id"]))
             seen_ids.add(n["node_id"])
             result.append(n)
@@ -2321,6 +2331,9 @@ def create_app(config: ServerFullConfig) -> FastAPI:
                 "onset_threshold_db": hb.get("onset_threshold_db") if hb else None,
                 "offset_threshold_db": hb.get("offset_threshold_db") if hb else None,
                 "uptime_s": hb.get("uptime_s") if hb else None,
+                "sdr_overflows": hb.get("sdr_overflows") if hb else None,
+                "backlog_drains": hb.get("backlog_drains") if hb else None,
+                "discontinuities": hb.get("discontinuities") if hb else None,
             })
             seen_ids.add(e["node_id"])
 

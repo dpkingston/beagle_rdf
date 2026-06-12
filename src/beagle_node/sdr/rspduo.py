@@ -855,7 +855,8 @@ class RSPduoReceiver(SDRReceiver):
                         self._overflow_count += 1
                         logger.warning(
                             "RSPduo readStream overflow #%d: sync=%d  target=%d - "
-                            "draining to live edge",
+                            "FIFO dropped samples, re-anchoring (counts toward "
+                            "overflow_count, not backlog_drains)",
                             self._overflow_count, sr_sync.ret, sr_tgt.ret,
                         )
                         # An overflow means the FIFO backed up and dropped

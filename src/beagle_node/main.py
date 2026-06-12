@@ -218,6 +218,12 @@ def run(args: argparse.Namespace | None = None) -> int:
         "longitude_deg": config.location.longitude_deg,
         "sdr_mode": config.sdr_mode,
         "software_version": _node_version,
+        # SDR backlog/overflow counters - refreshed before each periodic
+        # heartbeat (see the in-loop blocks below) so the server can surface
+        # per-node FIFO backlog state centrally without per-node SSH.
+        "sdr_overflows": 0,
+        "backlog_drains": 0,
+        "discontinuities": 0,
     }
     if _remote_fetcher is not None:
         # Register the uptime provider so every poll's heartbeat body
@@ -950,6 +956,9 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
                             _heartbeat_payload["rds"] = pipeline.rds_health_snapshot()
+                            _heartbeat_payload["sdr_overflows"] = getattr(receiver, "overflow_count", 0)
+                            _heartbeat_payload["backlog_drains"] = getattr(receiver, "backlog_drain_count", 0)
+                            _heartbeat_payload["discontinuities"] = getattr(receiver, "discontinuity_count", 0)
                             if _remote_fetcher is not None:
                                 # uptime_s stamped fresh by fetcher's
                                 # uptime_provider hook on each poll.
@@ -1002,6 +1011,9 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
                             _heartbeat_payload["rds"] = pipeline.rds_health_snapshot()
+                            _heartbeat_payload["sdr_overflows"] = getattr(receiver, "overflow_count", 0)
+                            _heartbeat_payload["backlog_drains"] = getattr(receiver, "backlog_drain_count", 0)
+                            _heartbeat_payload["discontinuities"] = getattr(receiver, "discontinuity_count", 0)
                             if _remote_fetcher is not None:
                                 # uptime_s stamped fresh by fetcher's
                                 # uptime_provider hook on each poll.
@@ -1052,6 +1064,9 @@ def run(args: argparse.Namespace | None = None) -> int:
                             _heartbeat_payload["onset_threshold_db"] = pipeline.carrier_detector.onset_threshold_db
                             _heartbeat_payload["offset_threshold_db"] = pipeline.carrier_detector.offset_threshold_db
                             _heartbeat_payload["rds"] = pipeline.rds_health_snapshot()
+                            _heartbeat_payload["sdr_overflows"] = getattr(receiver, "overflow_count", 0)
+                            _heartbeat_payload["backlog_drains"] = getattr(receiver, "backlog_drain_count", 0)
+                            _heartbeat_payload["discontinuities"] = getattr(receiver, "discontinuity_count", 0)
                             if _remote_fetcher is not None:
                                 # uptime_s stamped fresh by fetcher's
                                 # uptime_provider hook on each poll.

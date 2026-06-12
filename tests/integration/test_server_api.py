@@ -555,6 +555,42 @@ def test_heartbeat_without_version_shows_none(client: TestClient) -> None:
     assert matched[0]["software_version"] is None
 
 
+def test_heartbeat_carries_sdr_counters(client: TestClient) -> None:
+    """sdr_overflows/backlog_drains/discontinuities in the heartbeat are stored
+    and surfaced in /map/nodes, so per-node FIFO backlog is visible centrally."""
+    _seed_node(client, "hb-ctr-node")
+    client.post("/api/v1/heartbeat", json={
+        "node_id": "hb-ctr-node",
+        "latitude_deg": 47.65,
+        "longitude_deg": -122.35,
+        "sdr_mode": "rspduo",
+        "sdr_overflows": 2,
+        "backlog_drains": 17,
+        "discontinuities": 5,
+    })
+    resp = client.get("/map/nodes")
+    matched = [n for n in resp.json()["nodes"] if n["node_id"] == "hb-ctr-node"]
+    assert len(matched) == 1
+    assert matched[0]["sdr_overflows"] == 2
+    assert matched[0]["backlog_drains"] == 17
+    assert matched[0]["discontinuities"] == 5
+
+
+def test_heartbeat_without_sdr_counters_shows_none(client: TestClient) -> None:
+    """Older nodes that don't send the counters surface None (backward compat)."""
+    _seed_node(client, "hb-noctr-node")
+    client.post("/api/v1/heartbeat", json={
+        "node_id": "hb-noctr-node",
+        "latitude_deg": 47.65,
+        "longitude_deg": -122.35,
+    })
+    resp = client.get("/map/nodes")
+    matched = [n for n in resp.json()["nodes"] if n["node_id"] == "hb-noctr-node"]
+    assert len(matched) == 1
+    assert matched[0]["backlog_drains"] is None
+    assert matched[0]["sdr_overflows"] is None
+
+
 def test_heartbeat_no_auth_required() -> None:
     """Heartbeat should work even with auth_token configured."""
     config = _test_config()
